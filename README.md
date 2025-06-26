@@ -50,9 +50,9 @@ The project uses Docker Compose to run a PostgreSQL database in a container.
 
     You can verify that the database is running by executing `docker ps`. You should see a container named `life-io-postgres-1` (or similar) with the status "Up".
 
-### Step 2: Run Database Migrations
+### Step 2: Run Database Migrations and Seeding
 
-With the database running, you need to set up the schema by running the migration scripts.
+With the database running, you need to set up the schema and initial data.
 
 1.  The project's `package.json` includes a handy script for this. In your terminal, run:
 
@@ -60,7 +60,7 @@ With the database running, you need to set up the schema by running the migratio
     bun run migrate
     ```
 
-    This command executes the `scripts/migrate.ts` file, which uses Kysely to apply all pending migrations and create the `user`, `note`, `tag`, and `note_tag` tables. You should see output indicating that each migration has completed successfully.
+    This command executes migration scripts to create the `user`, `note`, `tag`, and `note_tag` tables, and then **runs a seed script to create a default test user**. This user is required for the verification step below.
 
 ### Step 3: Start the Application Server
 
@@ -75,12 +75,12 @@ Now you are ready to start the Elysia application server.
 2.  If everything is successful, you will see the following message in your console:
 
     ```
-    🦊  Elysia listening on http://localhost:3000
+    🦊  Elysia listening on http://localhost:42069
     ```
 
 ## 5. How to Verify
 
-Your application is now running. You can interact with it at `http://localhost:3000`.
+Your application is now running. You can interact with it at `http://localhost:42069`.
 
 To test the `POST /note` endpoint, you can use a tool like `curl`:
 
@@ -92,11 +92,3 @@ curl -X POST http://localhost:42069/note \
   "title": "My First Note",
   "content": "This is a test note created via curl."
 }'
-```
-
-> **Note**: You will need a valid `user_id` from a user that exists in the `user` table for the note creation to succeed.
-
----
-
-This README should provide everything needed to get a new developer up and running with the project.
-

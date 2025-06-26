@@ -1,28 +1,39 @@
-// scripts/migrate.ts
-import { Kysely, Migrator, FileMigrationProvider } from "kysely";
-import { BunPgDialect } from "../lib/kysely-bun-dialect";
-import * as path from "path";
-import { promises as fs } from "fs";
+// FILE: scripts/migrate.ts
+import { Migrator, FileMigrationProvider } from "kysely";
+import * as path from "node:path";
+import { promises as fs } from "node:fs";
+import { db } from "../db/kysely"; // Import our new central db instance
 
 async function migrate(direction: "up" | "down") {
-  const db = new Kysely<any>({
-    dialect: new BunPgDialect(),
-  });
+  console.log(`Running migrations: ${direction}`);
 
   const migrator = new Migrator({
-    db,
+    db, // Use the configured Kysely instance
     provider: new FileMigrationProvider({
       fs,
       path,
-      // This needs to be an absolute path to your migrations folder.
-      migrationFolder: path.join(import.meta.dir, "../migrations"),
+      // The migration folder is relative to the project root
+      migrationFolder: path.join(process.cwd(), "migrations"),
     }),
   });
 
-  if (direction === "up") {
-    console.log("Running migrations up...");
+  if (direction === "down") {
+    const { error, results } = await migrator.migrateDown();
+    results?.forEach((it) => {
+      if (it.status === "Success") {
+        console.log(
+          `✅ Migration "${it.migrationName}" was reverted successfully`,
+        );
+      } else if (it.status === "Error") {
+        console.error(`❌ Failed to revert migration "${it.migrationName}"`);
+      }
+    });
+    if (error) {
+      console.error("❌ Migration failed:", error);
+      process.exit(1);
+    }
+  } else {
     const { error, results } = await migrator.migrateToLatest();
-
     results?.forEach((it) => {
       if (it.status === "Success") {
         console.log(
@@ -32,37 +43,22 @@ async function migrate(direction: "up" | "down") {
         console.error(`❌ Failed to execute migration "${it.migrationName}"`);
       }
     });
-
     if (error) {
-      console.error("Failed to migrate");
-      console.error(error);
-      process.exit(1);
-    }
-  } else if (direction === "down") {
-    console.log("Running migrations down...");
-    const { error, results } = await migrator.migrateDown();
-
-    results?.forEach((it) => {
-      if (it.status === "Success") {
-        console.log(
-          `⏮️ Migration "${it.migrationName}" was reverted successfully`,
-        );
-      } else if (it.status === "Error") {
-        console.error(`❌ Failed to revert migration "${it.migrationName}"`);
-      }
-    });
-
-    if (error) {
-      console.error("Failed to migrate down");
-      console.error(error);
+      console.error("❌ Migration failed:", error);
       process.exit(1);
     }
   }
 
+  // Ensure the connection is closed
   await db.destroy();
 }
 
-// Bun passes script arguments after the script name, so the argument is at index 2.
-const direction = (process.argv[2] as "up" | "down") ?? "up";
+const directionArg = Bun.argv[2];
+if (directionArg !== "up" && directionArg !== "down") {
+  console.error("Invalid argument. Use 'up' or 'down'.");
+  process.exit(1);
+}
 
-migrate(direction);
+migrate(directionArg).then(() => {
+  console.log("✅ Done!");
+});

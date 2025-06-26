@@ -21,7 +21,7 @@ services:
     environment:
       - PG_CONNECTION_STRING=postgres://postgres:postgres@postgres:5432/main
     ports:
-      - '4444:4444'
+      - '3333:4444'
     depends_on:
       postgres:
         condition: service_healthy
