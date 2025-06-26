@@ -1,0 +1,38 @@
+// FILE: tsconfig.json
+// --- Fix: Removed "types/generated" from the exclude array ---
+{
+  "compilerOptions": {
+    /* ——— Output ——— */
+    "noEmit": true, // Bun handles runtime transpile
+    /* ——— Modules & target ——— */
+    "target": "esnext",
+    "module": "esnext",
+    "moduleResolution": "bundler", // same algorithm Bun uses
+    "lib": [
+      "esnext",
+      "dom"
+    ], // add 'dom' for fetch, WebSocket, etc.
+    "verbatimModuleSyntax": true, // This is the correct option
+    /* ——— Strictness ——— */
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true, // faster CI without losing safety
+    /* ——— Misc quality-of-life ——— */
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
+    /* ——— Global type packages ——— */
+    "types": [
+      "bun-types" // gives you `declare const Bun …`
+    ]
+  },
+  /* ——— What to check ——— */
+  "include": [
+    "./**/*.ts",
+    "./**/*.tsx",
+    "./types/**/*"
+  ],
+  "exclude": [
+    "node_modules"
+    // IMPORTANT: "types/generated" was removed from here
+  ]
+}

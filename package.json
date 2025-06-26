@@ -1,0 +1,19 @@
+{
+  "scripts": {
+    "migrate": "bun run scripts/migrate.ts up && bun run scripts/seed.ts",
+    "migrate:down": "bun run scripts/migrate.ts down",
+    "gen:types": "bunx kanel --config ./.kanelrc.js",
+    "type-check": "bunx tsc --noemit"
+  },
+  "dependencies": {
+    "effect": "^3.16.9",
+    "elysia": "^1.3.5",
+    "kysely": "^0.28.2"
+  },
+  "devDependencies": {
+    "@kristiandupont/recase": "^1.4.1",
+    "bun-types": "^1.2.17",
+    "kanel": "^3.14.1",
+    "kanel-kysely": "^0.7.1"
+  }
+}
