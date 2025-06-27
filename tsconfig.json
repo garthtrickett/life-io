@@ -2,6 +2,7 @@
 // --- Fix: Removed "types/generated" from the exclude array ---
 {
   "compilerOptions": {
+    "experimentalDecorators": true,
     /* ——— Output ——— */
     "noEmit": true, // Bun handles runtime transpile
     /* ——— Modules & target ——— */
