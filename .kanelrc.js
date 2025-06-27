@@ -1,12 +1,17 @@
-import { makeKyselyHook } from "kanel-kysely";
+const { makeKyselyHook } = require("kanel-kysely");
 
-export default {
+module.exports = {
   connection: { connectionString: process.env.DATABASE_URL },
 
   outputPath: "./types/generated",
   schemas: ["public"],
 
-  preRenderHooks: [makeKyselyHook()],
+  preRenderHooks: [
+    // Add the options object here
+    makeKyselyHook({
+      useTypeImports: true,
+    }),
+  ],
 
   // Optional: users -> User, notes -> Note
   // typeNameDecorator: (name) =>

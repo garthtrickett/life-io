@@ -1,6 +1,5 @@
-import type { Browser as Logtail } from "@logtail/js";
-import { Effect, pipe } from "effect";
-import { getEffectiveLogLevel, levelRank } from "../shared/logConfig";
+import { Console, Effect, pipe } from "effect";
+import type { LogLevel } from "../shared/logConfig";
 
 export type Logger = {
   info: (...args: any[]) => void;
@@ -9,41 +8,77 @@ export type Logger = {
   debug: (...args: any[]) => void;
 };
 
-const shouldLog = (
-  messageLevel: keyof typeof levelRank,
-  userId?: string,
-): boolean =>
-  levelRank[messageLevel] >= levelRank[getEffectiveLogLevel(userId)];
+export type LoggableLevel = Exclude<LogLevel, "silent">;
 
-const adaptLogtail = (lt: Logtail, userId?: string): Logger => ({
-  info: (...args: Parameters<Logtail["info"]>) => {
-    if (shouldLog("info", userId)) lt.info(...args);
-  },
-  error: (...args: Parameters<Logtail["error"]>) => {
-    if (shouldLog("error", userId)) lt.error(...args);
-  },
-  warn: (...args: Parameters<Logtail["warn"]>) => {
-    if (shouldLog("warn", userId)) lt.warn(...args);
-  },
-  debug: (...args: Parameters<Logtail["debug"]>) => {
-    if (shouldLog("debug", userId)) lt.debug(...args);
-  },
+// --- This is our new Development Logger ---
+const createDevelopmentLogger = (): Logger => {
+  const sendLogToServer = (level: LogLevel, args: any[]) => {
+    fetch("/log/client", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ level, args }),
+    }).catch(console.error);
+  };
+
+  return {
+    info: (...args) => {
+      console.info(...args);
+      sendLogToServer("info", args);
+    },
+    error: (...args) => {
+      console.error(...args);
+      sendLogToServer("error", args);
+    },
+    warn: (...args) => {
+      console.warn(...args);
+      sendLogToServer("warn", args);
+    },
+    debug: (...args) => {
+      console.debug(...args);
+      sendLogToServer("debug", args);
+    },
+  };
+};
+
+// --- This is our Production Logger ---
+const createProductionLogger = (token: string): Effect.Effect<Logger, Error> =>
+  Effect.gen(function* () {
+    const { Browser } = yield* Effect.tryPromise(() => import("@logtail/js"));
+    const logtail = new Browser(token);
+    yield* Console.log(
+      "Client logger (Logtail) created successfully for production.",
+    );
+    return {
+      info: logtail.info.bind(logtail),
+      error: logtail.error.bind(logtail),
+      warn: logtail.warn.bind(logtail),
+      debug: logtail.debug.bind(logtail),
+    };
+  });
+
+// --- This is the main Effect that decides which logger to create ---
+const createClientLoggerEffect = Effect.gen(function* () {
+  if (import.meta.env.DEV) {
+    yield* Console.log(
+      "Client logger running in DEV mode (logging to console and server).",
+    );
+    return createDevelopmentLogger();
+  }
+
+  const token = import.meta.env.VITE_LOGTAIL_SOURCE_TOKEN;
+  if (!token) {
+    yield* Console.warn(
+      "VITE_LOGTAIL_SOURCE_TOKEN not set for production build! Falling back to console logging.",
+    );
+    return createDevelopmentLogger();
+  }
+
+  return yield* createProductionLogger(token);
 });
-
-const createClientLoggerEffect = pipe(
-  // Use the Vite/frontend environment variable for the token
-  Effect.tryPromise(() =>
-    import("@logtail/js").then(
-      ({ Browser }) => new Browser(import.meta.env.VITE_LOGTAIL_SOURCE_TOKEN!),
-    ),
-  ),
-  Effect.map((lt) => adaptLogtail(lt)),
-  Effect.tap(() => console.log("Client logger created successfully")),
-);
 
 export const clientLoggerPromise: Promise<Logger> = Effect.runPromise(
   createClientLoggerEffect,
-) as Promise<Logger>;
+);
 
 export async function getClientLoggerWithUser(
   userId: string,
@@ -59,11 +94,8 @@ export async function getClientLoggerWithUser(
   };
 }
 
-/**
- * Generic client logging helper that returns an Effect which logs the given message.
- */
 export function clientLog(
-  level: "info" | "error" | "warn" | "debug",
+  level: LoggableLevel,
   message: string,
   userId: string,
   context?: string,

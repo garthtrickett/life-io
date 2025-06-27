@@ -1,8 +1,13 @@
 // FILE: tsconfig.json
-// --- Fix: Removed "types/generated" from the exclude array ---
 {
   "compilerOptions": {
     "experimentalDecorators": true,
+    // --- FIX: Set to 'false' ---
+    // Lit's decorators work by replacing class fields with accessors.
+    // When this is 'true' (the modern standard), it uses `Object.defineProperty`,
+    // which prevents Lit's decorators from working correctly. Setting it to 'false'
+    // uses the legacy behavior that Lit's decorators rely on.
+    "useDefineForClassFields": false,
     /* ——— Output ——— */
     "noEmit": true, // Bun handles runtime transpile
     /* ——— Modules & target ——— */
@@ -13,7 +18,8 @@
       "esnext",
       "dom"
     ], // add 'dom' for fetch, WebSocket, etc.
-    "verbatimModuleSyntax": true, // This is the correct option
+    "verbatimModuleSyntax": false, // This is the correct option
+    "esModuleInterop": true,
     /* ——— Strictness ——— */
     "strict": true,
     "forceConsistentCasingInFileNames": true,
@@ -34,6 +40,5 @@
   ],
   "exclude": [
     "node_modules"
-    // IMPORTANT: "types/generated" was removed from here
   ]
 }

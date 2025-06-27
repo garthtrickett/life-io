@@ -2,63 +2,85 @@
 import { Migrator, FileMigrationProvider } from "kysely";
 import * as path from "node:path";
 import { promises as fs } from "node:fs";
-import { db } from "../db/kysely"; // Import our new central db instance
+import { db } from "../db/kysely";
+import { serverLog } from "../lib/server/logger.server";
+import { Effect } from "effect";
 
 async function migrate(direction: "up" | "down") {
-  console.log(`Running migrations: ${direction}`);
+  await Effect.runPromise(
+    serverLog(
+      "info",
+      `Running migrations: ${direction}`,
+      undefined,
+      "MigrationScript",
+    ),
+  );
 
   const migrator = new Migrator({
-    db, // Use the configured Kysely instance
+    db,
     provider: new FileMigrationProvider({
       fs,
       path,
-      // The migration folder is relative to the project root
       migrationFolder: path.join(process.cwd(), "migrations"),
     }),
   });
 
+  const handleResults = async (error?: unknown, results?: any[]) => {
+    // Destructure each result object in the loop
+    results?.forEach(({ status, migrationName }) => {
+      Effect.runPromise(
+        serverLog(
+          status === "Success" ? "info" : "error",
+          `Migration "${migrationName}" status: ${status}`,
+          undefined,
+          "MigrationScript",
+        ),
+      );
+    });
+
+    if (error) {
+      await Effect.runPromise(
+        serverLog(
+          "error",
+          `Migration failed: ${error}`,
+          undefined,
+          "MigrationScript",
+        ),
+      );
+      process.exit(1);
+    }
+
+    await db.destroy();
+  };
+
   if (direction === "down") {
     const { error, results } = await migrator.migrateDown();
-    results?.forEach((it) => {
-      if (it.status === "Success") {
-        console.log(
-          `✅ Migration "${it.migrationName}" was reverted successfully`,
-        );
-      } else if (it.status === "Error") {
-        console.error(`❌ Failed to revert migration "${it.migrationName}"`);
-      }
-    });
-    if (error) {
-      console.error("❌ Migration failed:", error);
-      process.exit(1);
-    }
+    await handleResults(error, results);
   } else {
     const { error, results } = await migrator.migrateToLatest();
-    results?.forEach((it) => {
-      if (it.status === "Success") {
-        console.log(
-          `✅ Migration "${it.migrationName}" was executed successfully`,
-        );
-      } else if (it.status === "Error") {
-        console.error(`❌ Failed to execute migration "${it.migrationName}"`);
-      }
-    });
-    if (error) {
-      console.error("❌ Migration failed:", error);
-      process.exit(1);
-    }
+    await handleResults(error, results);
   }
-
-  // Ensure the connection is closed
-  await db.destroy();
 }
 
-const directionArg = Bun.argv[2];
+const directionArg = process.argv[2];
 if (directionArg !== "up" && directionArg !== "down") {
-  console.error("Invalid argument. Use 'up' or 'down'.");
-  process.exit(1);
+  Effect.runPromise(
+    serverLog(
+      "error",
+      "Invalid argument. Use 'up' or 'down'.",
+      undefined,
+      "MigrationScript",
+    ),
+  ).then(() => process.exit(1));
+} else {
+  migrate(directionArg as "up" | "down").then(() => {
+    Effect.runPromise(
+      serverLog(
+        "info",
+        "✅ Migrations complete!",
+        undefined,
+        "MigrationScript",
+      ),
+    );
+  });
 }
-
-migrate(directionArg).then(() => {
-  console.log("✅ Done!");
-});

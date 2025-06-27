@@ -1,18 +1,47 @@
 // FILE: features/notes/createNote.ts
-// --- Fix: Correctly typed the `note` parameter using the `Note` interface ---
-
-import { Effect } from "effect";
+import { Effect, pipe } from "effect";
 import { Db } from "../../db/DbTag";
 import type { Insertable } from "kysely";
-import type Note from "../../types/generated/Note"; // Import the generated Note interface
+import type Note from "../../types/generated/Note";
+import { serverLog } from "../../lib/server/logger.server";
 
-// Kysely's Insertable<T> utility type requires the table's interface type (Note),
-// not the table name as a string ('note'). This change ensures the 'note'
-// parameter has the correct type that Kysely's `values()` method expects.
 export const createNote = (note: Insertable<Note>) =>
   Effect.gen(function* () {
     const db = yield* Db;
-    return yield* Effect.promise(() =>
-      db.insertInto("note").values(note).returningAll().executeTakeFirst(),
+
+    yield* serverLog(
+      "info",
+      `Attempting to create note titled: "${note.title}"`,
+      note.user_id,
+      "CreateNote",
     );
+
+    const result = yield* pipe(
+      Effect.tryPromise({
+        try: () =>
+          db.insertInto("note").values(note).returningAll().executeTakeFirst(),
+        catch: (error) => new Error(`Database Error: ${error}`),
+      }),
+      Effect.tap((createdNote) =>
+        serverLog(
+          "info",
+          `Successfully created note with ID: ${createdNote?.id}`,
+          note.user_id,
+          "CreateNote",
+        ),
+      ),
+      Effect.catchAll((error) =>
+        pipe(
+          serverLog(
+            "error",
+            `Failed to create note: ${error.message}`,
+            note.user_id,
+            "CreateNote",
+          ),
+          Effect.andThen(() => Effect.fail(error)),
+        ),
+      ),
+    );
+
+    return result;
   });
