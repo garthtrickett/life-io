@@ -1,0 +1,50 @@
+// FILE: features/notes/getNotes.ts
+import { Effect, pipe } from "effect";
+import { Db } from "../../db/DbTag";
+import { serverLog } from "../../lib/server/logger.server";
+
+export const getNotes = (userId: string) =>
+  Effect.gen(function* () {
+    const db = yield* Db;
+
+    yield* serverLog(
+      "info",
+      `Attempting to fetch all notes for user ID: "${userId}"`,
+      userId,
+      "GetNotes",
+    );
+
+    const result = yield* pipe(
+      Effect.tryPromise({
+        try: () =>
+          db
+            .selectFrom("note")
+            .selectAll()
+            .where("user_id", "=", userId)
+            .orderBy("updated_at", "desc")
+            .execute(),
+        catch: (error) => new Error(`Database Error: ${error}`),
+      }),
+      Effect.tap((notes) =>
+        serverLog(
+          "info",
+          `Successfully fetched ${notes.length} notes.`,
+          userId,
+          "GetNotes",
+        ),
+      ),
+      Effect.catchAll((error) =>
+        pipe(
+          serverLog(
+            "error",
+            `Failed to fetch notes: ${error.message}`,
+            userId,
+            "GetNotes",
+          ),
+          Effect.andThen(() => Effect.fail(error)),
+        ),
+      ),
+    );
+
+    return result;
+  });

@@ -1,0 +1,32 @@
+// File: ./components/layouts/main-layout.ts
+// NEW: A generic, slot-based layout component as per the prompt's recommendation.
+import { LitElement, html } from "lit";
+import { customElement } from "lit/decorators.js";
+import tailwindStyles from "../../styles/main.css?inline";
+
+// Adopt the global stylesheet for Tailwind utility classes.
+const sheet = new CSSStyleSheet();
+sheet.replaceSync(tailwindStyles);
+
+@customElement("main-layout")
+export class MainLayout extends LitElement {
+  connectedCallback() {
+    super.connectedCallback();
+    this.shadowRoot!.adoptedStyleSheets = [sheet];
+  }
+
+  render() {
+    return html`
+      <div class="min-h-screen bg-gray-50 text-gray-900">
+        <header class="p-4 bg-white shadow-sm">
+          <slot name="header">
+            <h1 class="text-xl font-bold">Default Header</h1>
+          </slot>
+        </header>
+        <main class="p-4">
+          <slot></slot>
+        </main>
+      </div>
+    `;
+  }
+}

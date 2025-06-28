@@ -1,7 +1,12 @@
-// File: ./components/notion-button-a11y.ts
+// File: ./components/ui/notion-button-a11y.ts
 import { LitElement, html, css } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import tailwindStyles from "../styles/main.css?inline";
+import {
+  animate,
+  type DOMKeyframesDefinition,
+  type AnimationOptions,
+} from "motion";
+import tailwindStyles from "../../styles/main.css?inline";
 
 const sheet = new CSSStyleSheet();
 sheet.replaceSync(tailwindStyles);
@@ -23,6 +28,14 @@ export class NotionButton extends LitElement {
   connectedCallback() {
     super.connectedCallback();
     this.shadowRoot!.adoptedStyleSheets = [sheet];
+    this.addEventListener("mouseenter", this._handleMouseEnter);
+    this.addEventListener("mouseleave", this._handleMouseLeave);
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    this.removeEventListener("mouseenter", this._handleMouseEnter);
+    this.removeEventListener("mouseleave", this._handleMouseLeave);
   }
 
   /**
@@ -37,6 +50,13 @@ export class NotionButton extends LitElement {
    */
   @property({ type: String })
   href?: string;
+
+  private _handleMouseEnter() {
+    if (!this.loading) {
+    }
+  }
+
+  private _handleMouseLeave() {}
 
   private handleClick(e: MouseEvent) {
     if (this.loading) {
