@@ -6,10 +6,9 @@ import { clientLog } from "../lib/client/logger.client.js";
 import { trpc } from "../lib/client/trpc.js";
 import "./notion-button-a11y.ts";
 
-// --- SAM Pattern Implementation ---
+// --- SAM (State-Action-Model) Pattern with Effects ---
 
-// 1. Model: Represents the state of the application.
-//    MODIFIED: Now includes `title` and `content` to manage form inputs.
+// 1. Model: The complete state of the application.
 interface Model {
   status: "idle" | "submitting" | "success" | "error";
   error: string | null;
@@ -18,18 +17,16 @@ interface Model {
   content: string;
 }
 
-// 2. Actions: Represent the user's intentions.
-//    MODIFIED: Added actions to update form fields.
+// 2. Actions: All possible intentions that can change the state.
 type Action =
   | { type: "UPDATE_TITLE"; payload: string }
   | { type: "UPDATE_CONTENT"; payload: string }
   | { type: "SUBMIT_START" }
   | { type: "SUBMIT_SUCCESS" }
   | { type: "SUBMIT_ERROR"; payload: string }
-  | { type: "RESET" };
+  | { type: "RESET_STATUS" };
 
-// 3. Update: A function that computes the new model based on the current model and an action.
-//    MODIFIED: Handles new actions to update the model.
+// 3. Update: A PURE function to calculate the next state. It does NOT perform side effects.
 const update = (model: Model, action: Action): Model => {
   switch (action.type) {
     case "UPDATE_TITLE":
@@ -37,20 +34,20 @@ const update = (model: Model, action: Action): Model => {
     case "UPDATE_CONTENT":
       return { ...model, content: action.payload };
     case "SUBMIT_START":
+      // Validation happens before this action is proposed.
       return { ...model, status: "submitting", error: null };
     case "SUBMIT_SUCCESS":
-      // On success, clear the form fields in the model.
-      return { ...model, status: "success", title: "", content: "" };
+      return { ...model, status: "success", title: "", content: "" }; // Clear form on success
     case "SUBMIT_ERROR":
       return { ...model, status: "error", error: action.payload };
-    case "RESET":
+    case "RESET_STATUS":
       return { ...model, status: "idle", error: null };
     default:
       return model;
   }
 };
 
-// --- Original Code with modifications for SAM Pattern ---
+// --- Web Component Implementation ---
 
 import tailwindStyles from "../styles/main.css?inline";
 
@@ -64,7 +61,6 @@ export class MyNoteForm extends LitElement {
     this.shadowRoot!.adoptedStyleSheets = [sheet];
   }
 
-  // MODIFIED: The model now includes initial empty values for the form fields.
   @state()
   private _model: Model = {
     status: "idle",
@@ -74,80 +70,67 @@ export class MyNoteForm extends LitElement {
     content: "",
   };
 
-  private present(action: Action) {
+  // 4. Propose: The central function to dispatch actions and trigger updates.
+  private propose(action: Action) {
+    // a. Calculate the next state synchronously.
     this._model = update(this._model, action);
+    // b. Handle any side effects based on the new state and action.
+    this.react(this._model, action);
   }
 
-  private async _handleSubmit(e?: Event) {
-    e?.preventDefault?.();
+  // 5. React: The "effect handler". This is where side effects like API calls live.
+  private async react(model: Model, action: Action) {
+    // Only react to the SUBMIT_START action to perform the API call.
+    if (action.type === "SUBMIT_START") {
+      const { userId, title, content } = model;
+      const noteData = { user_id: userId, title, content };
 
-    // MODIFIED: Get title and content directly from the model, not the DOM.
-    const { userId, title, content } = this._model;
+      const createNoteApiCall = Effect.tryPromise({
+        try: () => trpc.note.createNote.mutate(noteData),
+        catch: (error: any) =>
+          new Error(`tRPC Mutation Error: ${error.message}`),
+      });
 
-    if (!title) {
-      this.present({ type: "SUBMIT_ERROR", payload: "Title is required." });
-      return;
-    }
-
-    this.present({ type: "SUBMIT_START" });
-
-    const noteData = { user_id: userId, title, content };
-
-    const createNoteApiCall = Effect.tryPromise({
-      try: () => trpc.note.createNote.mutate(noteData),
-      catch: (error: any) => new Error(`tRPC Mutation Error: ${error.message}`),
-    });
-
-    const program = pipe(
-      clientLog(
-        "info",
-        `User attempting to create note: "${title}"`,
-        userId,
-        "NoteCreation",
-      ),
-      Effect.andThen(() => createNoteApiCall),
-      Effect.tap((response) => {
-        // Dispatch success action, which will also clear form fields in the model.
-        this.present({ type: "SUBMIT_SUCCESS" });
-        setTimeout(() => {
-          if (this._model.status === "success") this.present({ type: "RESET" });
-        }, 3000);
-        return clientLog(
+      const program = pipe(
+        clientLog(
           "info",
-          `Successfully created note via tRPC. Response ID: ${response?.id}`,
+          `User submitting note: "${title}"`,
           userId,
-          "NoteCreation",
-        );
-      }),
-      Effect.catchAll((error) => {
-        const errorMessage = error.message || "An unknown error occurred.";
-        this.present({ type: "SUBMIT_ERROR", payload: errorMessage });
-        setTimeout(() => {
-          if (this._model.status === "error") this.present({ type: "RESET" });
-        }, 3000);
-        return pipe(
-          clientLog(
-            "error",
-            `Failed to create note via tRPC: ${errorMessage}`,
+          "NoteSubmission",
+        ),
+        Effect.andThen(() => createNoteApiCall),
+        Effect.tap((response) => {
+          // On success, propose the SUBMIT_SUCCESS action.
+          this.propose({ type: "SUBMIT_SUCCESS" });
+          setTimeout(() => {
+            if (this._model.status === "success")
+              this.propose({ type: "RESET_STATUS" });
+          }, 3000);
+          return clientLog(
+            "info",
+            `Note created. ID: ${response?.id}`,
             userId,
-            "NoteCreation",
-          ),
-          Effect.andThen(() => Effect.void),
-        );
-      }),
-    );
-    await Effect.runPromise(program);
-  }
-
-  // MODIFIED: Event handlers for input fields to update the model.
-  private _handleTitleInput(e: Event) {
-    const title = (e.target as HTMLInputElement).value;
-    this.present({ type: "UPDATE_TITLE", payload: title });
-  }
-
-  private _handleContentInput(e: Event) {
-    const content = (e.target as HTMLTextAreaElement).value;
-    this.present({ type: "UPDATE_CONTENT", payload: content });
+            "NoteSubmission",
+          );
+        }),
+        Effect.catchAll((error) => {
+          const errorMessage = error.message || "An unknown error occurred.";
+          // On failure, propose the SUBMIT_ERROR action.
+          this.propose({ type: "SUBMIT_ERROR", payload: errorMessage });
+          setTimeout(() => {
+            if (this._model.status === "error")
+              this.propose({ type: "RESET_STATUS" });
+          }, 3000);
+          return clientLog(
+            "error",
+            `Note creation failed: ${errorMessage}`,
+            userId,
+            "NoteSubmission",
+          );
+        }),
+      );
+      await Effect.runPromise(program);
+    }
   }
 
   render() {
@@ -157,13 +140,17 @@ export class MyNoteForm extends LitElement {
           <h2 class="text-2xl font-bold text-zinc-900 mb-4">
             Create a New Note
           </h2>
-          <form class="flex flex-col gap-4">
+          <div class="flex flex-col gap-4">
             <input
               name="title"
               placeholder="Note Title"
               required
               .value=${this._model.title}
-              @input=${this._handleTitleInput}
+              @input=${(e: Event) =>
+                this.propose({
+                  type: "UPDATE_TITLE",
+                  payload: (e.target as HTMLInputElement).value,
+                })}
               .disabled=${this._model.status === "submitting"}
               class="w-full px-3 py-2 border border-zinc-300 rounded-md"
             />
@@ -172,19 +159,34 @@ export class MyNoteForm extends LitElement {
               placeholder="Your thoughts go here..."
               required
               .value=${this._model.content}
-              @input=${this._handleContentInput}
+              @input=${(e: Event) =>
+                this.propose({
+                  type: "UPDATE_CONTENT",
+                  payload: (e.target as HTMLTextAreaElement).value,
+                })}
               .disabled=${this._model.status === "submitting"}
               class="w-full px-3 py-2 border border-zinc-300 rounded-md min-h-[120px]"
             ></textarea>
+
             <notion-button
               class="self-end"
               .loading=${this._model.status === "submitting"}
-              @notion-button-click=${this._handleSubmit}
+              @notion-button-click=${() => {
+                if (!this._model.title) {
+                  this.propose({
+                    type: "SUBMIT_ERROR",
+                    payload: "Title is required.",
+                  });
+                } else {
+                  this.propose({ type: "SUBMIT_START" });
+                }
+              }}
             >
               ${this._model.status === "submitting"
                 ? "Creating…"
                 : "Create Note"}
             </notion-button>
+
             ${this._model.status === "error"
               ? html`<div
                   class="mt-4 p-3 rounded-md bg-red-100 text-red-800 border border-red-200"
@@ -199,7 +201,7 @@ export class MyNoteForm extends LitElement {
                   Note created successfully!
                 </div>`
               : ""}
-          </form>
+          </div>
         </div>
       </div>
     `;

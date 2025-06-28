@@ -1,20 +1,37 @@
-/* components/notion-button-a11y.ts */
 import { LitElement, html, css } from "lit";
-import { customElement, property } from "lit/decorators.js";
+// --- FIX START ---
+// The @property decorator is now correctly imported alongside the others.
+import { customElement, property, state } from "lit/decorators.js";
+// --- FIX END ---
 
-// Import your global Tailwind styles. Vite will process this into a CSS string.
 import tailwindStyles from "../styles/main.css?inline";
 
-// --- The Fix: Create a reusable stylesheet ---
-// 1. Create a CSSStyleSheet object from the imported string.
-//    This is parsed by the browser ONCE, making it very performant.
 const sheet = new CSSStyleSheet();
 sheet.replaceSync(tailwindStyles);
-// ------------------------------------------
+
+// --- SAM (State-Action-Model) Pattern with Effects ---
+
+interface Model {
+  loading: boolean;
+}
+
+type Action = { type: "CLICK" } | { type: "SET_LOADING"; payload: boolean };
+
+const update = (model: Model, action: Action): Model => {
+  switch (action.type) {
+    case "CLICK":
+      return { ...model, loading: true };
+    case "SET_LOADING":
+      return { ...model, loading: action.payload };
+    default:
+      return model;
+  }
+};
+
+// --- Web Component Implementation ---
 
 @customElement("notion-button")
 export class NotionButton extends LitElement {
-  // Use a standard `styles` property for any styles UNIQUE to this component.
   static styles = [
     css`
       :host {
@@ -23,39 +40,54 @@ export class NotionButton extends LitElement {
     `,
   ];
 
-  // The createRenderRoot() method is removed to enable the Shadow DOM.
-
-  @property({ type: Boolean, reflect: true })
-  loading = false;
-
-  @property({ attribute: false })
-  action?: () => Promise<unknown>;
-
   connectedCallback() {
     super.connectedCallback();
-    // 2. In the connectedCallback, adopt the shared stylesheet.
-    //    This applies the full suite of Tailwind classes to this component's Shadow DOM.
     this.shadowRoot!.adoptedStyleSheets = [sheet];
   }
 
-  private handleClick() {
-    if (this.loading) return;
-    this.dispatchEvent(
-      new CustomEvent("notion-button-click", { bubbles: true, composed: true }),
-    );
+  @state()
+  private _model: Model = {
+    loading: false,
+  };
+
+  @property({ type: Boolean, reflect: true })
+  set loading(isLoading: boolean) {
+    this.propose({ type: "SET_LOADING", payload: isLoading });
   }
 
-  updated() {
-    this.setAttribute("aria-busy", String(this.loading));
+  get loading(): boolean {
+    return this._model.loading;
+  }
+
+  private propose(action: Action) {
+    this._model = update(this._model, action);
+    this.react(action);
+  }
+
+  private react(action: Action) {
+    if (action.type === "CLICK") {
+      this.dispatchEvent(
+        new CustomEvent("notion-button-click", {
+          bubbles: true,
+          composed: true,
+        }),
+      );
+    }
+  }
+
+  private handleClick() {
+    if (this._model.loading) return;
+    this.propose({ type: "CLICK" });
   }
 
   render() {
-    // The render function remains the same. The `class="..."` attributes
-    // will now be correctly applied from the adopted stylesheet.
+    const { loading } = this._model;
+
     return html`
       <button
         @click=${this.handleClick}
-        ?disabled=${this.loading}
+        ?disabled=${loading}
+        aria-busy=${loading}
         class="
           inline-flex items-center justify-center gap-2
           px-4 py-2
@@ -67,7 +99,7 @@ export class NotionButton extends LitElement {
           disabled:bg-zinc-600 disabled:pointer-events-none
         "
       >
-        ${this.loading
+        ${loading
           ? html`
               <span
                 class="w-4 h-4 border-2 border-zinc-600 border-t-white rounded-full animate-spin"
