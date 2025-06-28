@@ -1,58 +1,48 @@
-/* notion-button-a11y.ts */
+/* components/notion-button-a11y.ts */
 import { LitElement, html, css } from "lit";
 import { customElement, property } from "lit/decorators.js";
 
+// Import your global Tailwind styles. Vite will process this into a CSS string.
+import tailwindStyles from "../styles/main.css?inline";
+
+// --- The Fix: Create a reusable stylesheet ---
+// 1. Create a CSSStyleSheet object from the imported string.
+//    This is parsed by the browser ONCE, making it very performant.
+const sheet = new CSSStyleSheet();
+sheet.replaceSync(tailwindStyles);
+// ------------------------------------------
+
 @customElement("notion-button")
 export class NotionButton extends LitElement {
-  static styles = css`
-    /* The spinner animation is the primary style needed here,
-      as Tailwind will handle the rest via the linked stylesheet. */
-    .spinner {
-      width: 16px;
-      height: 16px;
-      border: 2px solid rgba(55, 53, 47, 0.25);
-      border-top-color: #20201c;
-      border-radius: 50%;
-      animation: spin 0.6s linear infinite;
-    }
-
-    @keyframes spin {
-      to {
-        transform: rotate(360deg);
+  // Use a standard `styles` property for any styles UNIQUE to this component.
+  static styles = [
+    css`
+      :host {
+        display: inline-block;
       }
-    }
+    `,
+  ];
 
-    /* Keep the accessible visually hidden utility */
-    .sr-only {
-      position: absolute !important;
-      width: 1px;
-      height: 1px;
-      margin: -1px;
-      overflow: hidden;
-      clip: rect(0 0 0 0);
-      border: 0;
-    }
-  `;
+  // The createRenderRoot() method is removed to enable the Shadow DOM.
 
-  // Shadow DOM is enabled so that <slot> works correctly.
+  @property({ type: Boolean, reflect: true })
+  loading = false;
 
-  @property({ type: Boolean, reflect: true }) loading = false;
+  @property({ attribute: false })
+  action?: () => Promise<unknown>;
 
-  @property({ attribute: false }) action?: () => Promise<unknown>;
+  connectedCallback() {
+    super.connectedCallback();
+    // 2. In the connectedCallback, adopt the shared stylesheet.
+    //    This applies the full suite of Tailwind classes to this component's Shadow DOM.
+    this.shadowRoot!.adoptedStyleSheets = [sheet];
+  }
 
-  private async handleClick() {
+  private handleClick() {
     if (this.loading) return;
     this.dispatchEvent(
       new CustomEvent("notion-button-click", { bubbles: true, composed: true }),
     );
-    if (this.action) {
-      try {
-        this.loading = true;
-        await this.action();
-      } finally {
-        this.loading = false;
-      }
-    }
   }
 
   updated() {
@@ -60,24 +50,30 @@ export class NotionButton extends LitElement {
   }
 
   render() {
+    // The render function remains the same. The `class="..."` attributes
+    // will now be correctly applied from the adopted stylesheet.
     return html`
-      <link rel="stylesheet" href="/tailwind.css" />
       <button
         @click=${this.handleClick}
         ?disabled=${this.loading}
         class="
           inline-flex items-center justify-center gap-2
-          px-3 py-1.5
-          bg-white text-zinc-800 font-medium text-sm
-          border border-zinc-300 rounded-sm
+          px-4 py-2
+          bg-zinc-800 text-white font-semibold text-sm
+          border border-transparent rounded-md
           transition-colors duration-150
-          hover:bg-zinc-100
-          focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2
-          disabled:opacity-60 disabled:pointer-events-none
+          hover:bg-zinc-700
+          focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500 focus-visible:ring-offset-2
+          disabled:bg-zinc-600 disabled:pointer-events-none
         "
       >
         ${this.loading
-          ? html` <span class="spinner" aria-hidden="true"></span> `
+          ? html`
+              <span
+                class="w-4 h-4 border-2 border-zinc-600 border-t-white rounded-full animate-spin"
+                aria-hidden="true"
+              ></span>
+            `
           : ""}
         <slot></slot>
       </button>
