@@ -6,6 +6,7 @@ import { Effect, pipe } from "effect";
 import { PageAnimationMixin } from "../mixins/page-animation-mixin.ts";
 import { clientLog } from "../../lib/client/logger.client";
 import { trpc } from "../../lib/client/trpc";
+import { authStore } from "../../lib/client/stores/authStore";
 import type { NoteDto } from "../../types/generated/Note";
 import tailwindStyles from "../../styles/main.css?inline";
 import "../ui/skeleton-loader.ts";
@@ -19,7 +20,6 @@ interface Model {
   status: "loading" | "idle" | "saving" | "saved" | "error";
   note: NoteDto | null;
   error: string | null;
-  userId: string;
 }
 
 type Action =
@@ -76,7 +76,6 @@ export class NoteDetailPage extends PageAnimationMixin(LitElement) {
     status: "loading",
     note: null,
     error: null,
-    userId: "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",
   };
 
   private _updateTimeout: number | null = null;
@@ -97,6 +96,7 @@ export class NoteDetailPage extends PageAnimationMixin(LitElement) {
 
   private propose(action: Action) {
     this._model = update(this._model, action);
+    this.requestUpdate();
     this.react(this._model, action);
   }
 
@@ -111,8 +111,8 @@ export class NoteDetailPage extends PageAnimationMixin(LitElement) {
           Effect.tap((note) =>
             clientLog(
               "info",
-              `Fetched note: ${note?.title}`,
-              model.userId,
+              `Fetched note: ${note?.title}`, // Use authStore for the user ID
+              authStore.state.user?.id,
               "NoteDetail",
             ),
           ),
@@ -166,8 +166,8 @@ export class NoteDetailPage extends PageAnimationMixin(LitElement) {
           Effect.tap((updatedNote) =>
             clientLog(
               "info",
-              `Note "${updatedNote?.title}" updated.`,
-              model.userId,
+              `Note "${updatedNote?.title}" updated.`, // Use authStore for the user ID
+              authStore.state.user?.id,
               "NoteDetail",
             ),
           ),
@@ -210,12 +210,7 @@ export class NoteDetailPage extends PageAnimationMixin(LitElement) {
 
   render() {
     if (this._model.status === "loading") {
-      return html`
-        <div class="max-w-4xl mx-auto mt-6 p-8">
-          <skeleton-loader class="h-12 w-3/4 mb-6"></skeleton-loader>
-          <skeleton-loader class="h-64 w-full"></skeleton-loader>
-        </div>
-      `;
+      return html` <div class="max-w-4xl mx-auto mt-6 p-8"></div> `;
     }
 
     if (!this._model.note) {

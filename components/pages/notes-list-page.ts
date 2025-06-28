@@ -1,4 +1,5 @@
 // File: ./components/pages/notes-list-page.ts
+// --- UPDATE: Applied the styling approach from note-detail-page.ts ---
 import { LitElement, html } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { Effect, pipe } from "effect";
@@ -13,10 +14,14 @@ import { PageAnimationMixin } from "../mixins/page-animation-mixin.ts";
 import { trpc } from "../../lib/client/trpc";
 import { clientLog } from "../../lib/client/logger.client";
 import type { NoteDto } from "../../types/generated/Note";
-// --- 1. Import the navigate function ---
 import { navigate } from "../../lib/client/router.ts";
+import tailwindStyles from "../../styles/main.css?inline";
 import "../ui/notion-button-a11y.ts";
 import "../ui/skeleton-loader.ts";
+
+// --- STYLING: Create and populate a stylesheet to be adopted by the component ---
+const sheet = new CSSStyleSheet();
+sheet.replaceSync(tailwindStyles);
 
 // --- SAM (State-Action-Model) Pattern Definition ---
 interface Model {
@@ -46,8 +51,15 @@ const update = (model: Model, action: Action): Model => {
       return { ...model, isLoading: false, error: action.payload };
     case "CREATE_NOTE_START":
       return { ...model, isCreating: true, error: null };
+    // --- UPDATE: The model now correctly stores the new note in its list ---
     case "CREATE_NOTE_SUCCESS":
-      return { ...model, isCreating: false };
+      // Add the new note to the start of the notes array to keep the model's state consistent.
+      // This ensures the model accurately reflects the data state without needing a full refetch.
+      return {
+        ...model,
+        isCreating: false,
+        notes: [action.payload, ...model.notes],
+      };
     case "CREATE_NOTE_ERROR":
       return { ...model, isCreating: false, error: action.payload };
     case "SORT_NOTES_AZ":
@@ -71,12 +83,10 @@ export class DashboardPage extends PageAnimationMixin(LitElement) {
     userId: "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",
   };
 
-  createRenderRoot() {
-    return this;
-  }
-
   connectedCallback() {
     super.connectedCallback();
+    // --- STYLING: Apply the stylesheet to the component's shadow DOM ---
+    this.shadowRoot!.adoptedStyleSheets = [sheet];
     this.propose({ type: "FETCH_NOTES_START" });
   }
 
@@ -112,8 +122,9 @@ export class DashboardPage extends PageAnimationMixin(LitElement) {
 
       case "FETCH_NOTES_SUCCESS":
         await this.updateComplete;
+        // --- STYLING: Query inside the shadowRoot for animation targets ---
         const listItems = Array.from(
-          this.querySelectorAll<HTMLElement>("ul li"),
+          this.shadowRoot!.querySelectorAll<HTMLElement>("ul li"),
         );
         if (listItems.length > 0) {
           const keyframes: DOMKeyframesDefinition = {
@@ -162,7 +173,7 @@ export class DashboardPage extends PageAnimationMixin(LitElement) {
           }),
         );
         await Effect.runPromise(createEffect);
-        break; // --- 2. Replace the dispatchEvent logic with a direct navigate call ---
+        break;
 
       case "CREATE_NOTE_SUCCESS":
         navigate(`/notes/${action.payload.id}`);
@@ -173,130 +184,94 @@ export class DashboardPage extends PageAnimationMixin(LitElement) {
   renderNotesList() {
     if (this._model.isLoading) {
       return html`
-               
         <div class="space-y-3">
-                   
           <skeleton-loader class="h-12 w-full rounded-md"></skeleton-loader>
-                   
           <skeleton-loader class="h-12 w-full rounded-md"></skeleton-loader>
-                   
           <skeleton-loader class="h-12 w-2/3 rounded-md"></skeleton-loader>
-                 
         </div>
-             
       `;
     }
 
     if (this._model.notes.length === 0) {
       return html`
-               
         <div class="text-center text-zinc-500 py-16">
-                   
           <h3 class="text-xl font-semibold">No notes yet</h3>
-                   
           <p class="mt-2">Click "Create New Note" to get started.</p>
-                 
         </div>
-             
       `;
     }
 
     return html`
-           
       <ul class="space-y-3">
-               
         ${this._model.notes.map(
           (note) => html`
-                       
             <li .key=${note.id} ${animateDirective({ skipInitial: true })}>
-                           
               <a
                 href="/notes/${note.id}"
                 class="block p-4 bg-white border border-zinc-200 rounded-lg hover:border-zinc-400 transition-colors"
+                @click=${(e: Event) => {
+                  e.preventDefault();
+                  navigate(`/notes/${note.id}`);
+                }}
               >
-                               
                 <h3 class="font-semibold text-zinc-800">${note.title}</h3>
-                               
                 <p class="text-sm text-zinc-500 line-clamp-2 mt-1">
-                                    ${note.content || "No additional content"}
-                                 
+                  ${note.content || "No additional content"}
                 </p>
-                             
               </a>
-                         
             </li>
-                     
           `,
         )}
-             
       </ul>
-         
     `;
   }
 
   render() {
     if (this._model.isCreating) {
       return html`
-               
         <div
           class="fixed inset-0 bg-gray-50 flex items-center justify-center z-50"
         >
-                   
           <div
             class="w-12 h-12 border-4 border-zinc-300 border-t-zinc-600 rounded-full animate-spin"
           ></div>
-                 
         </div>
-             
       `;
     }
 
     return html`
-           
-      <div class="max-w-3xl mx-auto mt-6">
-               
+      <div class="max-w-3xl mx-auto mt-6 p-4 md:p-0">
         <div
           class="flex justify-between items-center bg-white border border-zinc-200 rounded-lg p-6 mb-6"
         >
-                   
           <div>
-                       
             <h2 class="text-2xl font-bold text-zinc-900">Your Notes</h2>
-                       
             <p class="mt-1 text-zinc-600">
-                            Create, view, and edit your notes below.            
+              Create, view, and edit your notes below.
             </p>
-                     
           </div>
-                   
           <div class="flex items-center gap-2">
-                       
             <button
               @click=${() => this.propose({ type: "SORT_NOTES_AZ" })}
               class="px-3 py-2 text-sm font-semibold text-zinc-600 bg-zinc-100 rounded-md hover:bg-zinc-200 transition-colors"
             >
-                            Sort A-Z            
+              Sort A-Z
             </button>
-                       
             <notion-button
               @notion-button-click=${() =>
                 this.propose({ type: "CREATE_NOTE_START" })}
               .loading=${this._model.isCreating}
             >
-                            Create New Note            
+              Create New Note
             </notion-button>
-                     
           </div>
-                 
         </div>
 
-               
         ${this._model.error
           ? html`<div class="text-red-500 mb-4">${this._model.error}</div>`
           : ""}
-                ${this.renderNotesList()}      
+        ${this.renderNotesList()}
       </div>
-         
     `;
   }
 }
