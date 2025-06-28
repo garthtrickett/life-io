@@ -1,5 +1,7 @@
+// File: ./components/home-page.ts
 import { LitElement, html } from "lit";
 import { customElement } from "lit/decorators.js";
+import "./notion-button-a11y.ts"; // Import the unified button
 
 @customElement("home-page")
 export class HomePage extends LitElement {
@@ -18,12 +20,7 @@ export class HomePage extends LitElement {
             using ElysiaJS, tRPC, Effect-TS, and Lit.
           </p>
           <div class="text-right pt-4">
-            <a
-              href="/create"
-              class="inline-block px-4 py-2 bg-zinc-800 text-white rounded-md hover:bg-zinc-700"
-            >
-              Create a Note
-            </a>
+            <notion-button href="/create"> Create a Note </notion-button>
           </div>
         </div>
       </div>
