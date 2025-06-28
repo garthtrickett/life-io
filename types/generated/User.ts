@@ -8,4 +8,5 @@ export default interface User {
   email: ColumnType<string, string, string>;
   password_hash: ColumnType<string, string, string>;
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  permissions: ColumnType<string[], string[] | undefined, string[]>;
 }

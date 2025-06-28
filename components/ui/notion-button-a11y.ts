@@ -1,20 +1,11 @@
 // File: ./components/ui/notion-button-a11y.ts
 import { LitElement, html, css } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import {
-  animate,
-  type DOMKeyframesDefinition,
-  type AnimationOptions,
-} from "motion";
 import tailwindStyles from "../../styles/main.css?inline";
 
 const sheet = new CSSStyleSheet();
 sheet.replaceSync(tailwindStyles);
 
-/**
- * A unified button component that can render as a <button> or an <a> tag
- * for consistent styling across the application.
- */
 @customElement("notion-button")
 export class NotionButton extends LitElement {
   static styles = [
@@ -28,54 +19,32 @@ export class NotionButton extends LitElement {
   connectedCallback() {
     super.connectedCallback();
     this.shadowRoot!.adoptedStyleSheets = [sheet];
-    this.addEventListener("mouseenter", this._handleMouseEnter);
-    this.addEventListener("mouseleave", this._handleMouseLeave);
   }
 
-  disconnectedCallback() {
-    super.disconnectedCallback();
-    this.removeEventListener("mouseenter", this._handleMouseEnter);
-    this.removeEventListener("mouseleave", this._handleMouseLeave);
-  }
-
-  /**
-   * When true, displays a loading spinner and disables the button.
-   */
   @property({ type: Boolean, reflect: true })
   loading = false;
 
-  /**
-   * If provided, the component will render as an anchor (<a>) tag.
-   * If omitted, it will render as a <button>.
-   */
   @property({ type: String })
   href?: string;
 
-  private _handleMouseEnter() {
-    if (!this.loading) {
-    }
-  }
+  @property({ type: String })
+  type: "button" | "submit" | "reset" = "submit";
 
-  private _handleMouseLeave() {}
-
-  private handleClick(e: MouseEvent) {
-    if (this.loading) {
-      e.preventDefault(); // Prevent navigation or form submission
-      return;
-    }
-    // Only dispatch the custom click event for <button> behavior
-    if (!this.href) {
-      this.dispatchEvent(
-        new CustomEvent("notion-button-click", {
-          bubbles: true,
-          composed: true,
-        }),
-      );
-    }
+  /**
+   * Dispatches a custom 'notion-button-click' event.
+   * This allows parent components to react to clicks without relying on
+   * native form submission behavior, which is broken by the Shadow DOM.
+   */
+  private _handleClick() {
+    this.dispatchEvent(
+      new CustomEvent("notion-button-click", {
+        bubbles: true, // Allows the event to bubble up through the DOM
+        composed: true, // Allows the event to cross the Shadow DOM boundary
+      }),
+    );
   }
 
   render() {
-    // A single source of truth for styling both the button and the link
     const baseClasses =
       "inline-flex items-center justify-center gap-2 px-4 py-2 bg-zinc-800 text-white rounded-md hover:bg-zinc-700 font-semibold text-sm transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500 focus-visible:ring-offset-2";
 
@@ -88,21 +57,20 @@ export class NotionButton extends LitElement {
       ></span>
     `;
 
-    // Render as a link if 'href' is provided
     if (this.href) {
       return html`
-        <a href=${this.href} class=${baseClasses} @click=${this.handleClick}>
+        <a href=${this.href} class=${baseClasses}>
           <slot></slot>
         </a>
       `;
     }
 
-    // Render as a button by default
     return html`
       <button
-        @click=${this.handleClick}
+        .type=${this.type}
         ?disabled=${this.loading}
         aria-busy=${this.loading}
+        @click=${this._handleClick}
         class="${baseClasses} ${disabledClasses}"
       >
         ${this.loading ? spinner : ""}

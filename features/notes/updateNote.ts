@@ -1,15 +1,12 @@
 // FILE: features/notes/updateNote.ts
 import { Effect, pipe } from "effect";
 import { Db } from "../../db/DbTag";
-import type { Updateable } from "kysely";
-import type Note from "../../types/generated/Note";
+import type { NoteUpdate } from "../../types/generated/public/Note";
 import { serverLog } from "../../lib/server/logger.server";
+import { NoteId } from "../../types/generated/public/Note";
+import { UserId } from "../../types/generated/public/User";
 
-export const updateNote = (
-  noteId: string,
-  userId: string,
-  note: Updateable<Note>,
-) =>
+export const updateNote = (noteId: NoteId, userId: UserId, note: NoteUpdate) =>
   Effect.gen(function* () {
     const db = yield* Db;
 

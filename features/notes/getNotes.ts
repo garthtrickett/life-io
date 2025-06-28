@@ -2,6 +2,7 @@
 import { Effect, pipe } from "effect";
 import { Db } from "../../db/DbTag";
 import { serverLog } from "../../lib/server/logger.server";
+import { UserId } from "../../types/generated/public/User";
 
 export const getNotes = (userId: string) =>
   Effect.gen(function* () {
@@ -20,7 +21,7 @@ export const getNotes = (userId: string) =>
           db
             .selectFrom("note")
             .selectAll()
-            .where("user_id", "=", userId)
+            .where("user_id", "=", userId as UserId)
             .orderBy("updated_at", "desc")
             .execute(),
         catch: (error) => new Error(`Database Error: ${error}`),

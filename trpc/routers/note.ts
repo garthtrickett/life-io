@@ -1,6 +1,5 @@
 // FILE: trpc/routers/note.ts
-// UPDATE: This file is now corrected to use safe type assertions after validation.
-import { router, publicProcedure } from "../trpc";
+import { router, createPermissionProtectedProcedure } from "../trpc";
 import { t } from "elysia";
 import { compile } from "@elysiajs/trpc";
 import { createNote } from "../../features/notes/createNote";
@@ -9,12 +8,9 @@ import { getNote } from "../../features/notes/getNote";
 import { updateNote } from "../../features/notes/updateNote";
 import { DbLayer } from "../../db/DbLayer";
 import { Effect } from "effect";
-import type { Insertable } from "kysely";
-import type Note from "../../types/generated/Note";
+import { perms } from "../../lib/shared/permissions";
+import type { NewNote, NoteId } from "../../types/generated/public/Note";
 
-const HARDCODED_USER_ID = "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11";
-
-// Define input types using `t` for reusability and type safety
 const CreateNoteInput = t.Object({
   title: t.String({ minLength: 1 }),
   content: t.String(),
@@ -31,48 +27,43 @@ const UpdateNoteInput = t.Object({
 });
 
 export const noteRouter = router({
-  // GET /notes -> Fetches all notes for the user
-  list: publicProcedure.query(async () => {
-    const program = getNotes(HARDCODED_USER_ID).pipe(Effect.provide(DbLayer));
-    return Effect.runPromise(program);
-  }),
+  list: createPermissionProtectedProcedure(perms.note.read).query(
+    async ({ ctx }) => {
+      const program = getNotes(ctx.user.id).pipe(Effect.provide(DbLayer));
+      return Effect.runPromise(program);
+    },
+  ),
 
-  // GET /notes/:id -> Fetches a single note by ID
-  getById: publicProcedure
+  getById: createPermissionProtectedProcedure(perms.note.read)
     .input(compile(GetByIdInput))
-    .query(async ({ input }) => {
-      // After validation, we can safely assert the type for TypeScript
+    .query(async ({ input, ctx }) => {
       const { id } = input as typeof GetByIdInput.static;
-      const program = getNote(id, HARDCODED_USER_ID).pipe(
-        Effect.provide(DbLayer),
-      );
+      const program = getNote(id, ctx.user.id).pipe(Effect.provide(DbLayer));
       return Effect.runPromise(program);
     }),
 
-  // POST /notes -> Creates a new note
-  create: publicProcedure
+  create: createPermissionProtectedProcedure(perms.note.write)
     .input(compile(CreateNoteInput))
-    .mutation(async ({ input }) => {
-      // Assert the type to fix the spread operator error
+    .mutation(async ({ input, ctx }) => {
       const { title, content } = input as typeof CreateNoteInput.static;
-      const noteData: Insertable<Note> = {
+      const noteData: NewNote = {
         title,
         content,
-        user_id: HARDCODED_USER_ID,
+        user_id: ctx.user.id,
       };
       const program = createNote(noteData).pipe(Effect.provide(DbLayer));
       return Effect.runPromise(program);
     }),
 
-  // PATCH /notes/:id -> Updates an existing note
-  update: publicProcedure
+  update: createPermissionProtectedProcedure(perms.note.write)
     .input(compile(UpdateNoteInput))
-    .mutation(async ({ input }) => {
-      // Assert the type to fix destructuring and property access errors
+    .mutation(async ({ input, ctx }) => {
       const { id, ...noteUpdateData } = input as typeof UpdateNoteInput.static;
-      const program = updateNote(id, HARDCODED_USER_ID, noteUpdateData).pipe(
-        Effect.provide(DbLayer),
-      );
+      const program = updateNote(
+        id as NoteId,
+        ctx.user.id,
+        noteUpdateData,
+      ).pipe(Effect.provide(DbLayer));
       return Effect.runPromise(program);
     }),
 });

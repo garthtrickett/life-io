@@ -1,5 +1,4 @@
 // File: ./components/layouts/main-layout.ts
-// NEW: A generic, slot-based layout component as per the prompt's recommendation.
 import { LitElement, html } from "lit";
 import { customElement } from "lit/decorators.js";
 import tailwindStyles from "../../styles/main.css?inline";

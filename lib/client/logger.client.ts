@@ -1,3 +1,4 @@
+// FILE: lib/client/logger.client.ts
 import { Console, Effect, pipe } from "effect";
 import type { LogLevel } from "../shared/logConfig";
 
@@ -81,11 +82,23 @@ export const clientLoggerPromise: Promise<Logger> = Effect.runPromise(
 );
 
 export async function getClientLoggerWithUser(
-  userId: string,
+  userId?: string, // FIX: userId is now optional
   context?: string,
 ): Promise<Logger> {
   const logger = await clientLoggerPromise;
-  const prefix = `[user: ${userId}]${context ? ` [context: ${context}]` : ""}`;
+
+  // FIX: Build the prefix string conditionally
+  const parts: string[] = [];
+  if (userId) parts.push(`[user: ${userId}]`);
+  if (context) parts.push(`[context: ${context}]`);
+  const prefix = parts.join(" ");
+
+  // Return the base logger if there's no extra context
+  if (!prefix) {
+    return logger;
+  }
+
+  // Return a new logger that prepends the prefix to all messages
   return {
     info: (...args) => logger.info(prefix, ...args),
     error: (...args) => logger.error(prefix, ...args),
@@ -97,7 +110,7 @@ export async function getClientLoggerWithUser(
 export function clientLog(
   level: LoggableLevel,
   message: string,
-  userId: string,
+  userId?: string, // FIX: userId is now optional
   context?: string,
 ): Effect.Effect<void, never, never> {
   return pipe(

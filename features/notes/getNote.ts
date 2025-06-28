@@ -2,6 +2,8 @@
 import { Effect, pipe } from "effect";
 import { Db } from "../../db/DbTag";
 import { serverLog } from "../../lib/server/logger.server";
+import { NoteId } from "../../types/generated/public/Note";
+import { UserId } from "../../types/generated/public/User";
 
 export const getNote = (noteId: string, userId: string) =>
   Effect.gen(function* () {
@@ -20,8 +22,8 @@ export const getNote = (noteId: string, userId: string) =>
           db
             .selectFrom("note")
             .selectAll()
-            .where("id", "=", noteId)
-            .where("user_id", "=", userId) // Ensure user owns the note
+            .where("id", "=", noteId as NoteId)
+            .where("user_id", "=", userId as UserId) // Ensure user owns the note
             .executeTakeFirst(),
         catch: (error) => new Error(`Database Error: ${error}`),
       }),

@@ -4,6 +4,7 @@
 import type { default as TagTable } from './Tag';
 import type { default as UserTable } from './User';
 import type { default as KyselyMigrationLockTable } from './KyselyMigrationLock';
+import type { default as SessionTable } from './Session';
 import type { default as NoteTable } from './Note';
 import type { default as KyselyMigrationTable } from './KyselyMigration';
 import type { default as NoteTagTable } from './NoteTag';
@@ -14,6 +15,8 @@ export default interface PublicSchema {
   user: UserTable;
 
   kysely_migration_lock: KyselyMigrationLockTable;
+
+  session: SessionTable;
 
   note: NoteTable;
 

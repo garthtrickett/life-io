@@ -1,6 +1,6 @@
 // FILE: types.ts
 // --- Fix: Use a more explicit re-export for the Database type ---
-import type Database_ from "./types/generated";
+import type Database_ from "./types/generated/Database";
 
 /**
  * The main Kysely database interface, combining all generated table types.
