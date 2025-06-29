@@ -11,14 +11,35 @@ export type Logger = {
 
 export type LoggableLevel = Exclude<LogLevel, "silent">;
 
-// --- This is our new Development Logger ---
-const createDevelopmentLogger = (): Logger => {
+/**
+ * This is the single, universal logger for the client-side. It sends all logs
+ * to our server's `/log/client` endpoint, regardless of the environment.
+ * The server is then responsible for handling them appropriately (console in dev, Logtail in prod).
+ */
+const createClientLogger = (): Logger => {
   const sendLogToServer = (level: LogLevel, args: unknown[]) => {
-    fetch("/log/client", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ level, args }),
-    }).catch(console.error);
+    // We use `navigator.sendBeacon` if available for a more reliable, non-blocking
+    // way to send logs, especially when the user is navigating away.
+    // Fallback to fetch for older browsers.
+    const url = "/log/client";
+    const data = JSON.stringify({ level, args });
+
+    try {
+      if (navigator.sendBeacon) {
+        // --- FIX START: Convert the string to a Blob to set the correct Content-Type ---
+        const blob = new Blob([data], { type: "application/json" });
+        navigator.sendBeacon(url, blob); // --- FIX END ---
+      } else {
+        fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: data,
+          keepalive: true, // Important for requests during page unload
+        });
+      }
+    } catch (error) {
+      console.error("Failed to send log to server:", error);
+    }
   };
 
   return {
@@ -41,53 +62,12 @@ const createDevelopmentLogger = (): Logger => {
   };
 };
 
-// --- This is our Production Logger ---
-const createProductionLogger = (token: string): Effect.Effect<Logger, Error> =>
-  Effect.gen(function* () {
-    const { Browser } = yield* Effect.tryPromise(() => import("@logtail/js"));
-    const logtail = new Browser(token);
-    yield* Console.log(
-      "Client logger (Logtail) created successfully for production.",
-    );
-
-    // FIX: The logtail methods are async and have a specific signature. We adapt
-    // them to our simple `Logger` interface. We join the arguments into a single
-    // string and use `void` to explicitly fire-and-forget the async call,
-    // satisfying both the type-checker and the linter.
-    return {
-      info: (...args: unknown[]) => {
-        void logtail.info(args.join(" "));
-      },
-      error: (...args: unknown[]) => {
-        void logtail.error(args.join(" "));
-      },
-      warn: (...args: unknown[]) => {
-        void logtail.warn(args.join(" "));
-      },
-      debug: (...args: unknown[]) => {
-        void logtail.debug(args.join(" "));
-      },
-    };
-  });
-
-// --- This is the main Effect that decides which logger to create ---
-const createClientLoggerEffect = Effect.gen(function* () {
-  if (import.meta.env.DEV) {
-    yield* Console.log(
-      "Client logger running in DEV mode (logging to console and server).",
-    );
-    return createDevelopmentLogger();
-  }
-
-  const token = import.meta.env.VITE_LOGTAIL_SOURCE_TOKEN;
-  if (!token) {
-    yield* Console.warn(
-      "VITE_LOGTAIL_SOURCE_TOKEN not set for production build! Falling back to console logging.",
-    );
-    return createDevelopmentLogger();
-  }
-
-  return yield* createProductionLogger(token);
+// This effect now simply creates our universal client logger.
+const createClientLoggerEffect = Effect.sync(() => {
+  Console.log(
+    "Client logger created. All logs will be sent to the server endpoint.",
+  );
+  return createClientLogger();
 });
 
 export const clientLoggerPromise: Promise<Logger> = Effect.runPromise(
@@ -95,23 +75,20 @@ export const clientLoggerPromise: Promise<Logger> = Effect.runPromise(
 );
 
 export async function getClientLoggerWithUser(
-  userId?: string, // FIX: userId is now optional
+  userId?: string,
   context?: string,
 ): Promise<Logger> {
   const logger = await clientLoggerPromise;
 
-  // FIX: Build the prefix string conditionally
   const parts: string[] = [];
   if (userId) parts.push(`[user: ${userId}]`);
   if (context) parts.push(`[context: ${context}]`);
   const prefix = parts.join(" ");
 
-  // Return the base logger if there's no extra context
   if (!prefix) {
     return logger;
   }
 
-  // Return a new logger that prepends the prefix to all messages
   return {
     info: (...args) => logger.info(prefix, ...args),
     error: (...args) => logger.error(prefix, ...args),
@@ -123,7 +100,7 @@ export async function getClientLoggerWithUser(
 export function clientLog(
   level: LoggableLevel,
   message: string,
-  userId?: string, // FIX: userId is now optional
+  userId?: string,
   context?: string,
 ): Effect.Effect<void, never, never> {
   return pipe(

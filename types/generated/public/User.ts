@@ -17,6 +17,8 @@ export default interface UserTable {
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
 
   permissions: ColumnType<string[] | null, string[] | null, string[] | null>;
+
+  avatar_url: ColumnType<string | null, string | null, string | null>;
 }
 
 export type User = Selectable<UserTable>;

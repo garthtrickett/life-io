@@ -6,6 +6,7 @@ import * as m2025062603 from "../../../migrations/2025062603_create_tag";
 import * as m2025062604 from "../../../migrations/2025062604_create_note_tag";
 import * as m2025062701 from "../../../migrations/2025062701_create_session";
 import * as m2025062702 from "../../../migrations/2025062702_add_permissions_to_user";
+import * as m2025062801 from "../../../migrations/2025062801_add_avatar_to_user";
 
 export const centralMigrationObjects: Record<string, Migration> = {
   "2025062601_create_user": { up: m2025062601.up, down: m2025062601.down },
@@ -22,5 +23,10 @@ export const centralMigrationObjects: Record<string, Migration> = {
   "2025062702_add_permissions_to_user": {
     up: m2025062702.up,
     down: m2025062702.down,
+  },
+
+  "2025062801_add_avatar_to_user": {
+    up: m2025062801.up,
+    down: m2025062801.down,
   },
 };

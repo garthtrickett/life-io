@@ -15,32 +15,35 @@ let connectionString: string;
 // Set the WebSocket constructor for Node.js/Bun environments.
 neonConfig.webSocketConstructor = ws;
 
-// --- FIX: This check is now more robust ---
-// It no longer depends on NODE_ENV, which might not be set.
-// It now correctly triggers the local proxy settings whenever
-// USE_LOCAL_NEON_PROXY is set to 'true' in your .env file.
 if (process.env.USE_LOCAL_NEON_PROXY === "true") {
   console.warn(
-    "LOCAL DEV: Configuring NeonDialect to connect via local proxy on port 3333.",
+    "LOCAL DEV (PROXY): Configuring NeonDialect to connect via local proxy using DATABASE_URL_LOCAL.",
   );
 
-  // Use the DATABASE_URL from the .env file for local development.
-  connectionString = process.env.DATABASE_URL!;
+  // --- CHANGED ---
+  // Use the new DATABASE_URL_LOCAL variable when the proxy is enabled.
+  connectionString = process.env.DATABASE_URL_LOCAL!;
 
-  // The local proxy serves traffic over unencrypted connections.
+  // Add a check to ensure it's actually set.
+  if (!connectionString) {
+    throw new Error(
+      "USE_LOCAL_NEON_PROXY is true, but DATABASE_URL_LOCAL is not set in your .env file.",
+    );
+  }
+
+  // This existing logic for the proxy is correct and remains unchanged.
   neonConfig.useSecureWebSocket = false;
-  // Point the WebSocket proxy to the local proxy's v1 endpoint.
-  // The `host` variable will be 'localhost', and the port is the proxy's external port.
   neonConfig.wsProxy = (host) => `${host}:3333/v1`;
-  // Point the fetch/HTTP endpoint to the local proxy's SQL endpoint.
   neonConfig.fetchEndpoint = (host) => `http://${host}:3333/sql`;
 } else {
-  console.warn("CLOUD ENV: Connecting to Neon using NeonDialect (WebSocket).");
-  // For cloud environments, we use the DATABASE_URL from the environment.
+  // --- This block now handles both cloud environments and local dev without the proxy ---
+  console.warn("DIRECT CONNECTION: Connecting to Neon using DATABASE_URL.");
+
+  // This part remains the same, it correctly uses the main DATABASE_URL.
   connectionString = process.env.DATABASE_URL!;
   if (!connectionString) {
     throw new Error(
-      "DATABASE_URL environment variable is not set for cloud environment",
+      "DATABASE_URL environment variable is not set for direct connection.",
     );
   }
 }

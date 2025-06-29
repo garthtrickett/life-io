@@ -15,6 +15,7 @@ import "../pages/notes-list-page.ts";
 import "../pages/note-detail-page.ts";
 import "../pages/login-page.ts";
 import "../pages/signup-page.ts";
+import "../pages/profile-page.ts";
 
 // --- SAM (State-Action-Model) Pattern Definition ---
 
@@ -80,6 +81,13 @@ export class AppShell extends LitElement {
           <note-detail-page .noteId=${id}></note-detail-page>
         `;
       },
+    },
+    {
+      path: "/profile", // <-- 2. ADD the new route
+      name: "profile",
+      render: () => html`
+        <profile-page></profile-page>
+      `,
     },
     {
       path: "/*",
@@ -393,6 +401,12 @@ export class AppShell extends LitElement {
                       class="px-3 py-2 text-zinc-600 hover:text-zinc-900"
                     >
                       Notes
+                    </a>
+                    <a
+                      href="/profile"
+                      class="px-3 py-2 text-zinc-600 hover:text-zinc-900"
+                    >
+                      Profile
                     </a>
                     <button
                       @click=${() =>

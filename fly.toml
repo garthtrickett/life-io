@@ -1,0 +1,31 @@
+# fly.toml file generated for life-io-app
+
+app = "life-io"
+primary_region = "sea"
+
+[build]
+ dockerfile = "Dockerfile"
+
+# This is the most important part for your app
+[deploy]
+  # This command runs ONCE when you deploy, before the app is started.
+  # It builds the frontend AND runs your database migrations.
+  release_command = "bun run migrate"
+
+# This section defines the public-facing service
+[[services]]
+  protocol = "tcp"
+  internal_port = 42069 # The port your Elysia app listens on
+  processes = ["app"]
+
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+# This section defines the command to start your app
+[processes]
+  # This is the command that runs your server. It corresponds to your `start` script.
+  app = "bun run start"
