@@ -1,4 +1,4 @@
-// File: views/layouts/AppLayout.ts
+// File: ./components/layouts/AppLayout.ts
 import { html, type TemplateResult } from "lit-html";
 import {
   authState,
@@ -70,6 +70,55 @@ export const AppLayout = ({ children }: Props): ViewResult => {
 
   const onLogout = () => proposeAuthAction({ type: "LOGOUT_START" });
 
+  // --- FIX START: Create a dedicated function to render navigation links ---
+  const renderNavLinks = () => {
+    const status = auth.value.status;
+
+    // While the initial auth check is running, render a placeholder or nothing
+    // to prevent the "Login" link from flashing. This is the key to the fix.
+    if (status === "initializing" || status === "authenticating") {
+      // Returning an empty template is the simplest way to prevent the flicker.
+      return html``;
+    }
+
+    // Once the auth check is complete, render the correct links.
+    if (status === "authenticated") {
+      return html`
+        <a
+          href="/profile"
+          @click=${(e: Event) => {
+            e.preventDefault();
+            navigate("/profile");
+          }}
+          class="px-3 py-2 text-zinc-600 hover:text-zinc-900"
+        >
+          Profile
+        </a>
+        <button
+          @click=${onLogout}
+          class="px-3 py-2 text-zinc-600 hover:text-zinc-900"
+        >
+          Logout
+        </button>
+      `;
+    }
+
+    // If unauthenticated, show the login link.
+    return html`
+      <a
+        href="/login"
+        @click=${(e: Event) => {
+          e.preventDefault();
+          navigate("/login");
+        }}
+        class="px-3 py-2 text-zinc-600 hover:text-zinc-900"
+      >
+        Login
+      </a>
+    `;
+  };
+  // --- FIX END ---
+
   return {
     template: html`
       <div class="min-h-screen bg-gray-50 text-gray-900">
@@ -81,35 +130,11 @@ export const AppLayout = ({ children }: Props): ViewResult => {
                 e.preventDefault();
                 navigate("/");
               }}
+              class="text-xl font-bold text-zinc-900"
             >
               Life IO
             </a>
-            <div>
-              ${auth.value.status === "authenticated"
-                ? html`
-                    <a
-                      href="/profile"
-                      @click=${(e: Event) => {
-                        e.preventDefault();
-                        navigate("/profile");
-                      }}
-                    >
-                      Profile
-                    </a>
-                    <button @click=${onLogout}>Logout</button>
-                  `
-                : html`
-                    <a
-                      href="/login"
-                      @click=${(e: Event) => {
-                        e.preventDefault();
-                        navigate("/login");
-                      }}
-                    >
-                      Login
-                    </a>
-                  `}
-            </div>
+            <div>${renderNavLinks()}</div>
           </nav>
         </header>
         <main class="p-4">${children}</main>
