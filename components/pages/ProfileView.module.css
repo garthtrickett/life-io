@@ -1,0 +1,27 @@
+.container {
+  @apply mx-auto mt-6 max-w-lg p-4;
+}
+.profileCard {
+  @apply rounded-lg border border-zinc-200 bg-white p-8 text-center;
+}
+.title {
+  @apply text-2xl font-bold text-zinc-900;
+}
+.avatarContainer {
+  @apply mt-6 flex flex-col items-center;
+}
+.avatar {
+  @apply h-32 w-32 rounded-full object-cover;
+}
+.email {
+  @apply mt-4 text-lg font-medium;
+}
+.uploadSection {
+  @apply mt-6;
+}
+.button {
+  @apply inline-flex items-center justify-center rounded-md bg-zinc-800 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-zinc-700 disabled:pointer-events-none disabled:bg-zinc-600;
+}
+.errorText {
+  @apply mt-4 text-sm text-red-500;
+}

@@ -1,0 +1,24 @@
+.container {
+  @apply mx-auto mt-6 max-w-4xl;
+}
+.editor {
+  @apply p-8;
+}
+.header {
+  @apply mb-4 flex items-center justify-between;
+}
+.header h2 {
+  @apply text-lg font-semibold text-zinc-800;
+}
+.status {
+  @apply w-36 text-right text-sm;
+}
+.titleInput {
+  @apply mb-4 w-full bg-transparent text-4xl font-bold text-zinc-900 focus:outline-none;
+}
+.contentInput {
+  @apply min-h-[60vh] w-full resize-none bg-transparent text-lg text-zinc-700 focus:outline-none;
+}
+.errorText {
+  @apply p-8 text-center text-red-500;
+}

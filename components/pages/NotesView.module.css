@@ -1,0 +1,51 @@
+.container {
+  @apply mx-auto mt-6 max-w-3xl p-4 md:p-0;
+}
+.header {
+  @apply mb-6 flex items-center justify-between rounded-lg border border-zinc-200 bg-white p-6;
+}
+.header h2 {
+  @apply text-2xl font-bold text-zinc-900;
+}
+.header p {
+  @apply mt-1 text-zinc-600;
+}
+.actions {
+  @apply flex items-center gap-2;
+}
+.sortButton {
+  @apply rounded-md bg-zinc-100 px-3 py-2 text-sm font-semibold text-zinc-600 transition-colors hover:bg-zinc-200;
+}
+.createButton {
+  @apply inline-flex items-center justify-center rounded-md bg-zinc-800 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-zinc-700 disabled:pointer-events-none disabled:bg-zinc-600;
+}
+.errorText {
+  @apply mb-4 text-red-500;
+}
+.notesList {
+  @apply space-y-3;
+}
+.noteItem {
+  @apply block rounded-lg border border-zinc-200 bg-white p-4 transition-colors hover:border-zinc-400;
+}
+.noteItem h3 {
+  @apply font-semibold text-zinc-800;
+}
+.noteItem p {
+  @apply mt-1 line-clamp-2 text-sm text-zinc-500;
+}
+.emptyState {
+  @apply py-16 text-center text-zinc-500;
+}
+.emptyState h3 {
+  @apply text-xl font-semibold;
+}
+.emptyState p {
+  @apply mt-2;
+}
+.skeletonContainer {
+  @apply space-y-3;
+}
+.skeletonItem {
+  @apply h-12 w-full animate-pulse rounded-md bg-gray-300;
+}

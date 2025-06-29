@@ -41,5 +41,10 @@ export default defineConfig(({ command }) => {
         // --- END OF ADDITION ---
       },
     },
+    css: {
+      modules: {
+        localsConvention: "camelCaseOnly",
+      },
+    },
   };
 });

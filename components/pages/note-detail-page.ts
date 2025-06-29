@@ -1,27 +1,23 @@
-// File: ./components/pages/note-detail-page.ts
-// UPDATE: Added a disconnectedCallback to clean up pending timers.
-import { LitElement, html } from "lit";
-import { customElement, property, state } from "lit/decorators.js";
-import { Effect, pipe } from "effect";
-import { PageAnimationMixin } from "../mixins/page-animation-mixin.ts";
-import { clientLog } from "../../lib/client/logger.client";
-import { trpc } from "../../lib/client/trpc";
-import { authStore } from "../../lib/client/stores/authStore";
+// File: components/pages/note-detail-page.ts
+import { html, type TemplateResult } from "lit-html";
+import { signal, type Signal } from "@preact/signals-core";
+import { pipe, Effect, Exit, Cause } from "effect";
+import { runClientEffect } from "../../lib/client/runtime";
 import type { NoteDto } from "../../types/generated/Note";
-import tailwindStyles from "../../styles/main.css?inline";
-import "../ui/skeleton-loader.ts";
+import styles from "./NoteDetailView.module.css";
+import { trpc } from "../../lib/client/trpc";
+import { clientLog } from "../../lib/client/logger.client";
 
-const sheet = new CSSStyleSheet();
-sheet.replaceSync(tailwindStyles);
-
-// --- SAM (State-Action-Model) Pattern Definition ---
-
+// --- Types ---
+interface ViewResult {
+  template: TemplateResult;
+  cleanup?: () => void;
+}
 interface Model {
   status: "loading" | "idle" | "saving" | "saved" | "error";
   note: NoteDto | null;
   error: string | null;
 }
-
 type Action =
   | { type: "FETCH_START" }
   | { type: "FETCH_SUCCESS"; payload: NoteDto }
@@ -33,239 +29,344 @@ type Action =
   | { type: "SAVE_ERROR"; payload: string }
   | { type: "RESET_SAVE_STATUS" };
 
-const update = (model: Model, action: Action): Model => {
-  switch (action.type) {
-    case "FETCH_START":
-      return { ...model, status: "loading", error: null };
-    case "FETCH_SUCCESS":
-      return { ...model, status: "idle", note: action.payload };
-    case "FETCH_ERROR":
-      return { ...model, status: "error", error: action.payload, note: null };
-    case "UPDATE_TITLE":
-      if (!model.note) return model;
-      // Clear error when user starts typing again
-      return {
-        ...model,
-        status: "idle",
-        error: null,
-        note: { ...model.note, title: action.payload },
-      };
-    case "UPDATE_CONTENT":
-      if (!model.note) return model;
-      return { ...model, note: { ...model.note, content: action.payload } };
-    case "SAVE_START":
-      return { ...model, status: "saving", error: null };
-    case "SAVE_SUCCESS":
-      return { ...model, status: "saved", note: action.payload };
-    case "SAVE_ERROR":
-      return { ...model, status: "error", error: action.payload };
-    case "RESET_SAVE_STATUS":
-      return { ...model, status: "idle" };
-    default:
-      return model;
-  }
-};
+// --- Controller Definition ---
+interface NoteController {
+  modelSignal: Signal<Model>;
+  propose: (action: Action) => void;
+  cleanup: () => void;
+}
 
-@customElement("note-detail-page")
-export class NoteDetailPage extends PageAnimationMixin(LitElement) {
-  @property({ type: String })
-  noteId: string = "";
+// --- Controller Cache & Lifecycle Management ---
 
-  @state()
-  private _model: Model = {
+/**
+ * The cache entry for a controller, including a mechanism
+ * to handle deferred cleanup.
+ */
+interface ControllerCacheEntry {
+  controller: NoteController;
+  cleanupTimeoutId?: number;
+}
+
+// Attach cache to the global window object to survive HMR reloads in dev.
+if (!(window as any).noteDetailControllers) {
+  (window as any).noteDetailControllers = new Map<
+    string,
+    ControllerCacheEntry
+  >();
+}
+const controllers: Map<string, ControllerCacheEntry> = (window as any)
+  .noteDetailControllers;
+
+/**
+ * Creates a controller for a given note ID. This function contains the
+ * complete state management logic for a single note detail view.
+ */
+function createNoteController(id: string): NoteController {
+  const modelSignal = signal<Model>({
     status: "loading",
     note: null,
     error: null,
+  });
+
+  let originalNoteContent = "";
+  let updateTimeout: number | undefined;
+
+  const update = (action: Action) => {
+    const model = modelSignal.value;
+    switch (action.type) {
+      case "FETCH_START":
+        modelSignal.value = { ...model, status: "loading", error: null };
+        break;
+      case "FETCH_SUCCESS":
+        modelSignal.value = {
+          status: "idle",
+          note: action.payload,
+          error: null,
+        };
+        originalNoteContent = JSON.stringify({
+          title: action.payload.title,
+          content: action.payload.content,
+        });
+        break;
+      case "FETCH_ERROR":
+        modelSignal.value = {
+          status: "error",
+          error: action.payload,
+          note: null,
+        };
+        break;
+      case "UPDATE_TITLE":
+        if (model.note) {
+          modelSignal.value = {
+            ...model,
+            status: "idle",
+            note: { ...model.note, title: action.payload },
+          };
+        }
+        break;
+      case "UPDATE_CONTENT":
+        if (model.note) {
+          modelSignal.value = {
+            ...model,
+            status: "idle",
+            note: { ...model.note, content: action.payload },
+          };
+        }
+        break;
+      case "SAVE_START":
+        modelSignal.value = { ...model, status: "saving", error: null };
+        break;
+      case "SAVE_SUCCESS":
+        modelSignal.value = {
+          status: "saved",
+          note: action.payload,
+          error: null,
+        };
+        originalNoteContent = JSON.stringify({
+          title: action.payload.title,
+          content: action.payload.content,
+        });
+        break;
+      case "SAVE_ERROR":
+        modelSignal.value = {
+          ...model,
+          status: "error",
+          error: action.payload,
+        };
+        break;
+      case "RESET_SAVE_STATUS":
+        modelSignal.value = { ...model, status: "idle" };
+        break;
+    }
   };
 
-  private _updateTimeout: number | null = null;
-
-  connectedCallback() {
-    super.connectedCallback();
-    this.shadowRoot!.adoptedStyleSheets = [sheet];
-    this.propose({ type: "FETCH_START" });
-  }
-
-  // --- FIX: Clean up timers when the component is removed from the DOM ---
-  disconnectedCallback() {
-    super.disconnectedCallback();
-    if (this._updateTimeout) {
-      clearTimeout(this._updateTimeout);
-    }
-  }
-
-  private propose(action: Action) {
-    this._model = update(this._model, action);
-    this.requestUpdate();
-    // FIX: Handle floating promise for the async `react` method
-    void this.react(this._model, action);
-  }
-
-  private async react(model: Model, action: Action) {
+  const react = (action: Action) => {
+    const model = modelSignal.value;
     switch (action.type) {
-      // FIX: Add block scope to the case to allow lexical declarations
       case "FETCH_START": {
         const fetchEffect = pipe(
           Effect.tryPromise({
-            try: () => trpc.note.getById.query({ id: this.noteId }),
-            // FIX: Safely convert unknown error to string
-            catch: (e) => new Error(`Failed to fetch note: ${String(e)}`),
+            try: () => trpc.note.getById.query({ id }),
+            catch: (err) =>
+              new Error(
+                err instanceof Error
+                  ? err.message
+                  : "An unknown error occurred",
+              ),
           }),
-          Effect.tap((note) =>
-            clientLog(
-              "info",
-              `Fetched note: ${note?.title}`, // Use authStore for the user ID
-              authStore.state.user?.id,
-              "NoteDetail",
-            ),
+          Effect.flatMap((note) =>
+            note
+              ? Effect.succeed(note)
+              : Effect.fail(new Error("Note not found or permission denied.")),
           ),
           Effect.match({
-            onSuccess: (note) => {
-              if (note) {
-                this.propose({
-                  type: "FETCH_SUCCESS",
-                  payload: note as NoteDto,
-                });
-              } else {
-                this.propose({
-                  type: "FETCH_ERROR",
-                  payload: "Note not found or permission denied.",
-                });
-              }
-            },
-            onFailure: (error) =>
-              this.propose({ type: "FETCH_ERROR", payload: error.message }),
+            onSuccess: (note) =>
+              propose({ type: "FETCH_SUCCESS", payload: note as NoteDto }),
+            onFailure: (err) =>
+              propose({ type: "FETCH_ERROR", payload: err.message }),
           }),
         );
-        await Effect.runPromise(fetchEffect);
+        runClientEffect(fetchEffect);
         break;
       }
-
       case "UPDATE_TITLE":
       case "UPDATE_CONTENT":
-        if (this._updateTimeout) clearTimeout(this._updateTimeout);
-        this._updateTimeout = window.setTimeout(() => {
-          this.propose({ type: "SAVE_START" });
-        }, 500); // Debounce time
+        clearTimeout(updateTimeout);
+        updateTimeout = window.setTimeout(
+          () => propose({ type: "SAVE_START" }),
+          500,
+        );
         break;
-
-      // FIX: Add block scope to the case to allow lexical declarations
       case "SAVE_START": {
-        if (!model.note) return;
-
-        if (model.note.title.trim().length === 0) {
-          this.propose({
-            type: "SAVE_ERROR",
-            payload: "Title cannot be empty.",
-          });
+        if (!model.note || !model.note.title.trim()) {
+          propose({ type: "SAVE_ERROR", payload: "Title cannot be empty." });
           return;
         }
-
+        const currentNoteContent = JSON.stringify({
+          title: model.note.title,
+          content: model.note.content,
+        });
+        if (currentNoteContent === originalNoteContent) {
+          propose({ type: "RESET_SAVE_STATUS" });
+          return;
+        }
         const { title, content } = model.note;
-        const updateEffect = pipe(
+        const saveEffect = pipe(
           Effect.tryPromise({
-            try: () =>
-              trpc.note.update.mutate({ id: this.noteId, title, content }),
-            // FIX: Safely convert unknown error to string
-            catch: (e) => new Error(`Failed to save note: ${String(e)}`),
+            try: () => trpc.note.update.mutate({ id, title, content }),
+            catch: (err) =>
+              new Error(
+                err instanceof Error ? err.message : "Failed to save the note.",
+              ),
           }),
-          Effect.tap((updatedNote) =>
-            clientLog(
-              "info",
-              `Note "${updatedNote?.title}" updated.`, // Use authStore for the user ID
-              authStore.state.user?.id,
-              "NoteDetail",
-            ),
+          Effect.flatMap((note) =>
+            note
+              ? Effect.succeed(note)
+              : Effect.fail(new Error("Server did not return updated note.")),
           ),
           Effect.match({
-            onSuccess: (updatedNote) => {
-              if (updatedNote) {
-                this.propose({
-                  type: "SAVE_SUCCESS",
-                  payload: updatedNote as NoteDto,
-                });
-              }
-            },
-            onFailure: (error) =>
-              this.propose({ type: "SAVE_ERROR", payload: error.message }),
+            onSuccess: (note) =>
+              propose({ type: "SAVE_SUCCESS", payload: note as NoteDto }),
+            onFailure: (err) =>
+              propose({ type: "SAVE_ERROR", payload: err.message }),
           }),
         );
-        await Effect.runPromise(updateEffect);
+        runClientEffect(saveEffect);
         break;
       }
-
       case "SAVE_SUCCESS":
-        setTimeout(() => this.propose({ type: "RESET_SAVE_STATUS" }), 2000);
+        setTimeout(() => propose({ type: "RESET_SAVE_STATUS" }), 2000);
         break;
     }
+  };
+
+  const propose = (action: Action) => {
+    update(action);
+    void react(action);
+  };
+
+  propose({ type: "FETCH_START" });
+
+  return {
+    modelSignal,
+    propose,
+    cleanup: () => {
+      clearTimeout(updateTimeout);
+      const entry = controllers.get(id);
+      if (entry) {
+        runClientEffect(
+          clientLog(
+            "debug",
+            `Scheduling cleanup for controller: ${id}`,
+            undefined,
+            "NoteDetail:cleanup",
+          ),
+        );
+        // Defer the deletion. If we re-render the same page, this will be cancelled.
+        entry.cleanupTimeoutId = window.setTimeout(() => {
+          controllers.delete(id);
+          runClientEffect(
+            clientLog(
+              "info",
+              `Controller for note ${id} has been garbage collected.`,
+              undefined,
+              "NoteDetail:cleanup",
+            ),
+          );
+        }, 0);
+      }
+    },
+  };
+}
+
+/**
+ * Gets a controller from the cache or creates a new one. Crucially, it
+ * cancels any pending cleanup for the requested controller, preventing the
+ * infinite loop during re-renders.
+ */
+function getNoteController(id: string): NoteController {
+  let entry = controllers.get(id);
+
+  if (entry?.cleanupTimeoutId) {
+    runClientEffect(
+      clientLog(
+        "debug",
+        `Cancelling pending cleanup for controller: ${id}`,
+        undefined,
+        "NoteDetail:getNoteController",
+      ),
+    );
+    clearTimeout(entry.cleanupTimeoutId);
+    delete entry.cleanupTimeoutId;
   }
 
-  renderStatus() {
-    switch (this._model.status) {
+  if (!entry) {
+    runClientEffect(
+      clientLog(
+        "info",
+        `No controller found for id: ${id}. Creating a new one.`,
+        undefined,
+        "NoteDetail:getNoteController",
+      ),
+    );
+    const controller = createNoteController(id);
+    entry = { controller };
+    controllers.set(id, entry);
+  }
+
+  return entry.controller;
+}
+
+/**
+ * The main view function for the Note Detail page.
+ */
+export const NoteDetailView = (id: string): ViewResult => {
+  const controller = getNoteController(id);
+  const model = controller.modelSignal.value;
+
+  const renderStatus = () => {
+    switch (model.status) {
       case "saving":
         return html`
-          <div class="text-sm text-zinc-500">Saving...</div>
+          Saving...
         `;
       case "saved":
         return html`
-          <div class="text-sm text-green-600">Saved</div>
+          <span class="text-green-600">Saved</span>
         `;
       case "error":
         return html`
-          <div class="text-sm text-red-600">Error: ${this._model.error}</div>
+          <span class="text-red-600">${model.error}</span>
         `;
       default:
-        return html`
-          <div class="h-5"></div>
-        `;
+        return html``;
     }
-  }
+  };
 
-  render() {
-    if (this._model.status === "loading") {
-      return html`
-        <div class="mx-auto mt-6 max-w-4xl p-8"></div>
-      `;
-    }
-
-    if (!this._model.note) {
-      return html`
-        <div class="p-8 text-center text-red-500">
-          ${this._model.error || "Note could not be loaded."}
-        </div>
-      `;
-    }
-
-    return html`
-      <div class="mx-auto mt-6 max-w-4xl">
-        <div class="p-8">
-          <div class="mb-4 flex items-center justify-between">
-            <h2 class="text-lg font-semibold text-zinc-800">Edit Note</h2>
-            <div class="w-36 text-right">${this.renderStatus()}</div>
-          </div>
-          <input
-            type="text"
-            .value=${this._model.note.title}
-            @input=${(e: Event) =>
-              this.propose({
-                type: "UPDATE_TITLE",
-                payload: (e.target as HTMLInputElement).value,
-              })}
-            placeholder="Your Title"
-            class="mb-4 w-full bg-transparent text-4xl font-bold text-zinc-900 focus:outline-none"
-          />
-          <textarea
-            .value=${this._model.note.content}
-            @input=${(e: Event) =>
-              this.propose({
-                type: "UPDATE_CONTENT",
-                payload: (e.target as HTMLTextAreaElement).value,
-              })}
-            placeholder="Just start writing..."
-            class="min-h-[60vh] w-full resize-none bg-transparent text-lg text-zinc-700 focus:outline-none"
-          ></textarea>
-        </div>
+  return {
+    template: html`
+      <div class=${styles.container}>
+        ${model.status === "loading"
+          ? html`
+              <p class="p-8 text-center text-zinc-500">Loading note...</p>
+            `
+          : model.note
+            ? html`
+                <div class=${styles.editor}>
+                  <div class=${styles.header}>
+                    <h2>Edit Note</h2>
+                    <div class=${styles.status}>${renderStatus()}</div>
+                  </div>
+                  <input
+                    type="text"
+                    .value=${model.note.title}
+                    @input=${(e: Event) =>
+                      controller.propose({
+                        type: "UPDATE_TITLE",
+                        payload: (e.target as HTMLInputElement).value,
+                      })}
+                    class=${styles.titleInput}
+                    ?disabled=${model.status === "saving"}
+                  />
+                  <textarea
+                    .value=${model.note.content}
+                    @input=${(e: Event) =>
+                      controller.propose({
+                        type: "UPDATE_CONTENT",
+                        payload: (e.target as HTMLTextAreaElement).value,
+                      })}
+                    class=${styles.contentInput}
+                    ?disabled=${model.status === "saving"}
+                  ></textarea>
+                </div>
+              `
+            : html`
+                <div class=${styles.errorText}>
+                  ${model.error || "Note could not be loaded."}
+                </div>
+              `}
       </div>
-    `;
-  }
-}
+    `,
+    cleanup: controller.cleanup,
+  };
+};
