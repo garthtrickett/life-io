@@ -7,6 +7,7 @@ import { DbLayer } from "../../db/DbLayer";
 import { argon2id, createSession, deleteSession } from "../../lib/server/auth";
 import { TRPCError } from "@trpc/server";
 import type { NewUser } from "../../types/generated/public/User";
+import { perms } from "../../lib/shared/permissions";
 
 const SignupInput = t.Object({
   email: t.String({ format: "email" }),
@@ -32,7 +33,8 @@ export const authRouter = router({
             .values({
               email: email.toLowerCase(),
               password_hash: passwordHash,
-              permissions: [],
+              // FIX: Assign default read/write permissions for notes to new users
+              permissions: [perms.note.read, perms.note.write],
             } as NewUser)
             .returningAll() // <-- Return the full user object
             .executeTakeFirstOrThrow(),
