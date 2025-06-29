@@ -1,95 +1,109 @@
 // File: lib/client/router.ts
 import { signal } from "@preact/signals-core";
+import { type TemplateResult } from "lit-html";
 import { LoginView } from "../../components/pages/login-page";
 import { SignupView } from "../../components/pages/signup-page";
 import { NotesView } from "../../components/pages/notes-list-page";
 import { NoteDetailView } from "../../components/pages/note-detail-page";
 import { ProfileView } from "../../components/pages/profile-page";
 import { NotFoundView } from "../../components/pages/not-found-page";
+import { UnauthorizedView } from "../../components/pages/unauthorized-page";
 import { runClientEffect } from "./runtime";
 import { clientLog } from "./logger.client";
+import { perms } from "../shared/permissions";
+
+// --- Types ---
+export interface ViewResult {
+  template: TemplateResult;
+  cleanup?: () => void;
+}
+
+export interface Route {
+  pattern: RegExp;
+  view: (...args: any[]) => ViewResult;
+  meta: {
+    requiresAuth?: boolean;
+    requiresPerms?: string[];
+  };
+}
+
+// --- FIX START: Define a consistent return type for the router ---
+/**
+ * Represents the successfully matched route object that the router will always return.
+ * It includes the original route definition plus the extracted URL parameters.
+ */
+type MatchedRoute = Route & {
+  params: string[];
+};
+// --- FIX END ---
 
 // The reactive signal that holds the current path.
 export const currentPage = signal(window.location.pathname);
 
 // A map of URL patterns to View functions.
-const routes: Record<string, (...args: any[]) => any> = {
-  "/": NotesView, // Home page is the notes list
-  "/login": LoginView,
-  "/signup": SignupView,
-  "/notes/:id": NoteDetailView,
-  "/profile": ProfileView,
-};
+const routes: Route[] = [
+  {
+    pattern: /^\/$/,
+    view: NotesView,
+    meta: { requiresAuth: true, requiresPerms: [perms.note.read] },
+  },
+  { pattern: /^\/login$/, view: LoginView, meta: { requiresAuth: false } },
+  { pattern: /^\/signup$/, view: SignupView, meta: { requiresAuth: false } },
+  {
+    pattern: /^\/notes\/([^/]+)$/,
+    view: NoteDetailView,
+    meta: { requiresAuth: true, requiresPerms: [perms.note.read] },
+  },
+  { pattern: /^\/profile$/, view: ProfileView, meta: { requiresAuth: true } },
+  { pattern: /^\/unauthorized$/, view: UnauthorizedView, meta: {} },
+];
 
-// This function is called by the main render loop. It finds the matching
-// route and executes its view function to get the template and cleanup logic.
-export const router = () => {
+// --- FIX: Add the explicit return type annotation to the function signature ---
+export const router = (): MatchedRoute => {
   const path = currentPage.value;
   runClientEffect(
-    clientLog(
-      "info",
-      `router() is running for path: ${path}`,
-      undefined,
-      "router",
-    ),
+    clientLog("info", `Routing for path: ${path}`, undefined, "router"),
   );
-  for (const route in routes) {
-    const pattern = new RegExp(`^${route.replace(/:\w+/g, "([^/]+)")}$`);
-    const match = path.match(pattern);
+  for (const route of routes) {
+    const match = path.match(route.pattern);
     if (match) {
-      const params = match.slice(1);
       runClientEffect(
         clientLog(
           "info",
-          `Route matched: ${route}. Calling view function.`,
+          `Route matched: ${route.pattern}.`,
           undefined,
           "router",
         ),
       );
-      return routes[route](...params); // e.g., NoteDetailView(id)
+      // Return the route and its matched params
+      return { ...route, params: match.slice(1) };
     }
   }
   runClientEffect(
     clientLog(
-      "info",
-      `No route matched for ${path}. Rendering NotFoundView.`,
+      "warn",
+      `No route matched for path: ${path}. Falling back to 404.`,
       undefined,
       "router",
     ),
   );
-  return NotFoundView(); // Fallback
+  // --- FIX START: Ensure the fallback route matches the MatchedRoute shape ---
+  return {
+    pattern: /^\/404$/,
+    view: NotFoundView,
+    meta: {},
+    params: [], // Add the missing 'params' property
+  };
+  // --- FIX END ---
 };
 
 // Public function for programmatic navigation.
 export const navigate = (path: string) => {
-  if (window.location.pathname === path) return;
-  runClientEffect(
-    clientLog(
-      "info",
-      `navigate() called with path: ${path}`,
-      undefined,
-      "router",
-    ),
-  );
-  window.history.pushState({}, "", path);
-  currentPage.value = path;
-};
-
-// Listen to browser navigation events to keep the signal in sync.
-window.addEventListener("popstate", () => {
-  currentPage.value = window.location.pathname;
-});
-
-// Intercept all link clicks to use our SPA router.
-document.body.addEventListener("click", (e) => {
-  if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.shiftKey) return;
-  const anchor = (e.target as HTMLElement).closest("a");
-  if (
-    anchor &&
-    anchor.target !== "_blank" &&
-    anchor.origin === window.location.origin
-  ) {
-    e.preventDefault();
-    navigate(anchor.pathname);
+  if (currentPage.value !== path) {
+    runClientEffect(
+      clientLog("info", `Navigating to ${path}`, undefined, "navigate"),
+    );
+    window.history.pushState({}, "", path);
+    currentPage.value = path;
   }
-});
+};
