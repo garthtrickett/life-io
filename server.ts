@@ -27,7 +27,7 @@ const setupApp = Effect.gen(function* () {
   const app = new Elysia();
   const isProduction = process.env.NODE_ENV === "production";
 
-  // --- FIX: Register API routes BEFORE any static file or SPA fallback logic ---
+  // --- 1. API ROUTES (Registered in all environments) ---
 
   // Handle tRPC requests
   app.all("/trpc/*", async (opts) => {
@@ -110,23 +110,49 @@ const setupApp = Effect.gen(function* () {
     },
   );
 
-  // --- End of API Route Registration ---
+  // Handle client-side logging
+  app.post(
+    "/log/client",
+    ({ body }) => {
+      const { level: levelFromClient, args } = body;
+      if (isLoggableLevel(levelFromClient)) {
+        void runServerEffect(
+          serverLog(
+            levelFromClient,
+            `[CLIENT] ${args.join(" ")}`,
+            undefined,
+            "Client",
+          ),
+        );
+      }
+      return new Response(null, { status: 204 });
+    },
+    {
+      body: t.Object({
+        level: t.String(),
+        args: t.Array(t.Any()),
+      }),
+    },
+  );
+
+  // --- 2. STATIC FILE & SPA FALLBACK (Production-only) ---
 
   if (isProduction) {
     yield* serverLog(
       "info",
-      "Production mode detected. Setting up static file serving.",
+      "Production mode detected. Setting up static file serving and SPA fallback.",
     );
     const publicDir = "dist/public";
     const indexHtmlPath = `${publicDir}/index.html`;
 
     const buildExists = yield* Effect.sync(() => existsSync(indexHtmlPath));
-    const indexHtml = buildExists
-      ? yield* Effect.sync(() => readFileSync(indexHtmlPath, "utf-8"))
-      : Effect.succeed("");
 
     if (buildExists) {
+      const indexHtml = yield* Effect.sync(() =>
+        readFileSync(indexHtmlPath, "utf-8"),
+      );
       yield* serverLog("info", `Serving static files from ${publicDir}`);
+      // This MUST come after all API routes.
       app
         .use(
           staticPlugin({
@@ -134,7 +160,7 @@ const setupApp = Effect.gen(function* () {
             prefix: "",
           }),
         )
-        .get("*", () => indexHtml); // This now correctly acts as a fallback
+        .get("*", () => indexHtml); // SPA fallback for GET requests
     } else {
       const errorMessage = `[Production Mode Error] Frontend build not found!
       - Looked for 'index.html' at: ${indexHtmlPath}
@@ -144,34 +170,9 @@ const setupApp = Effect.gen(function* () {
   } else {
     yield* serverLog(
       "info",
-      "Development mode detected. Adding client log endpoint.",
-    );
-    app.post(
-      "/log/client",
-      ({ body }) => {
-        const { level: levelFromClient, args } = body;
-        if (isLoggableLevel(levelFromClient)) {
-          void runServerEffect(
-            serverLog(
-              levelFromClient,
-              `[CLIENT] ${args.join(" ")}`,
-              undefined,
-              "Client",
-            ),
-          );
-        }
-        return new Response(null, { status: 204 });
-      },
-      {
-        body: t.Object({
-          level: t.String(),
-          args: t.Array(t.Any()),
-        }),
-      },
+      "Development mode. API routes are set up; Vite will handle static file serving.",
     );
   }
-
-  // The tRPC route handler has been moved up to be registered first.
 
   return app;
 });

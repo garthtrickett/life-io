@@ -1,0 +1,48 @@
+# =================================================================
+# Stage 1: The Builder Stage
+# This stage installs all dependencies (including dev) and builds the frontend.
+# =================================================================
+FROM oven/bun:1.2 as builder
+
+WORKDIR /app
+
+# Copy dependency manifests
+COPY package.json bun.lock ./
+
+# Install ALL dependencies (including devDependencies like vite, typescript, etc.)
+RUN bun install
+
+# Copy the rest of the source code
+COPY . .
+
+# *** The crucial step ***
+# Run the build command to generate the `dist` directory inside the container
+RUN bun run build
+
+
+# =================================================================
+# Stage 2: The Production Stage
+# This stage creates the final, lean image for running the application.
+# =================================================================
+FROM oven/bun:1.2
+
+WORKDIR /app
+
+# Copy dependency manifests again
+COPY package.json bun.lock ./
+
+# Install ONLY production dependencies to keep the image small
+RUN bun install --production
+
+# Copy the application source code
+COPY . .
+
+# Copy the built frontend artifacts from the 'builder' stage
+COPY --from=builder /app/dist ./dist
+
+# Expose the port your app runs on
+EXPOSE 42069
+
+# The command to start the application
+# This now runs the server, which will find the 'dist' folder we just copied.
+CMD ["bun", "run", "start"]
