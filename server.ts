@@ -29,15 +29,18 @@ const setupApp = Effect.gen(function* () {
 
   // --- 1. API ROUTES (Registered in all environments) ---
 
-  // Handle tRPC requests
-  app.all("/trpc/*", async (opts) => {
-    return fetchRequestHandler({
+  // Define a reusable tRPC handler
+  const handleTrpc = (context: { request: Request }) =>
+    fetchRequestHandler({
       endpoint: "/trpc",
       router: appRouter,
-      req: opts.request,
+      req: context.request,
       createContext,
     });
-  });
+
+  // Register specific handlers for GET and POST to ensure proper routing in production.
+  app.get("/trpc/*", handleTrpc);
+  app.post("/trpc/*", handleTrpc);
 
   // Handle file uploads
   app.post(
@@ -152,15 +155,24 @@ const setupApp = Effect.gen(function* () {
         readFileSync(indexHtmlPath, "utf-8"),
       );
       yield* serverLog("info", `Serving static files from ${publicDir}`);
-      // This MUST come after all API routes.
-      app
-        .use(
-          staticPlugin({
-            assets: publicDir,
-            prefix: "",
-          }),
-        )
-        .get("*", () => indexHtml); // SPA fallback for GET requests
+
+      // Use the static plugin to serve assets like CSS, JS, images, etc.
+      app.use(
+        staticPlugin({
+          assets: publicDir,
+          prefix: "",
+        }),
+      );
+
+      // This catch-all MUST come after all other API routes and the static plugin.
+      // It handles SPA routing for deep links and refreshes.
+      app.get("*", () => {
+        // By returning a `Response` object, we can explicitly set the Content-Type header.
+        // This tells the browser to interpret the string as an HTML document.
+        return new Response(indexHtml, {
+          headers: { "Content-Type": "text/html" },
+        });
+      });
     } else {
       const errorMessage = `[Production Mode Error] Frontend build not found!
       - Looked for 'index.html' at: ${indexHtmlPath}
