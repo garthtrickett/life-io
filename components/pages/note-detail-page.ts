@@ -97,16 +97,19 @@ export class NoteDetailPage extends PageAnimationMixin(LitElement) {
   private propose(action: Action) {
     this._model = update(this._model, action);
     this.requestUpdate();
-    this.react(this._model, action);
+    // FIX: Handle floating promise for the async `react` method
+    void this.react(this._model, action);
   }
 
   private async react(model: Model, action: Action) {
     switch (action.type) {
-      case "FETCH_START":
+      // FIX: Add block scope to the case to allow lexical declarations
+      case "FETCH_START": {
         const fetchEffect = pipe(
           Effect.tryPromise({
             try: () => trpc.note.getById.query({ id: this.noteId }),
-            catch: (e) => new Error(`Failed to fetch note: ${e}`),
+            // FIX: Safely convert unknown error to string
+            catch: (e) => new Error(`Failed to fetch note: ${String(e)}`),
           }),
           Effect.tap((note) =>
             clientLog(
@@ -136,6 +139,7 @@ export class NoteDetailPage extends PageAnimationMixin(LitElement) {
         );
         await Effect.runPromise(fetchEffect);
         break;
+      }
 
       case "UPDATE_TITLE":
       case "UPDATE_CONTENT":
@@ -145,7 +149,8 @@ export class NoteDetailPage extends PageAnimationMixin(LitElement) {
         }, 500); // Debounce time
         break;
 
-      case "SAVE_START":
+      // FIX: Add block scope to the case to allow lexical declarations
+      case "SAVE_START": {
         if (!model.note) return;
 
         if (model.note.title.trim().length === 0) {
@@ -161,7 +166,8 @@ export class NoteDetailPage extends PageAnimationMixin(LitElement) {
           Effect.tryPromise({
             try: () =>
               trpc.note.update.mutate({ id: this.noteId, title, content }),
-            catch: (e) => new Error(`Failed to save note: ${e}`),
+            // FIX: Safely convert unknown error to string
+            catch: (e) => new Error(`Failed to save note: ${String(e)}`),
           }),
           Effect.tap((updatedNote) =>
             clientLog(
@@ -186,6 +192,7 @@ export class NoteDetailPage extends PageAnimationMixin(LitElement) {
         );
         await Effect.runPromise(updateEffect);
         break;
+      }
 
       case "SAVE_SUCCESS":
         setTimeout(() => this.propose({ type: "RESET_SAVE_STATUS" }), 2000);
@@ -196,35 +203,45 @@ export class NoteDetailPage extends PageAnimationMixin(LitElement) {
   renderStatus() {
     switch (this._model.status) {
       case "saving":
-        return html`<div class="text-zinc-500 text-sm">Saving...</div>`;
+        return html`
+          <div class="text-sm text-zinc-500">Saving...</div>
+        `;
       case "saved":
-        return html`<div class="text-green-600 text-sm">Saved</div>`;
+        return html`
+          <div class="text-sm text-green-600">Saved</div>
+        `;
       case "error":
-        return html`<div class="text-red-600 text-sm">
-          Error: ${this._model.error}
-        </div>`;
+        return html`
+          <div class="text-sm text-red-600">Error: ${this._model.error}</div>
+        `;
       default:
-        return html`<div class="h-5"></div>`;
+        return html`
+          <div class="h-5"></div>
+        `;
     }
   }
 
   render() {
     if (this._model.status === "loading") {
-      return html` <div class="max-w-4xl mx-auto mt-6 p-8"></div> `;
+      return html`
+        <div class="mx-auto mt-6 max-w-4xl p-8"></div>
+      `;
     }
 
     if (!this._model.note) {
-      return html`<div class="text-red-500 text-center p-8">
-        ${this._model.error || "Note could not be loaded."}
-      </div>`;
+      return html`
+        <div class="p-8 text-center text-red-500">
+          ${this._model.error || "Note could not be loaded."}
+        </div>
+      `;
     }
 
     return html`
-      <div class="max-w-4xl mx-auto mt-6">
+      <div class="mx-auto mt-6 max-w-4xl">
         <div class="p-8">
-          <div class="flex justify-between items-center mb-4">
+          <div class="mb-4 flex items-center justify-between">
             <h2 class="text-lg font-semibold text-zinc-800">Edit Note</h2>
-            <div class="text-right w-36">${this.renderStatus()}</div>
+            <div class="w-36 text-right">${this.renderStatus()}</div>
           </div>
           <input
             type="text"
@@ -235,7 +252,7 @@ export class NoteDetailPage extends PageAnimationMixin(LitElement) {
                 payload: (e.target as HTMLInputElement).value,
               })}
             placeholder="Your Title"
-            class="text-4xl font-bold text-zinc-900 w-full focus:outline-none mb-4 bg-transparent"
+            class="mb-4 w-full bg-transparent text-4xl font-bold text-zinc-900 focus:outline-none"
           />
           <textarea
             .value=${this._model.note.content}
@@ -245,7 +262,7 @@ export class NoteDetailPage extends PageAnimationMixin(LitElement) {
                 payload: (e.target as HTMLTextAreaElement).value,
               })}
             placeholder="Just start writing..."
-            class="w-full text-lg text-zinc-700 focus:outline-none min-h-[60vh] bg-transparent resize-none"
+            class="min-h-[60vh] w-full resize-none bg-transparent text-lg text-zinc-700 focus:outline-none"
           ></textarea>
         </div>
       </div>

@@ -35,14 +35,15 @@ export class NotionButton extends LitElement {
    * This allows parent components to react to clicks without relying on
    * native form submission behavior, which is broken by the Shadow DOM.
    */
-  private _handleClick() {
+  // --- FIX: Convert to an arrow function to preserve `this` context ---
+  private _handleClick = () => {
     this.dispatchEvent(
       new CustomEvent("notion-button-click", {
         bubbles: true, // Allows the event to bubble up through the DOM
         composed: true, // Allows the event to cross the Shadow DOM boundary
       }),
     );
-  }
+  };
 
   render() {
     const baseClasses =
@@ -52,7 +53,7 @@ export class NotionButton extends LitElement {
 
     const spinner = html`
       <span
-        class="w-4 h-4 border-2 border-zinc-500 border-t-white rounded-full animate-spin"
+        class="h-4 w-4 animate-spin rounded-full border-2 border-zinc-500 border-t-white"
         aria-hidden="true"
       ></span>
     `;

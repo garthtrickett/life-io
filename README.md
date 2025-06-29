@@ -6,8 +6,8 @@ This document outlines the steps required to set up and run the Life IO applicat
 
 Before you begin, ensure you have the following installed on your system:
 
--   **[Bun](https://bun.sh/)**: A fast JavaScript runtime.
--   **[Docker](https://www.docker.com/get-started/)** and **[Docker Compose](https://docs.docker.com/compose/install/)**: For running the PostgreSQL database.
+- **[Bun](https://bun.sh/)**: A fast JavaScript runtime.
+- **[Docker](https://www.docker.com/get-started/)** and **[Docker Compose](https://docs.docker.com/compose/install/)**: For running the PostgreSQL database.
 
 ## 2. Environment Setup
 
@@ -44,3 +44,4 @@ For development with live-reloading for both the frontend and backend, run:
 
 ```bash
 bun run dev
+```

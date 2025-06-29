@@ -17,7 +17,7 @@ export class MainLayout extends LitElement {
   render() {
     return html`
       <div class="min-h-screen bg-gray-50 text-gray-900">
-        <header class="p-4 bg-white shadow-sm">
+        <header class="bg-white p-4 shadow-sm">
           <slot name="header">
             <h1 class="text-xl font-bold">Default Header</h1>
           </slot>

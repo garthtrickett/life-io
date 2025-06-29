@@ -5,7 +5,7 @@ services:
     volumes:
       - db_data:/var/lib/postgresql/data
     ports:
-      - '6543:5432'            #  ← DB reachable on localhost:6543
+      - "6543:5432" #  ← DB reachable on localhost:6543
     environment:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
@@ -21,11 +21,10 @@ services:
     environment:
       - PG_CONNECTION_STRING=postgres://postgres:postgres@postgres:5432/main
     ports:
-      - '3333:4444'
+      - "3333:4444"
     depends_on:
       postgres:
         condition: service_healthy
 
 volumes:
   db_data: {}
-

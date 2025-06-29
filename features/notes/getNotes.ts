@@ -24,7 +24,7 @@ export const getNotes = (userId: string) =>
             .where("user_id", "=", userId as UserId)
             .orderBy("updated_at", "desc")
             .execute(),
-        catch: (error) => new Error(`Database Error: ${error}`),
+        catch: (error) => new Error(`Database Error: ${String(error)}`),
       }),
       Effect.tap((notes) =>
         serverLog(

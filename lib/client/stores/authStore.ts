@@ -2,8 +2,8 @@
 import { trpc } from "../trpc";
 import { User } from "../../../types/generated/public/User";
 import { clientLog } from "../logger.client";
-import { Effect } from "effect";
 import { signal, type Signal } from "@preact/signals-core";
+import { runClientEffect } from "../runtime";
 
 export interface AuthModel {
   status:
@@ -42,7 +42,6 @@ const update = (model: AuthModel, action: AuthAction): AuthModel => {
 };
 
 class AuthStore {
-  // --- CHANGE: The signal is now public so other parts of the app can use it directly.
   public stateSignal: Signal<AuthModel> = signal({
     status: "initializing",
     user: null,
@@ -55,7 +54,7 @@ class AuthStore {
     this.initialAuthCheck = new Promise((resolve) => {
       this._resolveInitialAuthCheck = resolve;
     });
-    Effect.runPromise(
+    runClientEffect(
       clientLog(
         "info",
         "AuthStore initialized. Starting first auth check.",
@@ -63,20 +62,16 @@ class AuthStore {
         "AuthStore:constructor",
       ),
     );
-    this.propose({ type: "AUTH_CHECK_START" });
+    void this.propose({ type: "AUTH_CHECK_START" });
   }
 
-  // The getter provides easy, non-reactive access to the current value.
   get state(): AuthModel {
     return this.stateSignal.value;
   }
 
-  // --- REMOVED: The manual `subscribe` method is no longer needed.
-  // Consumers will now use `effect` to subscribe to `stateSignal` directly.
-
   propose(action: AuthAction) {
     const oldStatus = this.state.status;
-    Effect.runPromise(
+    runClientEffect(
       clientLog(
         "debug",
         `Proposing action: ${action.type}`,
@@ -85,11 +80,10 @@ class AuthStore {
       ),
     );
 
-    // --- CHANGE: Update the public signal's value.
     this.stateSignal.value = update(this.state, action);
 
     if (this.state.status !== oldStatus) {
-      Effect.runPromise(
+      runClientEffect(
         clientLog(
           "info",
           `Auth state changed from '${oldStatus}' to '${this.state.status}'`,
@@ -98,13 +92,13 @@ class AuthStore {
         ),
       );
     }
-    this.react(action);
+    void this.react(action);
   }
 
   private async react(action: AuthAction) {
     switch (action.type) {
       case "AUTH_CHECK_START":
-        Effect.runPromise(
+        runClientEffect(
           clientLog(
             "info",
             "Reacting to AUTH_CHECK_START. Calling trpc.auth.me.query...",
@@ -115,7 +109,7 @@ class AuthStore {
         try {
           const user = await trpc.auth.me.query();
           if (user) {
-            Effect.runPromise(
+            runClientEffect(
               clientLog(
                 "debug",
                 "trpc.auth.me returned a user. Proposing AUTH_CHECK_SUCCESS.",
@@ -125,7 +119,7 @@ class AuthStore {
             );
             this.propose({ type: "AUTH_CHECK_SUCCESS", payload: user });
           } else {
-            Effect.runPromise(
+            runClientEffect(
               clientLog(
                 "debug",
                 "trpc.auth.me returned null. Proposing AUTH_CHECK_FAILURE.",
@@ -136,17 +130,19 @@ class AuthStore {
             this.propose({ type: "AUTH_CHECK_FAILURE" });
           }
         } catch (err) {
-          Effect.runPromise(
+          runClientEffect(
             clientLog(
               "error",
-              `trpc.auth.me call failed: ${err}. Proposing AUTH_CHECK_FAILURE.`,
+              `trpc.auth.me call failed: ${String(
+                err,
+              )}. Proposing AUTH_CHECK_FAILURE.`,
               undefined,
               "AuthStore:react",
             ),
           );
           this.propose({ type: "AUTH_CHECK_FAILURE" });
         } finally {
-          Effect.runPromise(
+          runClientEffect(
             clientLog(
               "info",
               "Initial auth check promise is being resolved.",
@@ -159,7 +155,7 @@ class AuthStore {
         break;
 
       case "AUTH_CHECK_SUCCESS":
-        Effect.runPromise(
+        runClientEffect(
           clientLog(
             "info",
             `Reacting to AUTH_CHECK_SUCCESS. User: ${action.payload.email}`,
@@ -170,7 +166,7 @@ class AuthStore {
         break;
 
       case "AUTH_CHECK_FAILURE":
-        Effect.runPromise(
+        runClientEffect(
           clientLog(
             "info",
             "Reacting to AUTH_CHECK_FAILURE. No active session.",
@@ -181,7 +177,7 @@ class AuthStore {
         break;
 
       case "LOGOUT_START":
-        Effect.runPromise(
+        runClientEffect(
           clientLog(
             "info",
             "Reacting to LOGOUT_START. Calling trpc.auth.logout...",
@@ -191,7 +187,7 @@ class AuthStore {
         );
         try {
           await trpc.auth.logout.mutate();
-          Effect.runPromise(
+          runClientEffect(
             clientLog(
               "info",
               "Server-side logout successful.",
@@ -200,16 +196,18 @@ class AuthStore {
             ),
           );
         } catch (error) {
-          Effect.runPromise(
+          runClientEffect(
             clientLog(
               "error",
-              "Server-side logout failed, will clean up client-side anyway.",
+              `Server-side logout failed: ${String(
+                error,
+              )}. Will clean up client-side anyway.`,
               this.state.user?.id,
               "AuthStore:react",
             ),
           );
         } finally {
-          Effect.runPromise(
+          runClientEffect(
             clientLog(
               "info",
               "Clearing session cookie and proposing LOGOUT_SUCCESS.",

@@ -1,13 +1,13 @@
 // FILE: scripts/migrate.ts
-import { Migrator, FileMigrationProvider } from "kysely";
+import { Migrator, FileMigrationProvider, type MigrationResult } from "kysely";
 import * as path from "node:path";
 import { promises as fs } from "node:fs";
 import { db } from "../db/kysely";
 import { serverLog } from "../lib/server/logger.server";
-import { Effect } from "effect";
+import { runServerEffect } from "../lib/server/runtime";
 
 async function migrate(direction: "up" | "down") {
-  await Effect.runPromise(
+  runServerEffect(
     serverLog(
       "info",
       `Running migrations: ${direction}`,
@@ -25,10 +25,12 @@ async function migrate(direction: "up" | "down") {
     }),
   });
 
-  const handleResults = async (error?: unknown, results?: any[]) => {
-    // Destructure each result object in the loop
+  const handleResults = async (
+    error?: unknown,
+    results?: MigrationResult[],
+  ) => {
     results?.forEach(({ status, migrationName }) => {
-      Effect.runPromise(
+      runServerEffect(
         serverLog(
           status === "Success" ? "info" : "error",
           `Migration "${migrationName}" status: ${status}`,
@@ -39,10 +41,16 @@ async function migrate(direction: "up" | "down") {
     });
 
     if (error) {
-      await Effect.runPromise(
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : typeof error === "string"
+            ? error
+            : JSON.stringify(error, null, 2);
+      runServerEffect(
         serverLog(
           "error",
-          `Migration failed: ${error}`,
+          `Migration failed: ${errorMessage}`,
           undefined,
           "MigrationScript",
         ),
@@ -64,17 +72,18 @@ async function migrate(direction: "up" | "down") {
 
 const directionArg = process.argv[2];
 if (directionArg !== "up" && directionArg !== "down") {
-  Effect.runPromise(
+  runServerEffect(
     serverLog(
       "error",
       "Invalid argument. Use 'up' or 'down'.",
       undefined,
       "MigrationScript",
     ),
-  ).then(() => process.exit(1));
+  );
+  process.exit(1);
 } else {
-  migrate(directionArg as "up" | "down").then(() => {
-    Effect.runPromise(
+  void migrate(directionArg).then(() => {
+    runServerEffect(
       serverLog(
         "info",
         "✅ Migrations complete!",

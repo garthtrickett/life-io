@@ -62,11 +62,13 @@ const update = (model: Model, action: Action): Model => {
       };
     case "CREATE_NOTE_ERROR":
       return { ...model, isCreating: false, error: action.payload };
-    case "SORT_NOTES_AZ":
+    case "SORT_NOTES_AZ": {
+      // FIX: Add block scope to prevent no-case-declarations error
       const sortedNotes = [...model.notes].sort((a, b) =>
         a.title.localeCompare(b.title),
       );
       return { ...model, notes: sortedNotes };
+    }
     default:
       return model;
   }
@@ -93,12 +95,14 @@ export class DashboardPage extends PageAnimationMixin(LitElement) {
   private propose(action: Action) {
     this._model = update(this._model, action);
     this.requestUpdate();
-    this.react(this._model, action);
+    // FIX: Use `void` to explicitly ignore the returned promise, resolving the no-floating-promises error.
+    void this.react(this._model, action);
   }
 
   private async react(model: Model, action: Action) {
     switch (action.type) {
-      case "FETCH_NOTES_START":
+      case "FETCH_NOTES_START": {
+        // FIX: Add block scope to prevent no-case-declarations error
         const fetchEffect = pipe(
           Effect.tryPromise({
             try: () => trpc.note.list.query(),
@@ -119,8 +123,9 @@ export class DashboardPage extends PageAnimationMixin(LitElement) {
         );
         await Effect.runPromise(fetchEffect);
         break;
-
-      case "FETCH_NOTES_SUCCESS":
+      }
+      case "FETCH_NOTES_SUCCESS": {
+        // FIX: Add block scope to prevent no-case-declarations error
         await this.updateComplete;
         // --- STYLING: Query inside the shadowRoot for animation targets ---
         const listItems = Array.from(
@@ -138,8 +143,9 @@ export class DashboardPage extends PageAnimationMixin(LitElement) {
           animate(listItems, keyframes, options);
         }
         break;
-
-      case "CREATE_NOTE_START":
+      }
+      case "CREATE_NOTE_START": {
+        // FIX: Add block scope to prevent no-case-declarations error
         const createEffect = pipe(
           Effect.tryPromise({
             try: () =>
@@ -174,7 +180,7 @@ export class DashboardPage extends PageAnimationMixin(LitElement) {
         );
         await Effect.runPromise(createEffect);
         break;
-
+      }
       case "CREATE_NOTE_SUCCESS":
         navigate(`/notes/${action.payload.id}`);
         break;
@@ -194,7 +200,7 @@ export class DashboardPage extends PageAnimationMixin(LitElement) {
 
     if (this._model.notes.length === 0) {
       return html`
-        <div class="text-center text-zinc-500 py-16">
+        <div class="py-16 text-center text-zinc-500">
           <h3 class="text-xl font-semibold">No notes yet</h3>
           <p class="mt-2">Click "Create New Note" to get started.</p>
         </div>
@@ -208,14 +214,14 @@ export class DashboardPage extends PageAnimationMixin(LitElement) {
             <li .key=${note.id} ${animateDirective({ skipInitial: true })}>
               <a
                 href="/notes/${note.id}"
-                class="block p-4 bg-white border border-zinc-200 rounded-lg hover:border-zinc-400 transition-colors"
+                class="block rounded-lg border border-zinc-200 bg-white p-4 transition-colors hover:border-zinc-400"
                 @click=${(e: Event) => {
                   e.preventDefault();
                   navigate(`/notes/${note.id}`);
                 }}
               >
                 <h3 class="font-semibold text-zinc-800">${note.title}</h3>
-                <p class="text-sm text-zinc-500 line-clamp-2 mt-1">
+                <p class="mt-1 line-clamp-2 text-sm text-zinc-500">
                   ${note.content || "No additional content"}
                 </p>
               </a>
@@ -230,19 +236,19 @@ export class DashboardPage extends PageAnimationMixin(LitElement) {
     if (this._model.isCreating) {
       return html`
         <div
-          class="fixed inset-0 bg-gray-50 flex items-center justify-center z-50"
+          class="fixed inset-0 z-50 flex items-center justify-center bg-gray-50"
         >
           <div
-            class="w-12 h-12 border-4 border-zinc-300 border-t-zinc-600 rounded-full animate-spin"
+            class="h-12 w-12 animate-spin rounded-full border-4 border-zinc-300 border-t-zinc-600"
           ></div>
         </div>
       `;
     }
 
     return html`
-      <div class="max-w-3xl mx-auto mt-6 p-4 md:p-0">
+      <div class="mx-auto mt-6 max-w-3xl p-4 md:p-0">
         <div
-          class="flex justify-between items-center bg-white border border-zinc-200 rounded-lg p-6 mb-6"
+          class="mb-6 flex items-center justify-between rounded-lg border border-zinc-200 bg-white p-6"
         >
           <div>
             <h2 class="text-2xl font-bold text-zinc-900">Your Notes</h2>
@@ -253,7 +259,7 @@ export class DashboardPage extends PageAnimationMixin(LitElement) {
           <div class="flex items-center gap-2">
             <button
               @click=${() => this.propose({ type: "SORT_NOTES_AZ" })}
-              class="px-3 py-2 text-sm font-semibold text-zinc-600 bg-zinc-100 rounded-md hover:bg-zinc-200 transition-colors"
+              class="rounded-md bg-zinc-100 px-3 py-2 text-sm font-semibold text-zinc-600 transition-colors hover:bg-zinc-200"
             >
               Sort A-Z
             </button>
@@ -268,7 +274,9 @@ export class DashboardPage extends PageAnimationMixin(LitElement) {
         </div>
 
         ${this._model.error
-          ? html`<div class="text-red-500 mb-4">${this._model.error}</div>`
+          ? html`
+              <div class="mb-4 text-red-500">${this._model.error}</div>
+            `
           : ""}
         ${this.renderNotesList()}
       </div>

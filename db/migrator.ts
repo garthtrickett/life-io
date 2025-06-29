@@ -1,8 +1,8 @@
-// FILE: db/migrator.ts
+// File: ./db/migrator.ts
 import { Effect, Exit, Cause } from "effect";
-import { db } from "./kysely"; // Use the centralized db instance
+import { db } from "./kysely";
 import { serverLog } from "../lib/server/logger.server";
-import { Migrator, FileMigrationProvider } from "kysely"; // Kysely's standard migrator
+import { Migrator, FileMigrationProvider } from "kysely";
 import * as path from "node:path";
 import { promises as fs } from "node:fs";
 
@@ -31,7 +31,7 @@ const runMigrations = (direction: "up" | "down") =>
         direction === "up"
           ? migrator.migrateToLatest()
           : migrator.migrateDown(),
-      catch: (e) => new Error(`Migration execution failed: ${e}`),
+      catch: (e) => new Error(`Migration execution failed: ${String(e)}`),
     });
 
     for (const it of results ?? []) {
@@ -44,12 +44,19 @@ const runMigrations = (direction: "up" | "down") =>
     }
 
     if (error) {
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : typeof error === "string"
+            ? error
+            : JSON.stringify(error, null, 2);
       yield* serverLog(
         "error",
-        `Migration failed: ${error}`,
+        `Migration failed: ${errorMessage}`,
         undefined,
         "EffectMigrator",
       );
+      // The type of `error` is `unknown` here, which `Effect.fail` can handle.
       return yield* Effect.fail(error);
     }
   });
@@ -62,25 +69,25 @@ const getDirection = () => {
     console.warn("No direction specified (or invalid). Defaulting to 'up'.");
     return "up";
   }
-  return directionArg as "up" | "down";
+  return directionArg;
 };
 
 const direction = getDirection();
 const program = runMigrations(direction);
 
-Effect.runPromiseExit(program)
+void Effect.runPromiseExit(program)
   .then((exit) => {
     if (Exit.isFailure(exit)) {
       console.error(`❌ Migration via migrator.ts failed ('${direction}'):`);
       console.error(Cause.pretty(exit.cause));
       process.exit(1);
     } else {
-      console.log(
+      console.info(
         `✅ Migrations via migrator.ts completed successfully ('${direction}').`,
       );
       process.exit(0);
     }
   })
   .finally(() => {
-    db.destroy();
+    void db.destroy();
   });

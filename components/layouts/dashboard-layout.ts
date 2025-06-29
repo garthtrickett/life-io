@@ -25,24 +25,24 @@ export class DashboardLayout extends LitElement {
     return html`
       <div class="relative min-h-screen md:flex">
         <aside
-          class="bg-gray-800 text-gray-100 transition-all duration-300 ${this
-            ._isSidebarOpen
+          class="${this._isSidebarOpen
             ? "w-64"
-            : "w-16"}"
+            : "w-16"} bg-gray-800 text-gray-100 transition-all duration-300"
         >
-          <div class="p-4 flex justify-between items-center">
+          <div class="flex items-center justify-between p-4">
             <span
               class="${this._isSidebarOpen
                 ? "opacity-100"
                 : "opacity-0"} transition-opacity"
-              >Dashboard Menu</span
             >
+              Dashboard Menu
+            </span>
             <button
-              @click=${this._toggleSidebar}
-              class="p-1 rounded-md hover:bg-gray-700"
+              @click=${() => this._toggleSidebar()}
+              class="rounded-md p-1 hover:bg-gray-700"
             >
               <svg
-                class="w-6 h-6"
+                class="h-6 w-6"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -57,7 +57,7 @@ export class DashboardLayout extends LitElement {
             </button>
           </div>
           <nav>
-            <slot name="sidebar"> </slot>
+            <slot name="sidebar"></slot>
           </nav>
         </aside>
 

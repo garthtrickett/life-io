@@ -23,14 +23,14 @@ const generateTypes = Effect.gen(function* () {
   }
 
   // Define the Kanel command to be executed.
-  const command = `bunx kanel --config ./.kanelrc.js`;
+  const command = `bunx kanel --config ./.kanelrc.cjs`;
 
   yield* serverLog("info", `Executing command: ${command}`);
 
   // Execute the command as a promise-based Effect.
   const { stdout, stderr } = yield* Effect.tryPromise({
     try: () => execAsync(command),
-    catch: (error) => new Error(`Kanel execution failed: ${error}`),
+    catch: (error) => new Error(`Kanel execution failed: ${String(error)}`),
   });
 
   // Log any standard error or standard output from the Kanel process.
@@ -49,10 +49,8 @@ const generateTypes = Effect.gen(function* () {
 Effect.runPromiseExit(generateTypes)
   .then((exit) => {
     if (Exit.isSuccess(exit)) {
-      console.log("Kanel script finished successfully.");
       process.exit(0);
     } else {
-      console.error(`❌ Type generation failed:`);
       // Use Cause.pretty to print a well-formatted error trace.
       console.error(Cause.pretty(exit.cause));
       process.exit(1);

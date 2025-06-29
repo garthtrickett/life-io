@@ -9,6 +9,7 @@ import type { User } from "../../types/generated/public/User";
 import "../ui/notion-button-a11y.ts";
 import { clientLog } from "../../lib/client/logger.client.ts";
 import { navigate } from "../../lib/client/router.ts";
+import { runClientEffect } from "../../lib/client/runtime.ts";
 
 interface Model {
   email: string;
@@ -57,7 +58,9 @@ export class SignupPage extends PageAnimationMixin(LitElement) {
 
   private propose(action: Action) {
     this._model = update(this._model, action);
-    this.react(this._model, action);
+    // FIX(no-floating-promises): The `react` method is async. Prepending `void`
+    // explicitly marks this as a "fire-and-forget" call, satisfying the linter.
+    void this.react(this._model, action);
   }
 
   private async react(model: Model, action: Action) {
@@ -71,7 +74,10 @@ export class SignupPage extends PageAnimationMixin(LitElement) {
               email: model.email,
               password: model.password,
             }),
-          catch: (err: any) => new Error(err.message),
+          // FIX(no-explicit-any, unsafe-access): Type the caught error as `unknown`
+          // and safely check if it's an Error instance before accessing `.message`.
+          catch: (err: unknown) =>
+            new Error(err instanceof Error ? err.message : String(err)),
         }),
         Effect.match({
           onSuccess: (result) =>
@@ -90,7 +96,7 @@ export class SignupPage extends PageAnimationMixin(LitElement) {
         action.payload.sessionId
       }; path=/; expires=${expires.toUTCString()}; SameSite=Lax`;
 
-      Effect.runPromise(
+      runClientEffect(
         clientLog(
           "info",
           `User signup successful, setting auth state.`,
@@ -104,7 +110,7 @@ export class SignupPage extends PageAnimationMixin(LitElement) {
         payload: action.payload.user,
       });
 
-      Effect.runPromise(
+      runClientEffect(
         clientLog(
           "info",
           `Signup successful. Programmatically navigating to '/'.`,
@@ -120,34 +126,38 @@ export class SignupPage extends PageAnimationMixin(LitElement) {
     if (this._model.isLoading) {
       return html`
         <div
-          class="fixed inset-0 bg-gray-100 flex items-center justify-center z-50"
+          class="fixed inset-0 z-50 flex items-center justify-center bg-gray-100"
         >
           <div
-            class="w-12 h-12 border-4 border-zinc-300 border-t-zinc-600 rounded-full animate-spin"
+            class="h-12 w-12 animate-spin rounded-full border-4 border-zinc-300 border-t-zinc-600"
           ></div>
         </div>
       `;
     }
 
     return html`
-      <div class="flex items-center justify-center min-h-screen bg-gray-100">
-        <div class="p-8 bg-white rounded-lg shadow-md w-full max-w-md">
-          <h2 class="text-2xl font-bold text-center mb-6">Create Account</h2>
+      <div class="flex min-h-screen items-center justify-center bg-gray-100">
+        <div class="w-full max-w-md rounded-lg bg-white p-8 shadow-md">
+          <h2 class="mb-6 text-center text-2xl font-bold">Create Account</h2>
           <form @submit=${(e: Event) => e.preventDefault()}>
             <div class="mb-4">
-              <label for="email" class="block text-sm font-medium text-gray-700"
-                >Email</label
+              <label
+                for="email"
+                class="block text-sm font-medium text-gray-700"
               >
+                Email
+              </label>
               <input
                 type="email"
                 id="email"
                 .value=${this._model.email}
-                @input=${(e: any) =>
+                @input=${(e: Event) =>
                   this.propose({
                     type: "UPDATE_EMAIL",
-                    payload: e.target.value,
+                    // FIX(no-explicit-any, unsafe-access): Add type assertion for the event target.
+                    payload: (e.target as HTMLInputElement).value,
                   })}
-                class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-zinc-500 focus:border-zinc-500 sm:text-sm"
+                class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-zinc-500 focus:outline-none focus:ring-zinc-500 sm:text-sm"
                 required
               />
             </div>
@@ -155,25 +165,29 @@ export class SignupPage extends PageAnimationMixin(LitElement) {
               <label
                 for="password"
                 class="block text-sm font-medium text-gray-700"
-                >Password (min. 8 characters)</label
               >
+                Password (min. 8 characters)
+              </label>
               <input
                 type="password"
                 id="password"
                 .value=${this._model.password}
-                @input=${(e: any) =>
+                @input=${(e: Event) =>
                   this.propose({
                     type: "UPDATE_PASSWORD",
-                    payload: e.target.value,
+                    // FIX(no-explicit-any, unsafe-access): Add type assertion for the event target.
+                    payload: (e.target as HTMLInputElement).value,
                   })}
-                class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-zinc-500 focus:border-zinc-500 sm:text-sm"
+                class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-zinc-500 focus:outline-none focus:ring-zinc-500 sm:text-sm"
                 required
               />
             </div>
             ${this._model.error
-              ? html`<div class="text-red-500 text-sm mb-4">
-                  ${this._model.error}
-                </div>`
+              ? html`
+                  <div class="mb-4 text-sm text-red-500">
+                    ${this._model.error}
+                  </div>
+                `
               : ""}
             <notion-button
               type="submit"
@@ -184,7 +198,7 @@ export class SignupPage extends PageAnimationMixin(LitElement) {
               Sign Up
             </notion-button>
           </form>
-          <div class="text-center mt-4 text-sm">
+          <div class="mt-4 text-center text-sm">
             <a
               href="/login"
               class="font-medium text-zinc-600 hover:text-zinc-500"

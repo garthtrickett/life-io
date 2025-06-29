@@ -3,17 +3,17 @@ import { Console, Effect, pipe } from "effect";
 import type { LogLevel } from "../shared/logConfig";
 
 export type Logger = {
-  info: (...args: any[]) => void;
-  error: (...args: any[]) => void;
-  warn: (...args: any[]) => void;
-  debug: (...args: any[]) => void;
+  info: (...args: unknown[]) => void;
+  error: (...args: unknown[]) => void;
+  warn: (...args: unknown[]) => void;
+  debug: (...args: unknown[]) => void;
 };
 
 export type LoggableLevel = Exclude<LogLevel, "silent">;
 
 // --- This is our new Development Logger ---
 const createDevelopmentLogger = (): Logger => {
-  const sendLogToServer = (level: LogLevel, args: any[]) => {
+  const sendLogToServer = (level: LogLevel, args: unknown[]) => {
     fetch("/log/client", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -49,11 +49,24 @@ const createProductionLogger = (token: string): Effect.Effect<Logger, Error> =>
     yield* Console.log(
       "Client logger (Logtail) created successfully for production.",
     );
+
+    // FIX: The logtail methods are async and have a specific signature. We adapt
+    // them to our simple `Logger` interface. We join the arguments into a single
+    // string and use `void` to explicitly fire-and-forget the async call,
+    // satisfying both the type-checker and the linter.
     return {
-      info: logtail.info.bind(logtail),
-      error: logtail.error.bind(logtail),
-      warn: logtail.warn.bind(logtail),
-      debug: logtail.debug.bind(logtail),
+      info: (...args: unknown[]) => {
+        void logtail.info(args.join(" "));
+      },
+      error: (...args: unknown[]) => {
+        void logtail.error(args.join(" "));
+      },
+      warn: (...args: unknown[]) => {
+        void logtail.warn(args.join(" "));
+      },
+      debug: (...args: unknown[]) => {
+        void logtail.debug(args.join(" "));
+      },
     };
   });
 

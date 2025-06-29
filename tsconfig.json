@@ -14,10 +14,7 @@
     "target": "esnext",
     "module": "esnext",
     "moduleResolution": "bundler", // same algorithm Bun uses
-    "lib": [
-      "esnext",
-      "dom"
-    ], // add 'dom' for fetch, WebSocket, etc.
+    "lib": ["esnext", "dom"], // add 'dom' for fetch, WebSocket, etc.
     "verbatimModuleSyntax": false, // This is the correct option
     "esModuleInterop": true,
     /* ——— Strictness ——— */
@@ -33,13 +30,6 @@
     ]
   },
   /* ——— What to check ——— */
-  "include": [
-    "./**/*.ts",
-    "./**/*.tsx",
-    "./types/**/*",
-    "vite-env.d.ts"
-  ],
-  "exclude": [
-    "node_modules"
-  ]
+  "include": ["./**/*.ts", "./**/*.tsx", "./types/**/*", "vite-env.d.ts"],
+  "exclude": ["node_modules"]
 }

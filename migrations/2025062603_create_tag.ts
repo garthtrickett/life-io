@@ -2,7 +2,9 @@
 // --- Fix: Use ifNotExists() to make the migration idempotent ---
 import type { Kysely } from "kysely";
 
-export async function up(db: Kysely<any>) {
+import { Database } from "../types";
+
+export async function up(db: Kysely<Database>) {
   await db.schema
     .createTable("tag")
     .ifNotExists() // This ensures the script doesn't fail if the table is already there
@@ -19,6 +21,6 @@ export async function up(db: Kysely<any>) {
     .execute();
 }
 
-export async function down(db: Kysely<any>) {
+export async function down(db: Kysely<Database>) {
   await db.schema.dropTable("tag").ifExists().execute();
 }

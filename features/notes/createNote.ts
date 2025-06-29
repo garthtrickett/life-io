@@ -19,7 +19,7 @@ export const createNote = (note: NewNote) =>
       Effect.tryPromise({
         try: () =>
           db.insertInto("note").values(note).returningAll().executeTakeFirst(),
-        catch: (error) => new Error(`Database Error: ${error}`),
+        catch: (error) => new Error(`Database Error: ${String(error)}`),
       }),
       Effect.tap((createdNote) =>
         serverLog(

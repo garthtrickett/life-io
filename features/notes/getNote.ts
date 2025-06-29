@@ -25,7 +25,7 @@ export const getNote = (noteId: string, userId: string) =>
             .where("id", "=", noteId as NoteId)
             .where("user_id", "=", userId as UserId) // Ensure user owns the note
             .executeTakeFirst(),
-        catch: (error) => new Error(`Database Error: ${error}`),
+        catch: (error) => new Error(`Database Error: ${String(error)}`),
       }),
       Effect.tap((note) =>
         serverLog(

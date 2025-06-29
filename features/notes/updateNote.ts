@@ -27,7 +27,7 @@ export const updateNote = (noteId: NoteId, userId: UserId, note: NoteUpdate) =>
             .where("user_id", "=", userId) // Security check
             .returningAll()
             .executeTakeFirst(),
-        catch: (error) => new Error(`Database Error: ${error}`),
+        catch: (error) => new Error(`Database Error: ${String(error)}`),
       }),
       Effect.tap((updatedNote) =>
         serverLog(

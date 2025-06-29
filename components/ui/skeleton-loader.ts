@@ -18,7 +18,7 @@ export class SkeletonLoader extends LitElement {
     // The component itself is a simple div with Tailwind's animation classes.
     // It can be sized using standard Tailwind classes (e.g., h-4, w-full) where used.
     return html`
-      <div class="bg-gray-300 rounded-md animate-pulse">&nbsp;</div>
+      <div class="animate-pulse rounded-md bg-gray-300">&nbsp;</div>
     `;
   }
 }

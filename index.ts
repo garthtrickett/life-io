@@ -1,24 +1,21 @@
 // FILE: index.ts
-import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
-import { Elysia, t } from "elysia";
+import { existsSync, readFileSync } from "node:fs";
 import { staticPlugin } from "@elysiajs/static";
-import { appRouter } from "./trpc/router";
-import { Effect, Exit, Cause } from "effect";
-import { readFileSync, existsSync } from "node:fs";
-import { serverLog } from "./lib/server/logger.server";
-import { createContext } from "./trpc/context";
+import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
+import { Cause, Effect, Exit } from "effect";
+import { Elysia, t } from "elysia";
 
-// Define the type for log levels that can be received and processed by the server
+import { serverLog } from "./lib/server/logger.server";
+import { runServerEffect } from "./lib/server/runtime";
+import { createContext } from "./trpc/context";
+import { appRouter } from "./trpc/router";
+
 type ServerLoggableLevel = "info" | "error" | "warn" | "debug";
 
-// --- Type Guard Helper Function ---
 const isLoggableLevel = (level: string): level is ServerLoggableLevel => {
   return ["info", "error", "warn", "debug"].includes(level);
 };
 
-/**
- * Creates and configures the Elysia app within an Effect.
- */
 const setupApp = Effect.gen(function* () {
   const app = new Elysia();
   const isProduction = process.env.NODE_ENV === "production";
@@ -48,7 +45,7 @@ const setupApp = Effect.gen(function* () {
       - Looked for 'index.html' at: ${indexHtmlPath}
       - This server is running in production mode (NODE_ENV=production).
       - It requires the frontend to be built first.
-      
+
       Please run 'bun run build' before starting the production server with 'bun run start'.`;
 
       return yield* Effect.fail(new Error(errorMessage));
@@ -64,7 +61,8 @@ const setupApp = Effect.gen(function* () {
         const { level: levelFromClient, args } = body;
 
         if (isLoggableLevel(levelFromClient)) {
-          Effect.runPromise(
+          // FIX: Explicitly ignore the promise for this fire-and-forget log effect.
+          void runServerEffect(
             serverLog(
               levelFromClient,
               `[CLIENT] ${args.join(" ")}`,
@@ -90,25 +88,25 @@ const setupApp = Effect.gen(function* () {
   }
 
   app.all("/trpc/*", async (opts) => {
-    const res = await fetchRequestHandler({
+    return fetchRequestHandler({
       endpoint: "/trpc",
       router: appRouter,
       req: opts.request,
       createContext,
     });
-
-    return res;
   });
 
   return app;
 });
 
-// --- Program Runner ---
-Effect.runPromiseExit(setupApp).then((exit) => {
+// FIX: Ignore the top-level promise chain. The .then() call itself returns a
+// promise that was unhandled. Using `void` signals to the linter that this is intentional.
+void Effect.runPromiseExit(setupApp).then((exit) => {
   if (Exit.isSuccess(exit)) {
     const app = exit.value;
     app.listen(42069, () => {
-      Effect.runPromise(
+      // FIX: Explicitly ignore the promise for this fire-and-forget log effect.
+      void runServerEffect(
         serverLog(
           "info",
           `🦊 Elysia server with tRPC listening on http://localhost:42069`,

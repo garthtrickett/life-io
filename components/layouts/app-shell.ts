@@ -1,13 +1,13 @@
 // FILE: components/layouts/app-shell.ts
 import "urlpattern-polyfill";
-import { LitElement, html } from "lit";
+import { LitElement, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { Router } from "@lit-labs/router";
 import { authStore, type AuthModel } from "../../lib/client/stores/authStore";
 import { navigate } from "../../lib/client/router.ts";
 import { clientLog } from "../../lib/client/logger.client.ts";
-import { Effect } from "effect";
-import { effect } from "@preact/signals-core"; // --- CHANGE: Import `effect`
+import { effect } from "@preact/signals-core";
+import { runClientEffect } from "../../lib/client/runtime.ts";
 
 // Import layouts and pages
 import "./main-layout.ts";
@@ -53,28 +53,40 @@ export class AppShell extends LitElement {
     {
       path: "/",
       name: "home",
-      render: () => html`<dashboard-page></dashboard-page>`,
+      render: () => html`
+        <dashboard-page></dashboard-page>
+      `,
     },
     {
       path: "/login",
       name: "login",
-      render: () => html`<login-page></login-page>`,
+      render: () => html`
+        <login-page></login-page>
+      `,
     },
     {
       path: "/signup",
       name: "signup",
-      render: () => html`<signup-page></signup-page>`,
+      render: () => html`
+        <signup-page></signup-page>
+      `,
     },
     {
       path: "/notes/:id",
       name: "note-detail",
-      render: ({ id }: any) =>
-        html`<note-detail-page .noteId=${id}></note-detail-page>`,
+      render: ({ id }: { id?: string }) => {
+        if (!id) return nothing;
+        return html`
+          <note-detail-page .noteId=${id}></note-detail-page>
+        `;
+      },
     },
     {
       path: "/*",
       name: "not-found",
-      render: () => html`<h1>404 - Not Found</h1>`,
+      render: () => html`
+        <h1>404 - Not Found</h1>
+      `,
     },
   ]);
 
@@ -89,7 +101,7 @@ export class AppShell extends LitElement {
   connectedCallback(): void {
     super.connectedCallback();
     this.router.hostConnected();
-    Effect.runPromise(
+    void runClientEffect(
       clientLog(
         "info",
         "AppShell connected to DOM.",
@@ -103,14 +115,9 @@ export class AppShell extends LitElement {
       this._handleNavigateTo as EventListener,
     );
 
-    // --- CHANGE: Use `effect` to subscribe to the signal directly.
-    // This removes the "double subscription" and is more idiomatic.
     this._unsubscribeFromAuthStore = effect(() => {
-      // By reading the signal's value here, we create a subscription.
-      // This function will re-run whenever the auth state changes.
       const newAuthState = authStore.stateSignal.value;
-
-      Effect.runPromise(
+      void runClientEffect(
         clientLog(
           "debug",
           `Auth signal changed to: ${newAuthState.status}. Proposing state change.`,
@@ -118,8 +125,6 @@ export class AppShell extends LitElement {
           "AppShell:authEffect",
         ),
       );
-
-      // Propose an action to this component's internal state machine.
       this.propose({ type: "AUTH_STATE_CHANGED", payload: newAuthState });
     });
   }
@@ -127,7 +132,7 @@ export class AppShell extends LitElement {
   disconnectedCallback(): void {
     super.disconnectedCallback();
     this.router.hostDisconnected();
-    Effect.runPromise(
+    void runClientEffect(
       clientLog(
         "info",
         "AppShell disconnected from DOM, cleaning up.",
@@ -139,12 +144,11 @@ export class AppShell extends LitElement {
       "navigate-to",
       this._handleNavigateTo as EventListener,
     );
-    // This now correctly calls the disposer function returned by `effect`.
     this._unsubscribeFromAuthStore?.();
   }
 
   private propose(action: Action) {
-    Effect.runPromise(
+    void runClientEffect(
       clientLog(
         "debug",
         `Proposing action: ${action.type}`,
@@ -156,9 +160,9 @@ export class AppShell extends LitElement {
     this.react(this._model, action);
   }
 
-  private async react(model: Model, action: Action) {
+  private react(model: Model, action: Action) {
     this.requestUpdate();
-    Effect.runPromise(
+    void runClientEffect(
       clientLog(
         "debug",
         `Reacting to action: ${action.type}`,
@@ -169,7 +173,7 @@ export class AppShell extends LitElement {
 
     switch (action.type) {
       case "AUTH_STATE_CHANGED":
-        Effect.runPromise(
+        void runClientEffect(
           clientLog(
             "info",
             "Auth state changed, triggering a new routing check.",
@@ -183,7 +187,7 @@ export class AppShell extends LitElement {
       case "ROUTING_CHECK_START": {
         const { isRedirecting, auth } = model;
         const currentPath = window.location.pathname;
-        Effect.runPromise(
+        void runClientEffect(
           clientLog(
             "info",
             `Routing check started. Path: '${currentPath}', Auth: '${auth.status}', Redirecting: ${isRedirecting}`,
@@ -193,7 +197,7 @@ export class AppShell extends LitElement {
         );
 
         if (isRedirecting) {
-          Effect.runPromise(
+          void runClientEffect(
             clientLog(
               "warn",
               "Skipping routing check; a redirect is already in progress.",
@@ -208,7 +212,7 @@ export class AppShell extends LitElement {
           auth.status === "initializing" ||
           auth.status === "authenticating"
         ) {
-          Effect.runPromise(
+          void runClientEffect(
             clientLog(
               "debug",
               "Skipping routing check; auth state is not settled.",
@@ -229,7 +233,7 @@ export class AppShell extends LitElement {
         }
 
         if (needsRedirectTo && currentPath !== needsRedirectTo) {
-          Effect.runPromise(
+          void runClientEffect(
             clientLog(
               "info",
               `Redirect needed from '${currentPath}' to '${needsRedirectTo}'. Proposing ROUTING_REDIRECT_NEEDED.`,
@@ -242,7 +246,7 @@ export class AppShell extends LitElement {
             payload: needsRedirectTo,
           });
         } else {
-          Effect.runPromise(
+          void runClientEffect(
             clientLog(
               "debug",
               "Routing check complete, no redirect needed.",
@@ -255,7 +259,7 @@ export class AppShell extends LitElement {
       }
 
       case "ROUTING_REDIRECT_NEEDED":
-        Effect.runPromise(
+        void runClientEffect(
           clientLog(
             "info",
             `Executing redirect navigation to '${action.payload}'.`,
@@ -267,7 +271,7 @@ export class AppShell extends LitElement {
         break;
 
       case "LOGOUT_BUTTON_CLICKED":
-        Effect.runPromise(
+        void runClientEffect(
           clientLog(
             "info",
             "Logout button clicked, delegating to authStore.",
@@ -282,7 +286,7 @@ export class AppShell extends LitElement {
 
   private _handleNavigateTo = (e: CustomEvent<{ path: string }>) => {
     const path = e.detail.path;
-    Effect.runPromise(
+    void runClientEffect(
       clientLog(
         "info",
         `Handling 'navigate-to' event for path: ${path}`,
@@ -292,7 +296,7 @@ export class AppShell extends LitElement {
     );
 
     if (window.location.pathname === path) {
-      Effect.runPromise(
+      void runClientEffect(
         clientLog(
           "warn",
           "Navigation skipped; already at the target path.",
@@ -305,12 +309,14 @@ export class AppShell extends LitElement {
 
     const performNavigation = () => {
       window.history.pushState({}, "", path);
-      this.router.goto(path);
+      void this.router.goto(path);
       this.propose({ type: "ROUTING_COMPLETE" });
     };
 
-    if (!(document as any).startViewTransition) {
-      Effect.runPromise(
+    // The `startViewTransition` method may not exist in all browsers.
+    // The type definitions say it's there, but we need a runtime check.
+    if (!document.startViewTransition) {
+      void runClientEffect(
         clientLog(
           "debug",
           "No View Transition API found. Navigating directly.",
@@ -322,7 +328,7 @@ export class AppShell extends LitElement {
       return;
     }
 
-    Effect.runPromise(
+    void runClientEffect(
       clientLog(
         "debug",
         "Starting view transition.",
@@ -330,13 +336,20 @@ export class AppShell extends LitElement {
         "AppShell:navigate",
       ),
     );
-    const transition = (document as any).startViewTransition(performNavigation);
-    transition.ready.then(() =>
-      document.documentElement.classList.add("is-transitioning"),
-    );
-    transition.finished.then(() => {
-      document.documentElement.classList.remove("is-transitioning");
-    });
+    const transition = document.startViewTransition(performNavigation);
+    transition.ready
+      .then(() => document.documentElement.classList.add("is-transitioning"))
+      .catch(() => {
+        /* ignore transition abort */
+      });
+
+    transition.finished
+      .then(() => {
+        document.documentElement.classList.remove("is-transitioning");
+      })
+      .catch(() => {
+        /* ignore transition abort, cleanup may have already run */
+      });
   };
 
   createRenderRoot() {
@@ -344,10 +357,9 @@ export class AppShell extends LitElement {
   }
 
   render() {
-    // This now reads the local `_model`, which is kept in sync by the `effect`.
     const { status } = this._model.auth;
 
-    Effect.runPromise(
+    void runClientEffect(
       clientLog(
         "debug",
         `Rendering AppShell with auth status: ${status}`,
@@ -357,19 +369,21 @@ export class AppShell extends LitElement {
     );
 
     if (status === "initializing" || status === "authenticating") {
-      return html`<div
-        class="fixed inset-0 bg-gray-100 flex items-center justify-center z-50"
-      >
+      return html`
         <div
-          class="w-12 h-12 border-4 border-zinc-300 border-t-zinc-600 rounded-full animate-spin"
-        ></div>
-      </div>`;
+          class="fixed inset-0 z-50 flex items-center justify-center bg-gray-100"
+        >
+          <div
+            class="h-12 w-12 animate-spin rounded-full border-4 border-zinc-300 border-t-zinc-600"
+          ></div>
+        </div>
+      `;
     }
 
     return html`
       <main-layout>
         <div slot="header">
-          <nav class="container mx-auto p-4 flex items-center justify-between">
+          <nav class="container mx-auto flex items-center justify-between p-4">
             <a href="/" class="text-xl font-bold text-zinc-900">Life IO</a>
             <div>
               ${status === "authenticated"
@@ -377,8 +391,9 @@ export class AppShell extends LitElement {
                     <a
                       href="/"
                       class="px-3 py-2 text-zinc-600 hover:text-zinc-900"
-                      >Notes</a
                     >
+                      Notes
+                    </a>
                     <button
                       @click=${() =>
                         this.propose({ type: "LOGOUT_BUTTON_CLICKED" })}
@@ -387,11 +402,14 @@ export class AppShell extends LitElement {
                       Logout
                     </button>
                   `
-                : html`<a
-                    href="/login"
-                    class="px-3 py-2 text-zinc-600 hover:text-zinc-900"
-                    >Login</a
-                  >`}
+                : html`
+                    <a
+                      href="/login"
+                      class="px-3 py-2 text-zinc-600 hover:text-zinc-900"
+                    >
+                      Login
+                    </a>
+                  `}
             </div>
           </nav>
         </div>
