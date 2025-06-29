@@ -1,7 +1,7 @@
 # fly.toml file generated for life-io-app
 
 app = "life-io"
-primary_region = "sea"
+primary_region = "sin"
 
 [build]
  dockerfile = "Dockerfile"
