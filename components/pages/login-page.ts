@@ -11,6 +11,7 @@ import { clientLog } from "../../lib/client/logger.client.ts";
 import { navigate } from "../../lib/client/router.ts";
 import { runClientEffect } from "../../lib/client/runtime.ts";
 
+// Model and Action types remain the same...
 interface Model {
   email: string;
   password: string;
@@ -58,7 +59,6 @@ export class LoginPage extends PageAnimationMixin(LitElement) {
 
   private propose(action: Action) {
     this._model = update(this._model, action);
-    // FIX: Add 'void' to explicitly ignore the promise from the async 'react' method.
     void this.react(this._model, action);
   }
 
@@ -73,7 +73,6 @@ export class LoginPage extends PageAnimationMixin(LitElement) {
               email: model.email,
               password: model.password,
             }),
-          // FIX: Use 'unknown' and 'String(err)' for safe error handling.
           catch: (err: unknown) => new Error(String(err)),
         }),
         Effect.match({
@@ -115,8 +114,14 @@ export class LoginPage extends PageAnimationMixin(LitElement) {
           "LoginPage",
         ),
       );
-      navigate("/"); // Redirect to home page on success
+      navigate("/");
     }
+  }
+
+  private _handleLoginSubmit(e: Event) {
+    e.preventDefault();
+    if (this._model.isLoading) return;
+    this.propose({ type: "LOGIN_START" });
   }
 
   render() {
@@ -136,7 +141,7 @@ export class LoginPage extends PageAnimationMixin(LitElement) {
       <div class="flex min-h-screen items-center justify-center bg-gray-100">
         <div class="w-full max-w-md rounded-lg bg-white p-8 shadow-md">
           <h2 class="mb-6 text-center text-2xl font-bold">Login</h2>
-          <form @submit=${(e: Event) => e.preventDefault()}>
+          <form @submit=${this._handleLoginSubmit}>
             <div class="mb-4">
               <label
                 for="email"
@@ -151,7 +156,6 @@ export class LoginPage extends PageAnimationMixin(LitElement) {
                 @input=${(e: Event) =>
                   this.propose({
                     type: "UPDATE_EMAIL",
-                    // FIX: Type the event and cast the target for type safety.
                     payload: (e.target as HTMLInputElement).value,
                   })}
                 class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-zinc-500 focus:outline-none focus:ring-zinc-500 sm:text-sm"
@@ -172,7 +176,6 @@ export class LoginPage extends PageAnimationMixin(LitElement) {
                 @input=${(e: Event) =>
                   this.propose({
                     type: "UPDATE_PASSWORD",
-                    // FIX: Type the event and cast the target for type safety.
                     payload: (e.target as HTMLInputElement).value,
                   })}
                 class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-zinc-500 focus:outline-none focus:ring-zinc-500 sm:text-sm"
@@ -187,13 +190,21 @@ export class LoginPage extends PageAnimationMixin(LitElement) {
                 `
               : ""}
             <notion-button
-              type="submit"
+              class="relative w-full"
               .loading=${this._model.isLoading}
-              @notion-button-click=${() => {
-                this.propose({ type: "LOGIN_START" });
-              }}
             >
-              Login
+              <!-- FIX: Add the Tailwind classes directly to the button -->
+              <button
+                type="submit"
+                ?disabled=${this._model.isLoading}
+                class="inline-flex w-full items-center justify-center gap-2 rounded-md bg-zinc-800 px-4 py-2 text-sm font-semibold text-white transition-colors duration-150 hover:bg-zinc-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:bg-zinc-600"
+              >
+                <span
+                  class="${this._model.isLoading ? "text-transparent" : ""}"
+                >
+                  Login
+                </span>
+              </button>
             </notion-button>
           </form>
           <div class="mt-4 text-center text-sm">

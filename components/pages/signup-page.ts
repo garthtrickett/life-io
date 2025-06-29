@@ -11,6 +11,7 @@ import { clientLog } from "../../lib/client/logger.client.ts";
 import { navigate } from "../../lib/client/router.ts";
 import { runClientEffect } from "../../lib/client/runtime.ts";
 
+// Model and Action types remain the same...
 interface Model {
   email: string;
   password: string;
@@ -58,8 +59,6 @@ export class SignupPage extends PageAnimationMixin(LitElement) {
 
   private propose(action: Action) {
     this._model = update(this._model, action);
-    // FIX(no-floating-promises): The `react` method is async. Prepending `void`
-    // explicitly marks this as a "fire-and-forget" call, satisfying the linter.
     void this.react(this._model, action);
   }
 
@@ -74,8 +73,6 @@ export class SignupPage extends PageAnimationMixin(LitElement) {
               email: model.email,
               password: model.password,
             }),
-          // FIX(no-explicit-any, unsafe-access): Type the caught error as `unknown`
-          // and safely check if it's an Error instance before accessing `.message`.
           catch: (err: unknown) =>
             new Error(err instanceof Error ? err.message : String(err)),
         }),
@@ -118,8 +115,14 @@ export class SignupPage extends PageAnimationMixin(LitElement) {
           "SignupPage",
         ),
       );
-      navigate("/"); // Redirect to home page on success
+      navigate("/");
     }
+  }
+
+  private _handleSignupSubmit(e: Event) {
+    e.preventDefault();
+    if (this._model.isLoading) return;
+    this.propose({ type: "SIGNUP_START" });
   }
 
   render() {
@@ -139,7 +142,7 @@ export class SignupPage extends PageAnimationMixin(LitElement) {
       <div class="flex min-h-screen items-center justify-center bg-gray-100">
         <div class="w-full max-w-md rounded-lg bg-white p-8 shadow-md">
           <h2 class="mb-6 text-center text-2xl font-bold">Create Account</h2>
-          <form @submit=${(e: Event) => e.preventDefault()}>
+          <form @submit=${this._handleSignupSubmit}>
             <div class="mb-4">
               <label
                 for="email"
@@ -154,7 +157,6 @@ export class SignupPage extends PageAnimationMixin(LitElement) {
                 @input=${(e: Event) =>
                   this.propose({
                     type: "UPDATE_EMAIL",
-                    // FIX(no-explicit-any, unsafe-access): Add type assertion for the event target.
                     payload: (e.target as HTMLInputElement).value,
                   })}
                 class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-zinc-500 focus:outline-none focus:ring-zinc-500 sm:text-sm"
@@ -175,7 +177,6 @@ export class SignupPage extends PageAnimationMixin(LitElement) {
                 @input=${(e: Event) =>
                   this.propose({
                     type: "UPDATE_PASSWORD",
-                    // FIX(no-explicit-any, unsafe-access): Add type assertion for the event target.
                     payload: (e.target as HTMLInputElement).value,
                   })}
                 class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-zinc-500 focus:outline-none focus:ring-zinc-500 sm:text-sm"
@@ -190,12 +191,21 @@ export class SignupPage extends PageAnimationMixin(LitElement) {
                 `
               : ""}
             <notion-button
-              type="submit"
+              class="relative w-full"
               .loading=${this._model.isLoading}
-              @notion-button-click=${() =>
-                this.propose({ type: "SIGNUP_START" })}
             >
-              Sign Up
+              <!-- FIX: Add the Tailwind classes directly to the button -->
+              <button
+                type="submit"
+                ?disabled=${this._model.isLoading}
+                class="inline-flex w-full items-center justify-center gap-2 rounded-md bg-zinc-800 px-4 py-2 text-sm font-semibold text-white transition-colors duration-150 hover:bg-zinc-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:bg-zinc-600"
+              >
+                <span
+                  class="${this._model.isLoading ? "text-transparent" : ""}"
+                >
+                  Sign Up
+                </span>
+              </button>
             </notion-button>
           </form>
           <div class="mt-4 text-center text-sm">
