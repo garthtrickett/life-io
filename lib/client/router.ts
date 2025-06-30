@@ -82,19 +82,21 @@ export const router = (): MatchedRoute => {
 /* Public helper ----------------------------------------------------- */
 export const navigate = (path: string) => {
   if (currentPage.value === path) {
-    runClientUnscoped(
-      clientLog(
-        "warn",
-        `Maps('${path}') ignored – already there.`,
-        undefined,
-        "navigate",
-      ),
-    );
     return;
   }
-  runClientUnscoped(
-    clientLog("info", `Maps → '${path}'`, undefined, "navigate"),
-  );
-  window.history.pushState({}, "", path);
-  currentPage.value = path;
+
+  const navigateTo = () => {
+    window.history.pushState({}, "", path);
+    currentPage.value = path;
+  };
+
+  // Wrap the navigation logic in the View Transitions API
+  // @ts-ignore - document.startViewTransition might not be in all TS lib versions yet
+  if (document.startViewTransition) {
+    // @ts-ignore
+    document.startViewTransition(navigateTo);
+  } else {
+    // Fallback for browsers without the API
+    navigateTo();
+  }
 };

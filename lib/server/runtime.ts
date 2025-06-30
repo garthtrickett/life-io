@@ -3,7 +3,6 @@ import { Runtime, Context } from "effect";
 import { db as kyselyInstance } from "../../db/kysely";
 import { Db } from "../../db/DbTag";
 
-// 1. Create a Context that includes the database service.
 const serverContext = Context.make(Db, kyselyInstance);
 
 // 2. Build the runtime configuration, providing our new context
@@ -16,16 +15,16 @@ const serverRuntime = Runtime.make({
 
 /**
  * Executes a server-side Effect and returns a Promise of its result.
- * This should be used for all tRPC procedures that run Effects.
+ * [cite_start]This should be used for all tRPC procedures that run Effects. [cite: 1958]
  */
 export const runServerPromise = Runtime.runPromise(serverRuntime);
 
 /**
  * Executes a server-side Effect in an unscoped manner, which is not tied
- * to the lifecycle of the parent fiber. This is suitable for top-level
+ * to the lifecycle of the parent fiber. [cite_start]This is suitable for top-level [cite: 1959]
  * "fire-and-forget" tasks that should not be interrupted, like logging
  * server startup.
  *
- * For tasks within a request, prefer `Effect.forkDaemon`.
+ * [cite_start]For tasks within a request, prefer `Effect.forkDaemon`. [cite: 1960]
  */
 export const runServerUnscoped = Runtime.runFork(serverRuntime);

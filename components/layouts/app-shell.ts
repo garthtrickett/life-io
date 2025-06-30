@@ -6,7 +6,7 @@ import { AppLayout } from "./AppLayout";
 import { clientLog } from "../../lib/client/logger.client";
 import { runClientUnscoped } from "../../lib/client/runtime";
 import { authState } from "../../lib/client/stores/authStore";
-import { html } from "lit-html";
+import { html, nothing } from "lit-html";
 import type { ViewResult } from "../../lib/client/router";
 
 /* -------------------------------------------------------------- */
@@ -17,6 +17,20 @@ let currentViewCleanup: (() => void) | undefined;
 let currentView: ((...args: string[]) => ViewResult) | undefined;
 const hasAllPerms = (needed: string[]) =>
   needed.every((p) => authState.value.user?.permissions?.includes(p));
+
+// --- Handle browser back/forward buttons ---
+window.addEventListener("popstate", () => {
+  const navigateTo = () => {
+    currentPage.value = window.location.pathname;
+  };
+  // @ts-ignore
+  if (document.startViewTransition) {
+    // @ts-ignore
+    document.startViewTransition(navigateTo);
+  } else {
+    navigateTo();
+  }
+});
 
 /* -------------------------------------------------------------- */
 /* Main reactive loop – runs on *every* path/auth change          */
@@ -35,17 +49,29 @@ effect(() => {
   const auth = authState.value;
   const path = currentPage.value;
 
+  // --- NEW: Define a loading template for the main content area ---
+  const loadingTemplate = html`
+    <div class="p-8 text-center text-zinc-500">
+      <div
+        class="mx-auto h-12 w-12 animate-spin rounded-full border-4 border-zinc-300 border-t-zinc-600"
+      ></div>
+      <p class="mt-4">Loading...</p>
+    </div>
+  `;
+
   /* 1️⃣  AUTH NOT READY ------------------------------------------------ */
+  // MODIFIED: Instead of replacing the whole page, render the AppLayout
+  // with a loading spinner inside the main content area.
   if (auth.status === "initializing" || auth.status === "authenticating") {
     runClientUnscoped(
       clientLog(
         "debug",
-        "Auth not ready – showing spinner",
+        "Auth not ready – showing layout with spinner",
         undefined,
         "AppShell:guard",
       ),
     );
-    render(html`<p>Loading...</p>`, appRoot);
+    render(AppLayout({ children: loadingTemplate }).template, appRoot);
     return;
   }
 
