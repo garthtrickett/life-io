@@ -6,63 +6,55 @@ import { createNote } from "../../features/notes/createNote";
 import { getNotes } from "../../features/notes/getNotes";
 import { getNote } from "../../features/notes/getNote";
 import { updateNote } from "../../features/notes/updateNote";
-import { Effect, Cause } from "effect";
+import { Effect } from "effect";
 import { perms } from "../../lib/shared/permissions";
-import type { NewNote, NoteId } from "../../types/generated/public/Note";
-import { serverLog } from "../../lib/server/logger.server";
+import type { NewNote } from "../../types/generated/public/Note";
 import { runServerPromise } from "../../lib/server/runtime";
+import { TRPCError } from "@trpc/server";
+import { NoteIdSchema } from "../../lib/shared/schemas";
+import { Db } from "../../db/DbTag";
 
 const CreateNoteInput = t.Object({
   title: t.String({ minLength: 1 }),
   content: t.String(),
 });
 
+// Use the imported schema here
 const GetByIdInput = t.Object({
-  id: t.String({ format: "uuid" }),
+  id: NoteIdSchema,
 });
 
+// And here
 const UpdateNoteInput = t.Object({
-  id: t.String({ format: "uuid" }),
+  id: NoteIdSchema,
   title: t.String({ minLength: 1 }),
   content: t.String(),
 });
 
+/**
+ * A helper function to run an Effect and automatically translate any
+ * Error in the failure channel into a TRPCError with a 'BAD_REQUEST' code,
+ * which is suitable for validation failures.
+ */
+const runEffectAsTrpc = <A,>(
+  eff: Effect.Effect<A, Error, Db>, // FIX: The context is now correctly typed as Db
+): Promise<A> => {
+  const program = Effect.catchAll(eff, (e) =>
+    Effect.fail(new TRPCError({ code: "BAD_REQUEST", message: e.message })),
+  );
+  return runServerPromise(program);
+};
+
 export const noteRouter = router({
   list: createPermissionProtectedProcedure(perms.note.read).query(({ ctx }) =>
-    runServerPromise(getNotes(ctx.user.id)),
+    runEffectAsTrpc(getNotes(ctx.user.id)),
   ),
 
   getById: createPermissionProtectedProcedure(perms.note.read)
     .input(compile(GetByIdInput))
     .query(({ input, ctx }) => {
       const { id } = input as typeof GetByIdInput.static;
-      const program = Effect.zipRight(
-        serverLog(
-          "info",
-          `[TRPC] getById received for id: ${id}`,
-          ctx.user.id,
-          "noteRouter:getById",
-        ),
-        getNote(id, ctx.user.id).pipe(
-          Effect.tap((result) =>
-            serverLog(
-              "info",
-              `[TRPC] getById program finished. Found note: ${!!result}`,
-              ctx.user.id,
-              "noteRouter:getById:program",
-            ),
-          ),
-          Effect.tapErrorCause((cause) =>
-            serverLog(
-              "error",
-              `[TRPC] getById program failed: ${Cause.pretty(cause)}`,
-              ctx.user.id,
-              "noteRouter:getById:program",
-            ),
-          ),
-        ),
-      );
-      return runServerPromise(program);
+      return runEffectAsTrpc(getNote(id, ctx.user.id));
     }),
 
   create: createPermissionProtectedProcedure(perms.note.write)
@@ -74,15 +66,14 @@ export const noteRouter = router({
         content,
         user_id: ctx.user.id,
       };
-      return runServerPromise(createNote(noteData));
+      return runEffectAsTrpc(createNote(noteData));
     }),
 
   update: createPermissionProtectedProcedure(perms.note.write)
     .input(compile(UpdateNoteInput))
     .mutation(({ input, ctx }) => {
       const { id, ...noteUpdateData } = input as typeof UpdateNoteInput.static;
-      return runServerPromise(
-        updateNote(id as NoteId, ctx.user.id, noteUpdateData),
-      );
+      // FIX: Removed the unnecessary and incorrect `as NoteId` cast
+      return runEffectAsTrpc(updateNote(id, ctx.user.id, noteUpdateData));
     }),
 });

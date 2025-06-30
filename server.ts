@@ -272,7 +272,7 @@ const setupApp = Effect.gen(function* () {
 void Effect.runPromiseExit(setupApp).then((exit) => {
   if (Exit.isSuccess(exit)) {
     const app = exit.value;
-    app.listen(42069, () => {
+    const server = app.listen(42069, () => {
       runServerUnscoped(
         serverLog(
           "info",
@@ -282,6 +282,20 @@ void Effect.runPromiseExit(setupApp).then((exit) => {
         ),
       );
     });
+
+    const gracefulShutdown = async (signal: string) => {
+      console.info(`\nReceived ${signal}. Shutting down gracefully...`);
+      await server.stop();
+      await runServerPromise(
+        serverLog("info", "Closing database connections before exit."),
+      );
+      await db.destroy();
+      console.info("Database connections closed.");
+      process.exit(0);
+    };
+
+    process.on("SIGINT", () => void gracefulShutdown("SIGINT"));
+    process.on("SIGTERM", () => void gracefulShutdown("SIGTERM"));
   } else {
     console.error("\n❌ Server setup failed. Details below:\n");
     console.error(Cause.pretty(exit.cause));

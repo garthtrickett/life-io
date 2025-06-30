@@ -2,18 +2,22 @@
 import { Effect, pipe } from "effect";
 import { Db } from "../../db/DbTag";
 import { serverLog } from "../../lib/server/logger.server";
-import { NoteId } from "../../types/generated/public/Note";
-import { UserId } from "../../types/generated/public/User";
+import { validateNoteId, validateUserId } from "../../lib/shared/domain";
 
 export const getNote = (noteId: string, userId: string) =>
   Effect.gen(function* () {
+    // --- Start: Validation ---
+    const validatedNoteId = yield* validateNoteId(noteId);
+    const validatedUserId = yield* validateUserId(userId);
+    // --- End: Validation ---
+
     const db = yield* Db;
 
     yield* Effect.forkDaemon(
       serverLog(
         "info",
-        `Attempting to fetch note with ID: "${noteId}"`,
-        userId,
+        `Attempting to fetch note with ID: "${validatedNoteId}"`, // Use validated ID
+        validatedUserId, // Use validated ID
         "GetNote",
       ),
     );
@@ -24,8 +28,8 @@ export const getNote = (noteId: string, userId: string) =>
           db
             .selectFrom("note")
             .selectAll()
-            .where("id", "=", noteId as NoteId)
-            .where("user_id", "=", userId as UserId) // Ensure user
+            .where("id", "=", validatedNoteId) // No 'as' cast needed
+            .where("user_id", "=", validatedUserId) // No 'as' cast needed
             .executeTakeFirst(),
         catch: (error) => new Error(`Database Error: ${String(error)}`),
       }),
@@ -35,8 +39,8 @@ export const getNote = (noteId: string, userId: string) =>
             "info",
             note
               ? `Successfully fetched note: ${note.title}`
-              : `Note with ID ${noteId} not found.`,
-            userId,
+              : `Note with ID ${validatedNoteId} not found.`,
+            validatedUserId,
             "GetNote",
           ),
         ),
@@ -47,7 +51,7 @@ export const getNote = (noteId: string, userId: string) =>
             serverLog(
               "error",
               `Failed to fetch note: ${error.message}`,
-              userId,
+              validatedUserId,
               "GetNote",
             ),
           ),
