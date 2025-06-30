@@ -1,5 +1,5 @@
 // File: components/pages/profile-page.ts
-import { html, type TemplateResult } from "lit-html";
+import { html, nothing, type TemplateResult } from "lit-html";
 import { signal } from "@preact/signals-core";
 import {
   authState,
@@ -7,7 +7,7 @@ import {
   type AuthModel,
 } from "../../lib/client/stores/authStore";
 import styles from "./ProfileView.module.css";
-import "../ui/notion-button-a11y.ts";
+import { NotionButton } from "../ui/notion-button"; // <-- 1. Import the new button component
 
 // --- Types ---
 interface ViewResult {
@@ -84,6 +84,7 @@ const propose = (action: Action) => {
   void react(action);
 };
 
+// This ensures the local model is in sync with the global auth store
 if (model.value.auth.status !== authState.value.status) {
   propose({ type: "AUTH_STATE_CHANGED", payload: authState.value });
 }
@@ -99,8 +100,19 @@ export const ProfileView = (): ViewResult => {
   };
 
   const triggerFileInput = () => {
+    // This function now just handles the logic, to be passed to the button's onClick.
     document.getElementById("avatar-upload")?.click();
   };
+
+  const user = model.value.auth.user;
+  if (!user) {
+    // Handle case where user is not logged in, maybe show a loading or error state
+    return { template: html`<p>Loading profile...</p>`, cleanup };
+  }
+
+  const avatarUrl =
+    user.avatar_url ||
+    `https://ui-avatars.com/api/?name=${encodeURIComponent(user.email)}`;
 
   return {
     template: html`
@@ -108,25 +120,18 @@ export const ProfileView = (): ViewResult => {
         <div class=${styles.profileCard}>
           <h2 class=${styles.title}>Your Profile</h2>
           <div class=${styles.avatarContainer}>
-            <img
-              src=${model.value.auth.user?.avatar_url ||
-              `https://ui-avatars.com/api/?name=${encodeURIComponent(
-                model.value.auth.user?.email ?? "User",
-              )}`}
-              alt="Profile avatar"
-              class=${styles.avatar}
-            />
-            <p class=${styles.email}>${model.value.auth.user?.email}</p>
+            <img src=${avatarUrl} alt="Profile avatar" class=${styles.avatar} />
+            <p class=${styles.email}>${user.email}</p>
           </div>
           <div class=${styles.uploadSection}>
-            <notion-button
-              .loading=${model.value.status === "uploading"}
-              @notion-button-click=${triggerFileInput}
-            >
-              ${model.value.status === "uploading"
-                ? "Uploading..."
-                : "Change Picture"}
-            </notion-button>
+            ${NotionButton({
+              children:
+                model.value.status === "uploading"
+                  ? "Uploading..."
+                  : "Change Picture",
+              loading: model.value.status === "uploading",
+              onClick: triggerFileInput,
+            })}
             <input
               id="avatar-upload"
               type="file"
@@ -137,7 +142,7 @@ export const ProfileView = (): ViewResult => {
           </div>
           ${model.value.error
             ? html`<p class=${styles.errorText}>${model.value.error}</p>`
-            : ""}
+            : nothing}
         </div>
       </div>
     `,

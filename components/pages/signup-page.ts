@@ -1,4 +1,5 @@
-import { html, type TemplateResult } from "lit-html";
+// File: ./components/pages/signup-page.ts
+import { html, type TemplateResult, nothing } from "lit-html";
 import { signal } from "@preact/signals-core";
 import { pipe, Effect, Exit, Cause } from "effect";
 import { trpc } from "../../lib/client/trpc";
@@ -7,6 +8,7 @@ import { navigate } from "../../lib/client/router";
 import { clientLog } from "../../lib/client/logger.client";
 import styles from "./SignupView.module.css";
 import type { User } from "../../types/generated/public/User";
+import { NotionButton } from "../ui/notion-button"; // <-- 1. Import component
 
 // --- Types ---
 interface ViewResult {
@@ -85,16 +87,12 @@ const react = async (action: Action) => {
     if (Exit.isSuccess(exit)) {
       propose({ type: "SIGNUP_SUCCESS", payload: exit.value });
     } else {
-      // --- FIX START ---
-      // Use Cause.squash to safely extract the underlying error, whether it's
-      // a "defect" from a Die or an "error" from a Fail.
       const error = Cause.squash(exit.cause);
       const errorMessage =
         error instanceof Error
           ? error.message
           : "An unknown error occurred during signup.";
       propose({ type: "SIGNUP_ERROR", payload: errorMessage });
-      // --- FIX END ---
     }
   }
   if (action.type === "SIGNUP_SUCCESS") {
@@ -163,17 +161,14 @@ export const SignupView = (): ViewResult => {
               />
             </div>
             ${model.value.error
-              ? html`
-                  <div class=${styles.errorText}>${model.value.error}</div>
-                `
-              : ""}
-            <button
-              type="submit"
-              class=${styles.submitButton}
-              ?disabled=${model.value.isLoading}
-            >
-              ${model.value.isLoading ? "Signing up..." : "Sign Up"}
-            </button>
+              ? html`<div class=${styles.errorText}>${model.value.error}</div>`
+              : nothing}
+            ${NotionButton({
+              children: model.value.isLoading ? "Signing up..." : "Sign Up",
+              type: "submit",
+              loading: model.value.isLoading,
+              onClick: handleSignupSubmit,
+            })}
           </form>
           <div class=${styles.linkContainer}>
             <a href="/login" class=${styles.link}>

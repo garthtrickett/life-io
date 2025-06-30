@@ -1,3 +1,5 @@
+// File: ./components/pages/login-page.ts
+
 import { html, type TemplateResult } from "lit-html";
 import { signal } from "@preact/signals-core";
 import { pipe, Effect, Exit, Cause } from "effect";
@@ -7,6 +9,7 @@ import { navigate } from "../../lib/client/router";
 import { clientLog } from "../../lib/client/logger.client";
 import styles from "./LoginView.module.css";
 import type { User } from "../../types/generated/public/User";
+import { NotionButton } from "../ui/notion-button"; // <-- 1. Import the new button component
 
 // --- Types ---
 interface ViewResult {
@@ -81,16 +84,12 @@ const react = async (action: Action) => {
     if (Exit.isSuccess(exit)) {
       propose({ type: "LOGIN_SUCCESS", payload: exit.value });
     } else {
-      // --- FIX START ---
-      // Use Cause.squash to safely extract the underlying error, whether it's
-      // a "defect" from a Die or an "error" from a Fail.
       const error = Cause.squash(exit.cause);
       const errorMessage =
         error instanceof Error
           ? error.message
           : "An unknown error occurred during login.";
       propose({ type: "LOGIN_ERROR", payload: errorMessage });
-      // --- FIX END ---
     }
   }
 
@@ -162,13 +161,12 @@ export const LoginView = (): ViewResult => {
                   <div class=${styles.errorText}>${model.value.error}</div>
                 `
               : ""}
-            <button
-              type="submit"
-              class=${styles.submitButton}
-              ?disabled=${model.value.isLoading}
-            >
-              ${model.value.isLoading ? "Logging in..." : "Login"}
-            </button>
+            ${NotionButton({
+              children: model.value.isLoading ? "Logging in..." : "Login",
+              type: "submit",
+              loading: model.value.isLoading,
+              onClick: handleLoginSubmit,
+            })}
           </form>
           <div class=${styles.linkContainer}>
             <a href="/signup" class=${styles.link}>
