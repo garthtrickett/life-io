@@ -4,21 +4,18 @@ import { Db } from "../../db/DbTag";
 import type { NewNote } from "../../types/generated/public/Note";
 import { serverLog } from "../../lib/server/logger.server";
 import { validateUserId } from "../../lib/shared/domain";
+import { NoteDatabaseError } from "./Errors"; // <-- Import specific error
 
 export const createNote = (note: NewNote) =>
   Effect.gen(function* () {
-    // --- Start: Validation ---
-    // The user_id inside the note object must be validated.
     const validatedUserId = yield* validateUserId(note.user_id);
-    // --- End: Validation ---
-
     const db = yield* Db;
 
     yield* Effect.forkDaemon(
       serverLog(
         "info",
         `Attempting to create note titled: "${note.title}"`,
-        validatedUserId, // Use validated ID
+        validatedUserId,
         "CreateNote",
       ),
     );
@@ -27,14 +24,15 @@ export const createNote = (note: NewNote) =>
       Effect.tryPromise({
         try: () =>
           db.insertInto("note").values(note).returningAll().executeTakeFirst(),
-        catch: (error) => new Error(`Database Error: ${String(error)}`),
+        // --- REFACTORED: Catch and wrap in a specific error ---
+        catch: (error) => new NoteDatabaseError({ cause: error }),
       }),
       Effect.tap((createdNote) =>
         Effect.forkDaemon(
           serverLog(
             "info",
             `Successfully created note with ID: ${createdNote?.id}`,
-            validatedUserId, // Use validated ID
+            validatedUserId,
             "CreateNote",
           ),
         ),
@@ -44,8 +42,9 @@ export const createNote = (note: NewNote) =>
           Effect.forkDaemon(
             serverLog(
               "error",
-              `Failed to create note: ${error.message}`,
-              validatedUserId, // Use validated ID
+              // --- UPDATED: Log the specific error tag for better context ---
+              `Failed to create note: ${error._tag}`,
+              validatedUserId,
               "CreateNote",
             ),
           ),

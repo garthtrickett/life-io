@@ -3,13 +3,11 @@ import { Effect, pipe } from "effect";
 import { Db } from "../../db/DbTag";
 import { serverLog } from "../../lib/server/logger.server";
 import { validateUserId } from "../../lib/shared/domain";
+import { NoteDatabaseError } from "./Errors"; // <-- Import specific error
 
 export const getNotes = (userId: string) =>
   Effect.gen(function* () {
-    // --- Start: Validation ---
     const validatedUserId = yield* validateUserId(userId);
-    // --- End: Validation ---
-
     const db = yield* Db;
 
     yield* Effect.forkDaemon(
@@ -27,10 +25,11 @@ export const getNotes = (userId: string) =>
           db
             .selectFrom("note")
             .selectAll()
-            .where("user_id", "=", validatedUserId) // No 'as' cast needed
+            .where("user_id", "=", validatedUserId)
             .orderBy("updated_at", "desc")
             .execute(),
-        catch: (error) => new Error(`Database Error: ${String(error)}`),
+        // --- REFACTORED: Catch and wrap in a specific error ---
+        catch: (error) => new NoteDatabaseError({ cause: error }),
       }),
       Effect.tap((notes) =>
         Effect.forkDaemon(
@@ -47,7 +46,8 @@ export const getNotes = (userId: string) =>
           Effect.forkDaemon(
             serverLog(
               "error",
-              `Failed to fetch notes: ${error.message}`,
+              // --- UPDATED: Log the specific error tag for better context ---
+              `Failed to fetch notes: ${error._tag}`,
               validatedUserId,
               "GetNotes",
             ),

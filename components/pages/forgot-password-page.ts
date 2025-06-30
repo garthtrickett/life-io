@@ -1,35 +1,36 @@
 // File: ./components/pages/forgot-password-page.ts
+// File: ./components/pages/forgot-password-page.ts (Refactored)
 import { html, type TemplateResult, nothing } from "lit-html";
 import { signal } from "@preact/signals-core";
-import { pipe, Effect, Exit, Cause } from "effect";
+import { pipe, Effect, Data } from "effect";
 import { trpc } from "../../lib/client/trpc";
 import { clientLog } from "../../lib/client/logger.client";
 import { runClientPromise } from "../../lib/client/runtime";
 import { NotionButton } from "../ui/notion-button";
 import { navigate } from "../../lib/client/router";
 
+// --- Custom Error Types ---
+class RequestResetError extends Data.TaggedError("RequestResetError")<{
+  readonly cause: unknown;
+}> {}
+
+// --- Types ---
 interface ViewResult {
   template: TemplateResult;
   cleanup?: () => void;
 }
-
 interface Model {
   email: string;
   status: "idle" | "loading" | "success" | "error";
   message: string | null;
 }
-
 type Action =
   | { type: "UPDATE_EMAIL"; payload: string }
   | { type: "REQUEST_START" }
   | { type: "REQUEST_SUCCESS"; payload: string }
-  | { type: "REQUEST_ERROR"; payload: string };
+  | { type: "REQUEST_ERROR"; payload: RequestResetError };
 
-const model = signal<Model>({
-  email: "",
-  status: "idle",
-  message: null,
-});
+const model = signal<Model>({ email: "", status: "idle", message: null });
 
 const update = (action: Action) => {
   switch (action.type) {
@@ -53,10 +54,14 @@ const update = (action: Action) => {
       };
       break;
     case "REQUEST_ERROR":
+      // For security, we show the same message on error as on success.
+      // This prevents leaking information about which emails are registered.
+      // The specific error is logged internally.
       model.value = {
         ...model.value,
-        status: "error",
-        message: action.payload,
+        status: "success",
+        message:
+          "If an account with that email exists, a password reset link has been sent.",
       };
       break;
   }
@@ -68,10 +73,7 @@ const react = async (action: Action) => {
       Effect.tryPromise({
         try: () =>
           trpc.auth.requestPasswordReset.mutate({ email: model.value.email }),
-        catch: (err) =>
-          new Error(
-            err instanceof Error ? err.message : "An unknown error occurred.",
-          ),
+        catch: (err) => new RequestResetError({ cause: err }),
       }),
       Effect.tap(() =>
         clientLog(
@@ -81,24 +83,26 @@ const react = async (action: Action) => {
           "ForgotPassword",
         ),
       ),
+      Effect.match({
+        onSuccess: () => {
+          propose({
+            type: "REQUEST_SUCCESS",
+            payload:
+              "If an account with that email exists, a password reset link has been sent.",
+          });
+        },
+        onFailure: (error) => {
+          clientLog(
+            "error",
+            "Password reset request failed.",
+            undefined,
+            "ForgotPassword",
+          );
+          propose({ type: "REQUEST_ERROR", payload: error });
+        },
+      }),
     );
-
-    const exit = await runClientPromise(Effect.exit(requestEffect));
-
-    if (Exit.isSuccess(exit)) {
-      propose({
-        type: "REQUEST_SUCCESS",
-        payload:
-          "If an account with that email exists, a password reset link has been sent.",
-      });
-    } else {
-      const error = Cause.squash(exit.cause);
-      const errorMessage =
-        error instanceof Error
-          ? error.message
-          : "An unknown error occurred during the request.";
-      propose({ type: "REQUEST_ERROR", payload: errorMessage });
-    }
+    await runClientPromise(requestEffect);
   }
 };
 
@@ -133,9 +137,8 @@ export const ForgotPasswordView = (): ViewResult => {
                     class="font-medium text-zinc-600 hover:text-zinc-500"
                     >Back to Login</a
                   >
-                </div> `
-            : html`
-                <p class="mb-4 text-center text-sm text-zinc-600">
+                </div>`
+            : html` <p class="mb-4 text-center text-sm text-zinc-600">
                   Enter your email address and we will send you a link to reset
                   your password.
                 </p>
@@ -183,8 +186,7 @@ export const ForgotPasswordView = (): ViewResult => {
                     class="font-medium text-zinc-600 hover:text-zinc-500"
                     >Back to Login</a
                   >
-                </div>
-              `}
+                </div>`}
         </div>
       </div>
     `,

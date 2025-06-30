@@ -1,13 +1,23 @@
 // File: ./components/pages/note-detail-page.ts
-// --- FIX START ---
 import { html, type TemplateResult } from "lit-html";
 import { signal, type Signal } from "@preact/signals-core";
-import { pipe, Effect } from "effect";
+import { pipe, Effect, Data } from "effect";
 import { runClientPromise, runClientUnscoped } from "../../lib/client/runtime";
 import type { NoteDto } from "../../types/generated/Note";
 import styles from "./NoteDetailView.module.css";
 import { trpc } from "../../lib/client/trpc";
 import { clientLog } from "../../lib/client/logger.client";
+
+// --- Custom Error Types (NEW) ---
+class NoteFetchError extends Data.TaggedError("NoteFetchError")<{
+  readonly cause: unknown;
+}> {}
+class NoteSaveError extends Data.TaggedError("NoteSaveError")<{
+  readonly cause: unknown;
+}> {}
+class NoteValidationError extends Data.TaggedError("NoteValidationError")<{
+  readonly message: string;
+}> {}
 
 // --- Types ---
 interface ViewResult {
@@ -19,19 +29,19 @@ interface Model {
   note: NoteDto | null;
   error: string | null;
 }
+
+// --- UPDATED ACTION ---
 type Action =
   | { type: "FETCH_START" }
   | { type: "FETCH_SUCCESS"; payload: NoteDto }
-  | { type: "FETCH_ERROR"; payload: string }
+  | { type: "FETCH_ERROR"; payload: NoteFetchError } // Typed error
   | { type: "UPDATE_TITLE"; payload: string }
   | { type: "UPDATE_CONTENT"; payload: string }
   | { type: "SAVE_START" }
   | { type: "SAVE_SUCCESS"; payload: NoteDto }
-  | { type: "SAVE_ERROR"; payload: string }
+  | { type: "SAVE_ERROR"; payload: NoteSaveError | NoteValidationError } // Typed error
   | { type: "RESET_SAVE_STATUS" };
 
-// --- Controller Definition & Cache ---
-// ... (Controller definition and cache logic remain unchanged)
 interface NoteController {
   modelSignal: Signal<Model>;
   propose: (action: Action) => void;
@@ -62,7 +72,6 @@ function createNoteController(id: string): NoteController {
   let updateTimeout: number | undefined;
 
   const update = (action: Action) => {
-    // ... (update logic remains unchanged)
     const model = modelSignal.value;
     switch (action.type) {
       case "FETCH_START":
@@ -79,13 +88,16 @@ function createNoteController(id: string): NoteController {
           content: action.payload.content,
         });
         break;
-      case "FETCH_ERROR":
+      // --- REFACTORED: Set specific error message ---
+      case "FETCH_ERROR": {
         modelSignal.value = {
           status: "error",
-          error: action.payload,
+          error:
+            "Could not load the note. It may have been deleted or you may not have permission to view it.",
           note: null,
         };
         break;
+      }
       case "UPDATE_TITLE":
         if (model.note) {
           modelSignal.value = {
@@ -118,13 +130,17 @@ function createNoteController(id: string): NoteController {
           content: action.payload.content,
         });
         break;
-      case "SAVE_ERROR":
-        modelSignal.value = {
-          ...model,
-          status: "error",
-          error: action.payload,
-        };
+      // --- REFACTORED: Handle specific save errors ---
+      case "SAVE_ERROR": {
+        let message = "An unknown error occurred while saving.";
+        if (action.payload._tag === "NoteValidationError") {
+          message = action.payload.message;
+        } else if (action.payload._tag === "NoteSaveError") {
+          message = "A server error occurred. Please try again later.";
+        }
+        modelSignal.value = { ...model, status: "error", error: message };
         break;
+      }
       case "RESET_SAVE_STATUS":
         modelSignal.value = { ...model, status: "idle" };
         break;
@@ -135,50 +151,36 @@ function createNoteController(id: string): NoteController {
     const model = modelSignal.value;
     switch (action.type) {
       case "FETCH_START": {
-        const fetchEffect = pipe(
-          Effect.tryPromise({
-            try: () => trpc.note.getById.query({ id }),
-            catch: (err) =>
-              new Error(
-                err instanceof Error
-                  ? err.message
-                  : "An unknown error occurred",
-              ),
-          }),
-          Effect.flatMap((note) =>
-            note
-              ? Effect.succeed(note)
-              : Effect.fail(new Error("Note not found or permission denied.")),
-          ),
-          Effect.match({
+        const fetchEffect = Effect.tryPromise({
+          try: () => trpc.note.getById.query({ id }),
+          catch: (err) => new NoteFetchError({ cause: err }),
+        });
+        void runClientPromise(
+          Effect.match(fetchEffect, {
             onSuccess: (note) =>
               propose({ type: "FETCH_SUCCESS", payload: note as NoteDto }),
-            onFailure: (err) =>
-              propose({ type: "FETCH_ERROR", payload: err.message }),
+            onFailure: (err) => propose({ type: "FETCH_ERROR", payload: err }),
           }),
         );
-        void runClientPromise(fetchEffect);
         break;
       }
       case "UPDATE_TITLE":
       case "UPDATE_CONTENT":
         clearTimeout(updateTimeout);
-        runClientUnscoped(
-          clientLog(
-            "debug",
-            `Autosave timeout set for note: ${id}`,
-            undefined,
-            "NoteDetail:react:update",
-          ),
-        );
         updateTimeout = window.setTimeout(
           () => propose({ type: "SAVE_START" }),
           500,
         );
         break;
       case "SAVE_START": {
-        if (!model.note || !model.note.title.trim()) {
-          propose({ type: "SAVE_ERROR", payload: "Title cannot be empty." });
+        if (!model.note) return;
+        if (!model.note.title.trim()) {
+          propose({
+            type: "SAVE_ERROR",
+            payload: new NoteValidationError({
+              message: "Title cannot be empty.",
+            }),
+          });
           return;
         }
         const currentNoteContent = JSON.stringify({
@@ -186,14 +188,6 @@ function createNoteController(id: string): NoteController {
           content: model.note.content,
         });
         if (currentNoteContent === originalNoteContent) {
-          runClientUnscoped(
-            clientLog(
-              "info",
-              `Save skipped, no changes detected for note: ${id}`,
-              undefined,
-              "NoteDetail:react:save",
-            ),
-          );
           propose({ type: "RESET_SAVE_STATUS" });
           return;
         }
@@ -201,24 +195,25 @@ function createNoteController(id: string): NoteController {
         const saveEffect = pipe(
           Effect.tryPromise({
             try: () => trpc.note.update.mutate({ id, title, content }),
-            catch: (err) =>
-              new Error(
-                err instanceof Error ? err.message : "Failed to save the note.",
-              ),
+            catch: (err) => new NoteSaveError({ cause: err }),
           }),
           Effect.flatMap((note) =>
             note
               ? Effect.succeed(note)
-              : Effect.fail(new Error("Server did not return updated note.")),
+              : Effect.fail(
+                  new NoteSaveError({
+                    cause: "Server did not return updated note.",
+                  }),
+                ),
           ),
-          Effect.match({
+        );
+        void runClientPromise(
+          Effect.match(saveEffect, {
             onSuccess: (note) =>
               propose({ type: "SAVE_SUCCESS", payload: note as NoteDto }),
-            onFailure: (err) =>
-              propose({ type: "SAVE_ERROR", payload: err.message }),
+            onFailure: (err) => propose({ type: "SAVE_ERROR", payload: err }),
           }),
         );
-        void runClientPromise(saveEffect);
         break;
       }
       case "SAVE_SUCCESS":
@@ -249,25 +244,9 @@ function createNoteController(id: string): NoteController {
       clearTimeout(updateTimeout);
       const entry = controllers.get(id);
       if (entry) {
-        runClientUnscoped(
-          clientLog(
-            "debug",
-            `Scheduling cleanup for controller: ${id}`,
-            undefined,
-            "NoteDetail:cleanup",
-          ),
-        );
         entry.cleanupTimeoutId = window.setTimeout(() => {
           controllers.delete(id);
-          runClientUnscoped(
-            clientLog(
-              "info",
-              `Controller for note ${id} has been garbage collected.`,
-              undefined,
-              "NoteDetail:cleanup",
-            ),
-          );
-        }, 0);
+        }, 30000);
       }
     },
   };
@@ -275,34 +254,15 @@ function createNoteController(id: string): NoteController {
 
 function getNoteController(id: string): NoteController {
   let entry = controllers.get(id);
-
   if (entry?.cleanupTimeoutId) {
-    runClientUnscoped(
-      clientLog(
-        "debug",
-        `Cancelling pending cleanup for controller: ${id}`,
-        undefined,
-        "NoteDetail:getNoteController",
-      ),
-    );
     clearTimeout(entry.cleanupTimeoutId);
     delete entry.cleanupTimeoutId;
   }
-
   if (!entry) {
-    runClientUnscoped(
-      clientLog(
-        "info",
-        `No controller found for id: ${id}. Creating a new one.`,
-        undefined,
-        "NoteDetail:getNoteController",
-      ),
-    );
     const controller = createNoteController(id);
     entry = { controller };
     controllers.set(id, entry);
   }
-
   return entry.controller;
 }
 
@@ -311,7 +271,6 @@ export const NoteDetailView = (id: string): ViewResult => {
   const model = controller.modelSignal.value;
 
   const renderStatus = () => {
-    // ... (render logic remains unchanged)
     switch (model.status) {
       case "saving":
         return html`Saving...`;
@@ -369,4 +328,3 @@ export const NoteDetailView = (id: string): ViewResult => {
     cleanup: controller.cleanup,
   };
 };
-// --- FIX END ---

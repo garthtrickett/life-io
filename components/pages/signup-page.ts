@@ -1,12 +1,19 @@
 // File: ./components/pages/signup-page.ts
+// File: ./components/pages/signup-page.ts (Refactored)
 import { html, type TemplateResult, nothing } from "lit-html";
 import { signal } from "@preact/signals-core";
-import { pipe, Effect, Exit, Cause } from "effect";
+import { pipe, Effect, Data } from "effect";
 import { trpc } from "../../lib/client/trpc";
 import { clientLog } from "../../lib/client/logger.client";
 import { NotionButton } from "../ui/notion-button";
 import { runClientPromise, runClientUnscoped } from "../../lib/client/runtime";
 import { navigate } from "../../lib/client/router";
+
+// --- Custom Error Types ---
+class EmailInUseError extends Data.TaggedError("EmailInUseError") {}
+class UnknownSignupError extends Data.TaggedError("UnknownSignupError")<{
+  readonly cause: unknown;
+}> {}
 
 // --- Types ---
 interface ViewResult {
@@ -23,7 +30,7 @@ type Action =
   | { type: "UPDATE_PASSWORD"; payload: string }
   | { type: "SIGNUP_START" }
   | { type: "SIGNUP_SUCCESS"; payload: { success: boolean; email: string } }
-  | { type: "SIGNUP_ERROR"; payload: string };
+  | { type: "SIGNUP_ERROR"; payload: EmailInUseError | UnknownSignupError };
 
 // --- State ---
 const model = signal<Model>({
@@ -48,13 +55,14 @@ const update = (action: Action) => {
     case "SIGNUP_SUCCESS":
       model.value = { ...model.value, isLoading: false };
       break;
-    case "SIGNUP_ERROR":
-      model.value = {
-        ...model.value,
-        isLoading: false,
-        error: action.payload,
-      };
+    case "SIGNUP_ERROR": {
+      let errorMessage = "An unknown error occurred. Please try again.";
+      if (action.payload._tag === "EmailInUseError") {
+        errorMessage = "An account with this email already exists.";
+      }
+      model.value = { ...model.value, isLoading: false, error: errorMessage };
       break;
+    }
   }
 };
 
@@ -68,23 +76,29 @@ const react = async (action: Action) => {
             email: model.value.email,
             password: model.value.password,
           }),
-        catch: (err) =>
-          new Error(err instanceof Error ? err.message : String(err)),
+        catch: (err) => {
+          if (
+            typeof err === "object" &&
+            err !== null &&
+            "data" in err &&
+            (err.data as { code?: string }).code === "CONFLICT"
+          ) {
+            return new EmailInUseError();
+          }
+          return new UnknownSignupError({ cause: err });
+        },
+      }),
+      Effect.match({
+        onSuccess: (value) => {
+          propose({ type: "SIGNUP_SUCCESS", payload: value });
+        },
+        onFailure: (error) => {
+          propose({ type: "SIGNUP_ERROR", payload: error });
+        },
       }),
     );
 
-    const exit = await runClientPromise(Effect.exit(signupEffect));
-
-    if (Exit.isSuccess(exit)) {
-      propose({ type: "SIGNUP_SUCCESS", payload: exit.value });
-    } else {
-      const error = Cause.squash(exit.cause);
-      const errorMessage =
-        error instanceof Error
-          ? error.message
-          : "An unknown error occurred during signup.";
-      propose({ type: "SIGNUP_ERROR", payload: errorMessage });
-    }
+    await runClientPromise(signupEffect);
   }
   if (action.type === "SIGNUP_SUCCESS") {
     runClientUnscoped(
@@ -99,7 +113,6 @@ const react = async (action: Action) => {
   }
 };
 
-// --- Propose (Action Dispatcher) ---
 const propose = (action: Action) => {
   update(action);
   void react(action);
@@ -140,9 +153,8 @@ export const SignupView = (): ViewResult => {
               <label
                 for="password"
                 class="block text-sm font-medium text-gray-700"
+                >Password (min. 8 characters)</label
               >
-                Password (min. 8 characters)
-              </label>
               <input
                 type="password"
                 id="password"
@@ -175,9 +187,8 @@ export const SignupView = (): ViewResult => {
                 e.preventDefault();
                 navigate("/login");
               }}
+              >Already have an account? Log in.</a
             >
-              Already have an account? Log in.
-            </a>
           </div>
         </div>
       </div>

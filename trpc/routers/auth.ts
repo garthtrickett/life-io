@@ -19,6 +19,16 @@ import { TimeSpan } from "oslo";
 import type { EmailVerificationTokenId } from "../../types/generated/public/EmailVerificationToken";
 import type { PasswordResetTokenId } from "../../types/generated/public/PasswordResetToken";
 import { sendEmail } from "../../lib/server/email";
+import {
+  AuthDatabaseError,
+  EmailInUseError,
+  EmailNotVerifiedError,
+  EmailSendError,
+  InvalidCredentialsError,
+  PasswordHashingError,
+  TokenCreationError,
+  TokenInvalidError,
+} from "../../features/auth/Errors";
 
 // --- Input Schemas ---
 
@@ -45,14 +55,13 @@ const VerifyEmailInput = t.Object({
   token: t.String(),
 });
 
-// --- ADD THIS NEW SCHEMA ---
 const ChangePasswordInput = t.Object({
   oldPassword: t.String(),
   newPassword: t.String({ minLength: 8 }),
 });
 
 export const authRouter = router({
-  // --- SIGNUP (existing) ---
+  // --- SIGNUP ---
   signup: publicProcedure
     .input(compile(SignupInput))
     .mutation(({ input, ctx }) => {
@@ -68,11 +77,7 @@ export const authRouter = router({
 
         const passwordHash = yield* Effect.tryPromise({
           try: () => argon2id.hash(password),
-          catch: () =>
-            new TRPCError({
-              code: "INTERNAL_SERVER_ERROR",
-              message: "Could not hash password",
-            }),
+          catch: (cause) => new PasswordHashingError({ cause }),
         });
 
         const user = yield* Effect.tryPromise({
@@ -87,11 +92,9 @@ export const authRouter = router({
               } as NewUser)
               .returningAll()
               .executeTakeFirstOrThrow(),
-          catch: () =>
-            new TRPCError({
-              code: "CONFLICT",
-              message: "An account with this email already exists.",
-            }),
+          catch: (cause) =>
+            // This assumes the DB throws a unique constraint error
+            new EmailInUseError({ email, cause }),
         });
 
         yield* serverLog(
@@ -113,11 +116,7 @@ export const authRouter = router({
                 expires_at: createDate(new TimeSpan(2, "h")),
               })
               .execute(),
-          catch: () =>
-            new TRPCError({
-              code: "INTERNAL_SERVER_ERROR",
-              message: "Could not create verification token.",
-            }),
+          catch: (cause) => new TokenCreationError({ cause }),
         });
 
         const verificationLink = `http://localhost:5173/verify-email/${verificationToken}`;
@@ -125,7 +124,7 @@ export const authRouter = router({
           user.email,
           "Verify Your Email Address",
           `<h1>Welcome!</h1><p>Click the link to verify your email: <a href="${verificationLink}">${verificationLink}</a></p>`,
-        );
+        ).pipe(Effect.mapError((cause) => new EmailSendError({ cause })));
 
         yield* serverLog(
           "info",
@@ -135,12 +134,47 @@ export const authRouter = router({
         );
 
         return { success: true, email: user.email };
-      });
+      }).pipe(
+        Effect.catchTags({
+          PasswordHashingError: (e: PasswordHashingError) =>
+            Effect.fail(
+              new TRPCError({
+                code: "INTERNAL_SERVER_ERROR",
+                message: "Could not hash password",
+                cause: e.cause,
+              }),
+            ),
+          EmailInUseError: (e: EmailInUseError) =>
+            Effect.fail(
+              new TRPCError({
+                code: "CONFLICT",
+                message: "An account with this email already exists.",
+                cause: e.cause,
+              }),
+            ),
+          TokenCreationError: (e: TokenCreationError) =>
+            Effect.fail(
+              new TRPCError({
+                code: "INTERNAL_SERVER_ERROR",
+                message: "Could not create verification token.",
+                cause: e.cause,
+              }),
+            ),
+          EmailSendError: (e: EmailSendError) =>
+            Effect.fail(
+              new TRPCError({
+                code: "INTERNAL_SERVER_ERROR",
+                message: "Could not send verification email.",
+                cause: e.cause,
+              }),
+            ),
+        }),
+      );
 
       return runServerPromise(program);
     }),
 
-  // --- LOGIN (existing) ---
+  // --- LOGIN ---
   login: publicProcedure
     .input(compile(LoginInput))
     .mutation(({ input, ctx }) => {
@@ -161,20 +195,11 @@ export const authRouter = router({
               .selectAll()
               .where("email", "=", email.toLowerCase())
               .executeTakeFirst(),
-          catch: (e) =>
-            new TRPCError({
-              code: "INTERNAL_SERVER_ERROR",
-              message: String(e),
-            }),
+          catch: (cause) => new AuthDatabaseError({ cause }),
         });
 
         if (!user || !user.password_hash) {
-          return yield* Effect.fail(
-            new TRPCError({
-              code: "BAD_REQUEST",
-              message: "Invalid email or password.",
-            }),
-          );
+          return yield* Effect.fail(new InvalidCredentialsError());
         }
 
         if (!user.email_verified) {
@@ -184,30 +209,16 @@ export const authRouter = router({
             user.id,
             "auth:login",
           );
-          return yield* Effect.fail(
-            new TRPCError({
-              code: "FORBIDDEN",
-              message: "Please verify your email before logging in.",
-            }),
-          );
+          return yield* Effect.fail(new EmailNotVerifiedError());
         }
 
         const validPassword = yield* Effect.tryPromise({
           try: () => argon2id.verify(user.password_hash, password),
-          catch: (e) =>
-            new TRPCError({
-              code: "INTERNAL_SERVER_ERROR",
-              message: String(e),
-            }),
+          catch: (cause) => new PasswordHashingError({ cause }),
         });
 
         if (!validPassword) {
-          return yield* Effect.fail(
-            new TRPCError({
-              code: "BAD_REQUEST",
-              message: "Invalid email or password.",
-            }),
-          );
+          return yield* Effect.fail(new InvalidCredentialsError());
         }
 
         yield* serverLog(
@@ -216,13 +227,52 @@ export const authRouter = router({
           user.id,
           "auth:login",
         );
-        const sessionId = yield* createSessionEffect(user.id);
+
+        // FIX: The generic 'Error' from createSessionEffect is now mapped to a tagged error.
+        const sessionId = yield* createSessionEffect(user.id).pipe(
+          Effect.mapError((cause) => new AuthDatabaseError({ cause: cause })),
+        );
+
         return { sessionId, user };
-      });
+      }).pipe(
+        Effect.catchTags({
+          AuthDatabaseError: (e: AuthDatabaseError) =>
+            Effect.fail(
+              new TRPCError({
+                code: "INTERNAL_SERVER_ERROR",
+                message: "Database error during login",
+                cause: e.cause,
+              }),
+            ),
+          InvalidCredentialsError: () =>
+            Effect.fail(
+              new TRPCError({
+                code: "BAD_REQUEST",
+                message: "Invalid email or password.",
+              }),
+            ),
+          EmailNotVerifiedError: () =>
+            Effect.fail(
+              new TRPCError({
+                code: "FORBIDDEN",
+                message: "Please verify your email before logging in.",
+              }),
+            ),
+          PasswordHashingError: (e: PasswordHashingError) =>
+            Effect.fail(
+              new TRPCError({
+                code: "INTERNAL_SERVER_ERROR",
+                message: "Password verification failed",
+                cause: e.cause,
+              }),
+            ),
+        }),
+      );
 
       return runServerPromise(program);
     }),
-  // --- ADD THIS NEW MUTATION ---
+
+  // --- CHANGE PASSWORD ---
   changePassword: loggedInProcedure
     .input(compile(ChangePasswordInput))
     .mutation(({ input, ctx }) => {
@@ -245,20 +295,12 @@ export const authRouter = router({
               .select("password_hash")
               .where("id", "=", userId)
               .executeTakeFirstOrThrow(),
-          catch: () =>
-            new TRPCError({
-              code: "INTERNAL_SERVER_ERROR",
-              message: "Could not retrieve user data.",
-            }),
+          catch: (cause) => new AuthDatabaseError({ cause }),
         });
 
         const validOldPassword = yield* Effect.tryPromise({
           try: () => argon2id.verify(user.password_hash, oldPassword),
-          catch: () =>
-            new TRPCError({
-              code: "INTERNAL_SERVER_ERROR",
-              message: "Password verification failed.",
-            }),
+          catch: (cause) => new PasswordHashingError({ cause }),
         });
 
         if (!validOldPassword) {
@@ -268,21 +310,12 @@ export const authRouter = router({
             userId,
             "auth:changePassword",
           );
-          return yield* Effect.fail(
-            new TRPCError({
-              code: "BAD_REQUEST",
-              message: "Incorrect old password provided.",
-            }),
-          );
+          return yield* Effect.fail(new InvalidCredentialsError());
         }
 
         const newPasswordHash = yield* Effect.tryPromise({
           try: () => argon2id.hash(newPassword),
-          catch: () =>
-            new TRPCError({
-              code: "INTERNAL_SERVER_ERROR",
-              message: "Could not hash new password.",
-            }),
+          catch: (cause) => new PasswordHashingError({ cause }),
         });
 
         yield* Effect.tryPromise({
@@ -292,11 +325,7 @@ export const authRouter = router({
               .set({ password_hash: newPasswordHash })
               .where("id", "=", userId)
               .execute(),
-          catch: () =>
-            new TRPCError({
-              code: "INTERNAL_SERVER_ERROR",
-              message: "Could not update password.",
-            }),
+          catch: (cause) => new AuthDatabaseError({ cause }),
         });
 
         yield* serverLog(
@@ -307,12 +336,38 @@ export const authRouter = router({
         );
 
         return { success: true };
-      });
+      }).pipe(
+        Effect.catchTags({
+          AuthDatabaseError: (e: AuthDatabaseError) =>
+            Effect.fail(
+              new TRPCError({
+                code: "INTERNAL_SERVER_ERROR",
+                message: "A database error occurred.",
+                cause: e.cause,
+              }),
+            ),
+          PasswordHashingError: (e: PasswordHashingError) =>
+            Effect.fail(
+              new TRPCError({
+                code: "INTERNAL_SERVER_ERROR",
+                message: "Could not process password.",
+                cause: e.cause,
+              }),
+            ),
+          InvalidCredentialsError: () =>
+            Effect.fail(
+              new TRPCError({
+                code: "BAD_REQUEST",
+                message: "Incorrect old password provided.",
+              }),
+            ),
+        }),
+      );
 
       return runServerPromise(program);
     }),
 
-  // --- LOGOUT (existing) ---
+  // --- LOGOUT ---
   logout: loggedInProcedure.mutation(({ ctx }) => {
     const program = Effect.gen(function* () {
       yield* serverLog(
@@ -327,12 +382,12 @@ export const authRouter = router({
     return runServerPromise(program);
   }),
 
-  // --- ME (existing) ---
+  // --- ME ---
   me: publicProcedure.query(({ ctx }) => {
     return ctx.user;
   }),
 
-  // --- REQUEST PASSWORD RESET (existing) ---
+  // --- REQUEST PASSWORD RESET ---
   requestPasswordReset: publicProcedure
     .input(compile(RequestPasswordResetInput))
     .mutation(({ input, ctx }) => {
@@ -352,10 +407,8 @@ export const authRouter = router({
               .where("email", "=", email.toLowerCase())
               .executeTakeFirst(),
           catch: () =>
-            new TRPCError({
-              code: "INTERNAL_SERVER_ERROR",
-              message: "Database error",
-            }),
+            // Don't leak DB errors here, just proceed as if user doesn't exist.
+            null,
         });
 
         if (user) {
@@ -366,11 +419,7 @@ export const authRouter = router({
                 .deleteFrom("password_reset_token")
                 .where("user_id", "=", user.id)
                 .execute(),
-            catch: () =>
-              new TRPCError({
-                code: "INTERNAL_SERVER_ERROR",
-                message: "DB Error",
-              }),
+            catch: (cause) => new TokenCreationError({ cause }),
           });
           yield* Effect.tryPromise({
             try: () =>
@@ -382,11 +431,7 @@ export const authRouter = router({
                   expires_at: createDate(new TimeSpan(2, "h")),
                 })
                 .execute(),
-            catch: () =>
-              new TRPCError({
-                code: "INTERNAL_SERVER_ERROR",
-                message: "Could not create token.",
-              }),
+            catch: (cause) => new TokenCreationError({ cause }),
           });
 
           const resetLink = `http://localhost:5173/reset-password/${tokenId}`;
@@ -394,7 +439,7 @@ export const authRouter = router({
             user.email,
             "Reset Your Password",
             `<h1>Password Reset</h1><p>Click the link to reset your password: <a href="${resetLink}">${resetLink}</a></p>`,
-          );
+          ).pipe(Effect.mapError((cause) => new EmailSendError({ cause })));
 
           yield* serverLog(
             "info",
@@ -410,12 +455,32 @@ export const authRouter = router({
             "auth:requestPasswordReset",
           );
         }
+        // Always return success to prevent email enumeration attacks.
         return { success: true };
-      });
+      }).pipe(
+        Effect.catchTags({
+          TokenCreationError: (e: TokenCreationError) =>
+            Effect.fail(
+              new TRPCError({
+                code: "INTERNAL_SERVER_ERROR",
+                message: "Could not create reset token.",
+                cause: e.cause,
+              }),
+            ),
+          EmailSendError: (e: EmailSendError) =>
+            Effect.fail(
+              new TRPCError({
+                code: "INTERNAL_SERVER_ERROR",
+                message: "Could not send reset email.",
+                cause: e.cause,
+              }),
+            ),
+        }),
+      );
       return runServerPromise(program);
     }),
 
-  // --- RESET PASSWORD (existing) ---
+  // --- RESET PASSWORD ---
   resetPassword: publicProcedure
     .input(compile(ResetPasswordInput))
     .mutation(({ input, ctx }) => {
@@ -428,11 +493,7 @@ export const authRouter = router({
               .selectAll()
               .where("id", "=", token as PasswordResetTokenId)
               .executeTakeFirst(),
-          catch: () =>
-            new TRPCError({
-              code: "INTERNAL_SERVER_ERROR",
-              message: "DB Error",
-            }),
+          catch: (cause) => new AuthDatabaseError({ cause }),
         });
 
         if (storedToken) {
@@ -442,30 +503,17 @@ export const authRouter = router({
                 .deleteFrom("password_reset_token")
                 .where("id", "=", token as PasswordResetTokenId)
                 .execute(),
-            catch: () =>
-              new TRPCError({
-                code: "INTERNAL_SERVER_ERROR",
-                message: "DB Error",
-              }),
+            catch: (cause) => new AuthDatabaseError({ cause }),
           });
         }
 
         if (!storedToken || !isWithinExpirationDate(storedToken.expires_at)) {
-          return yield* Effect.fail(
-            new TRPCError({
-              code: "BAD_REQUEST",
-              message: "Token is invalid or has expired.",
-            }),
-          );
+          return yield* Effect.fail(new TokenInvalidError());
         }
 
         const passwordHash = yield* Effect.tryPromise({
           try: () => argon2id.hash(password),
-          catch: () =>
-            new TRPCError({
-              code: "INTERNAL_SERVER_ERROR",
-              message: "Could not hash password",
-            }),
+          catch: (cause) => new PasswordHashingError({ cause }),
         });
 
         yield* Effect.tryPromise({
@@ -475,11 +523,7 @@ export const authRouter = router({
               .set({ password_hash: passwordHash })
               .where("id", "=", storedToken.user_id)
               .execute(),
-          catch: () =>
-            new TRPCError({
-              code: "INTERNAL_SERVER_ERROR",
-              message: "Could not update password.",
-            }),
+          catch: (cause) => new AuthDatabaseError({ cause }),
         });
 
         yield* serverLog(
@@ -490,11 +534,35 @@ export const authRouter = router({
         );
 
         return { success: true };
-      });
+      }).pipe(
+        Effect.catchTags({
+          TokenInvalidError: () =>
+            Effect.fail(
+              new TRPCError({
+                code: "BAD_REQUEST",
+                message: "Token is invalid or has expired.",
+              }),
+            ),
+          PasswordHashingError: () =>
+            Effect.fail(
+              new TRPCError({
+                code: "INTERNAL_SERVER_ERROR",
+                message: "Could not hash password",
+              }),
+            ),
+          AuthDatabaseError: () =>
+            Effect.fail(
+              new TRPCError({
+                code: "INTERNAL_SERVER_ERROR",
+                message: "A database error occurred.",
+              }),
+            ),
+        }),
+      );
       return runServerPromise(program);
     }),
 
-  // --- VERIFY EMAIL (existing) ---
+  // --- VERIFY EMAIL ---
   verifyEmail: publicProcedure
     .input(compile(VerifyEmailInput))
     .mutation(({ input, ctx }) => {
@@ -507,11 +575,7 @@ export const authRouter = router({
               .selectAll()
               .where("id", "=", token as EmailVerificationTokenId)
               .executeTakeFirst(),
-          catch: () =>
-            new TRPCError({
-              code: "INTERNAL_SERVER_ERROR",
-              message: "DB Error",
-            }),
+          catch: (cause) => new AuthDatabaseError({ cause }),
         });
 
         if (storedToken) {
@@ -521,21 +585,12 @@ export const authRouter = router({
                 .deleteFrom("email_verification_token")
                 .where("id", "=", token as EmailVerificationTokenId)
                 .execute(),
-            catch: () =>
-              new TRPCError({
-                code: "INTERNAL_SERVER_ERROR",
-                message: "DB Error",
-              }),
+            catch: (cause) => new AuthDatabaseError({ cause }),
           });
         }
 
         if (!storedToken || !isWithinExpirationDate(storedToken.expires_at)) {
-          return yield* Effect.fail(
-            new TRPCError({
-              code: "BAD_REQUEST",
-              message: "Token is invalid or has expired.",
-            }),
-          );
+          return yield* Effect.fail(new TokenInvalidError());
         }
 
         yield* Effect.tryPromise({
@@ -545,11 +600,7 @@ export const authRouter = router({
               .set({ email_verified: true })
               .where("id", "=", storedToken.user_id)
               .execute(),
-          catch: () =>
-            new TRPCError({
-              code: "INTERNAL_SERVER_ERROR",
-              message: "Could not verify email.",
-            }),
+          catch: (cause) => new AuthDatabaseError({ cause }),
         });
         yield* serverLog(
           "info",
@@ -558,7 +609,25 @@ export const authRouter = router({
           "auth:verifyEmail",
         );
         return { success: true };
-      });
+      }).pipe(
+        Effect.catchTags({
+          TokenInvalidError: () =>
+            Effect.fail(
+              new TRPCError({
+                code: "BAD_REQUEST",
+                message: "Token is invalid or has expired.",
+              }),
+            ),
+          AuthDatabaseError: (e: AuthDatabaseError) =>
+            Effect.fail(
+              new TRPCError({
+                code: "INTERNAL_SERVER_ERROR",
+                message: "A database error occurred.",
+                cause: e.cause,
+              }),
+            ),
+        }),
+      );
       return runServerPromise(program);
     }),
 });

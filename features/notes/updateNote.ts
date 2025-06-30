@@ -1,17 +1,15 @@
 // FILE: features/notes/updateNote.ts
-import { Effect, pipe } from "effect";
+import { Effect, pipe, Option } from "effect";
 import { Db } from "../../db/DbTag";
 import type { NoteUpdate } from "../../types/generated/public/Note";
 import { serverLog } from "../../lib/server/logger.server";
 import { validateNoteId, validateUserId } from "../../lib/shared/domain";
+import { NoteDatabaseError, NoteNotFoundError } from "./Errors"; // <-- Import specific errors
 
 export const updateNote = (noteId: string, userId: string, note: NoteUpdate) =>
   Effect.gen(function* () {
-    // --- Start: Validation ---
     const validatedNoteId = yield* validateNoteId(noteId);
     const validatedUserId = yield* validateUserId(userId);
-    // --- End: Validation ---
-
     const db = yield* Db;
 
     yield* Effect.forkDaemon(
@@ -29,28 +27,35 @@ export const updateNote = (noteId: string, userId: string, note: NoteUpdate) =>
           db
             .updateTable("note")
             .set({ ...note, updated_at: new Date() })
-            .where("id", "=", validatedNoteId) // No 'as' cast needed
-            .where("user_id", "=", validatedUserId) // No 'as' cast needed
+            .where("id", "=", validatedNoteId)
+            .where("user_id", "=", validatedUserId)
             .returningAll()
             .executeTakeFirst(),
-        catch: (error) => new Error(`Database Error: ${String(error)}`),
+        // --- REFACTORED: Catch and wrap in a specific error ---
+        catch: (error) => new NoteDatabaseError({ cause: error }),
       }),
+      // --- REFACTORED: Check if the update returned a note ---
+      Effect.flatMap(Option.fromNullable),
+      Effect.catchTag("NoSuchElementException", () =>
+        Effect.fail(new NoteNotFoundError({ noteId, userId })),
+      ),
       Effect.tap((updatedNote) =>
         Effect.forkDaemon(
           serverLog(
             "info",
-            `Successfully updated note with ID: ${updatedNote?.id}`,
+            `Successfully updated note with ID: ${updatedNote.id}`,
             validatedUserId,
             "UpdateNote",
           ),
         ),
       ),
+      // --- REFACTORED: Log the specific error ---
       Effect.catchAll((error) =>
         pipe(
           Effect.forkDaemon(
             serverLog(
               "error",
-              `Failed to update note: ${error.message}`,
+              `Failed to update note: ${error._tag}`,
               validatedUserId,
               "UpdateNote",
             ),

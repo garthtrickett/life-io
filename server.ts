@@ -1,9 +1,8 @@
-// File: ./server.ts
-// --- FIX START ---
+// File: ./server.ts (Refactored)
 import { existsSync, readFileSync } from "node:fs";
 import { staticPlugin } from "@elysiajs/static";
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
-import { Cause, Effect, Exit, Option } from "effect";
+import { Cause, Data, Effect, Exit, Option } from "effect";
 import { Elysia, t } from "elysia";
 
 import { s3 } from "./lib/server/s3";
@@ -17,13 +16,22 @@ import { runServerPromise, runServerUnscoped } from "./lib/server/runtime";
 import { createContext } from "./trpc/context";
 import { appRouter } from "./trpc/router";
 
+// --- Custom Error Types for Avatar Upload ---
+class AuthError extends Data.TaggedError("AuthError")<{ message: string }> {}
+class FileError extends Data.TaggedError("FileError")<{ message: string }> {}
+class S3UploadError extends Data.TaggedError("S3UploadError")<{
+  cause: unknown;
+}> {}
+class DbUpdateError extends Data.TaggedError("DbUpdateError")<{
+  cause: unknown;
+}> {}
+
 type ServerLoggableLevel = "info" | "error" | "warn" | "debug";
 
 const isLoggableLevel = (level: string): level is ServerLoggableLevel => {
   return ["info", "error", "warn", "debug"].includes(level);
 };
 
-// --- Effect for logging client-side messages ---
 const logClientMessageEffect = (body: { level: string; args: unknown[] }) =>
   Effect.gen(function* () {
     const { level: levelFromClient, args } = body;
@@ -40,76 +48,58 @@ const logClientMessageEffect = (body: { level: string; args: unknown[] }) =>
     return new Response(null, { status: 204 });
   });
 
-// --- Effect for handling avatar uploads ---
+// --- Refactored Effect for handling avatar uploads with typed errors ---
 const avatarUploadEffect = (context: {
   request: Request;
   body: { avatar?: File };
 }) =>
   Effect.gen(function* () {
-    yield* Effect.forkDaemon(
-      serverLog(
-        "info",
-        "Avatar upload request received.",
-        undefined,
-        "AvatarUpload",
-      ),
+    yield* serverLog(
+      "info",
+      "Avatar upload request received.",
+      undefined,
+      "AvatarUpload",
     );
 
     const cookieHeader = context.request.headers.get("Cookie") ?? "";
-    const sessionId = Option.fromNullable(
+    const sessionIdOption = Option.fromNullable(
       cookieHeader
         .split(";")
         .find((c) => c.trim().startsWith("session_id="))
         ?.split("=")[1],
     );
 
-    if (Option.isNone(sessionId)) {
-      yield* Effect.forkDaemon(
-        serverLog(
-          "warn",
-          "Avatar upload rejected: No session ID found.",
-          undefined,
-          "AvatarUpload",
-        ),
+    if (Option.isNone(sessionIdOption)) {
+      return yield* Effect.fail(
+        new AuthError({ message: "Unauthorized: No session ID found." }),
       );
-      return new Response("Unauthorized", { status: 401 });
     }
 
-    const { user } = yield* validateSessionEffect(sessionId.value);
-    if (!user) {
-      yield* Effect.forkDaemon(
-        serverLog(
-          "warn",
-          "Avatar upload rejected: Invalid session.",
-          undefined,
-          "AvatarUpload",
-        ),
-      );
-      return new Response("Unauthorized", { status: 401 });
-    }
-
-    yield* Effect.forkDaemon(
-      serverLog(
-        "info",
-        `User authenticated for avatar upload.`,
-        user.id,
-        "AvatarUpload",
+    const { user } = yield* validateSessionEffect(sessionIdOption.value).pipe(
+      Effect.mapError(
+        () => new AuthError({ message: "Session validation failed." }),
       ),
+    );
+
+    if (!user) {
+      return yield* Effect.fail(
+        new AuthError({ message: "Unauthorized: Invalid session." }),
+      );
+    }
+
+    yield* serverLog(
+      "info",
+      `User authenticated for avatar upload.`,
+      user.id,
+      "AvatarUpload",
     );
 
     const { avatar } = context.body;
     if (!avatar || !(avatar instanceof Blob)) {
-      yield* Effect.forkDaemon(
-        serverLog(
-          "error",
-          "Bad request for avatar upload: 'avatar' field missing or not a file.",
-          user.id,
-          "AvatarUpload",
-        ),
-      );
-      return new Response(
-        "Bad Request: 'avatar' field is missing or not a file.",
-        { status: 400 },
+      return yield* Effect.fail(
+        new FileError({
+          message: "Bad Request: 'avatar' field is missing or not a file.",
+        }),
       );
     }
 
@@ -120,7 +110,10 @@ const avatarUploadEffect = (context: {
 
     const buffer = yield* Effect.tryPromise({
       try: () => avatar.arrayBuffer(),
-      catch: (e) => new Error(`Failed to read avatar file: ${String(e)}`),
+      catch: (cause) =>
+        new FileError({
+          message: `Failed to read avatar file: ${String(cause)}`,
+        }),
     });
 
     yield* Effect.tryPromise({
@@ -133,29 +126,26 @@ const avatarUploadEffect = (context: {
             ContentType: avatar.type,
           }),
         ),
-      catch: (e) => new Error(`S3 Upload Failed: ${String(e)}`),
+      catch: (cause) => new S3UploadError({ cause }),
     }).pipe(
       Effect.tap(() =>
-        Effect.forkDaemon(
-          serverLog(
-            "info",
-            `Successfully uploaded avatar to S3: ${key}`,
-            user.id,
-            "AvatarUpload:S3",
-          ),
+        serverLog(
+          "info",
+          `Successfully uploaded avatar to S3: ${key}`,
+          user.id,
+          "AvatarUpload:S3",
         ),
       ),
       Effect.tapError((e) =>
-        Effect.forkDaemon(
-          serverLog(
-            "error",
-            `Failed to upload avatar to S3 for user ${user.id}: ${e.message}`,
-            user.id,
-            "AvatarUpload:S3",
-          ),
+        serverLog(
+          "error",
+          `S3 Upload Failed: ${String(e.cause)}`,
+          user.id,
+          "AvatarUpload:S3",
         ),
       ),
     );
+
     const publicUrlBase = process.env.PUBLIC_AVATAR_URL!;
     const avatarUrl = `${publicUrlBase}/${key}`;
 
@@ -166,27 +156,27 @@ const avatarUploadEffect = (context: {
           .set({ avatar_url: avatarUrl })
           .where("id", "=", user.id)
           .execute(),
-      catch: (e) => new Error(`DB update failed: ${String(e)}`),
-    });
-
-    yield* Effect.forkDaemon(
-      serverLog(
-        "info",
-        `Updated user avatar URL in DB: ${avatarUrl}`,
-        user.id,
-        "AvatarUpload:DB",
+      catch: (cause) => new DbUpdateError({ cause }),
+    }).pipe(
+      Effect.tap(() =>
+        serverLog(
+          "info",
+          `Updated user avatar URL in DB: ${avatarUrl}`,
+          user.id,
+          "AvatarUpload:DB",
+        ),
+      ),
+      Effect.tapError((e) =>
+        serverLog(
+          "error",
+          `DB update failed: ${String(e.cause)}`,
+          user.id,
+          "AvatarUpload:DB",
+        ),
       ),
     );
     return { avatarUrl };
-  }).pipe(
-    Effect.catchAll((error) =>
-      Effect.succeed(
-        new Response(`Internal Server Error: ${error.message}`, {
-          status: 500,
-        }),
-      ),
-    ),
-  );
+  });
 
 // --- Main application setup Effect ---
 const setupApp = Effect.gen(function* () {
@@ -206,7 +196,25 @@ const setupApp = Effect.gen(function* () {
 
   app.post(
     "/api/user/avatar",
-    (context) => runServerPromise(avatarUploadEffect(context)),
+    (context) =>
+      runServerPromise(
+        avatarUploadEffect(context).pipe(
+          Effect.catchTags({
+            AuthError: (e) =>
+              Effect.succeed(new Response(e.message, { status: 401 })),
+            FileError: (e) =>
+              Effect.succeed(new Response(e.message, { status: 400 })),
+            S3UploadError: () =>
+              Effect.succeed(
+                new Response("S3 upload failed.", { status: 500 }),
+              ),
+            DbUpdateError: () =>
+              Effect.succeed(
+                new Response("Database update failed.", { status: 500 }),
+              ),
+          }),
+        ),
+      ),
     {
       body: t.Object({
         avatar: t.File({
@@ -269,6 +277,7 @@ const setupApp = Effect.gen(function* () {
   return app;
 });
 
+// --- App execution (unchanged) ---
 void Effect.runPromiseExit(setupApp).then((exit) => {
   if (Exit.isSuccess(exit)) {
     const app = exit.value;
@@ -302,4 +311,3 @@ void Effect.runPromiseExit(setupApp).then((exit) => {
     process.exit(1);
   }
 });
-// --- FIX END ---

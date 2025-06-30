@@ -1,23 +1,21 @@
 // features/notes/getNote.ts
-import { Effect, pipe } from "effect";
+import { Effect, Option, pipe } from "effect";
 import { Db } from "../../db/DbTag";
 import { serverLog } from "../../lib/server/logger.server";
 import { validateNoteId, validateUserId } from "../../lib/shared/domain";
+import { NoteDatabaseError, NoteNotFoundError } from "./Errors"; // <-- Import specific errors
 
 export const getNote = (noteId: string, userId: string) =>
   Effect.gen(function* () {
-    // --- Start: Validation ---
     const validatedNoteId = yield* validateNoteId(noteId);
     const validatedUserId = yield* validateUserId(userId);
-    // --- End: Validation ---
-
     const db = yield* Db;
 
     yield* Effect.forkDaemon(
       serverLog(
         "info",
-        `Attempting to fetch note with ID: "${validatedNoteId}"`, // Use validated ID
-        validatedUserId, // Use validated ID
+        `Attempting to fetch note with ID: "${validatedNoteId}"`,
+        validatedUserId,
         "GetNote",
       ),
     );
@@ -28,29 +26,34 @@ export const getNote = (noteId: string, userId: string) =>
           db
             .selectFrom("note")
             .selectAll()
-            .where("id", "=", validatedNoteId) // No 'as' cast needed
-            .where("user_id", "=", validatedUserId) // No 'as' cast needed
+            .where("id", "=", validatedNoteId)
+            .where("user_id", "=", validatedUserId)
             .executeTakeFirst(),
-        catch: (error) => new Error(`Database Error: ${String(error)}`),
+        // --- REFACTORED: Catch and wrap in a specific error ---
+        catch: (error) => new NoteDatabaseError({ cause: error }),
       }),
+      // --- REFACTORED: Check if the note was found ---
+      Effect.flatMap(Option.fromNullable),
+      Effect.catchTag("NoSuchElementException", () =>
+        Effect.fail(new NoteNotFoundError({ noteId, userId })),
+      ),
       Effect.tap((note) =>
         Effect.forkDaemon(
           serverLog(
             "info",
-            note
-              ? `Successfully fetched note: ${note.title}`
-              : `Note with ID ${validatedNoteId} not found.`,
+            `Successfully fetched note: ${note.title}`,
             validatedUserId,
             "GetNote",
           ),
         ),
       ),
+      // --- REFACTORED: Log the specific error ---
       Effect.catchAll((error) =>
         pipe(
           Effect.forkDaemon(
             serverLog(
               "error",
-              `Failed to fetch note: ${error.message}`,
+              `Failed to fetch note: ${error._tag}`,
               validatedUserId,
               "GetNote",
             ),
