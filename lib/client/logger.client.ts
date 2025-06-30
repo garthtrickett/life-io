@@ -18,23 +18,20 @@ export type LoggableLevel = Exclude<LogLevel, "silent">;
  */
 const createClientLogger = (): Logger => {
   const sendLogToServer = (level: LogLevel, args: unknown[]) => {
-    // We use `navigator.sendBeacon` if available for a more reliable, non-blocking
-    // way to send logs, especially when the user is navigating away.
-    // Fallback to fetch for older browsers.
     const url = "/log/client";
     const data = JSON.stringify({ level, args });
 
     try {
       if (navigator.sendBeacon) {
-        // --- FIX START: Convert the string to a Blob to set the correct Content-Type ---
         const blob = new Blob([data], { type: "application/json" });
-        navigator.sendBeacon(url, blob); // --- FIX END ---
+        navigator.sendBeacon(url, blob);
       } else {
-        fetch(url, {
+        // FIX: Prepend `void` to explicitly ignore the floating promise
+        void fetch(url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: data,
-          keepalive: true, // Important for requests during page unload
+          keepalive: true,
         });
       }
     } catch (error) {
@@ -62,7 +59,6 @@ const createClientLogger = (): Logger => {
   };
 };
 
-// This effect now simply creates our universal client logger.
 const createClientLoggerEffect = Effect.sync(() => {
   Console.log(
     "Client logger created. All logs will be sent to the server endpoint.",

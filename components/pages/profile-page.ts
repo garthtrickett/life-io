@@ -40,13 +40,14 @@ const update = (action: Action) => {
     case "UPLOAD_START":
       model.value = { ...model.value, status: "uploading", error: null };
       break;
-    case "UPLOAD_SUCCESS":
+    case "UPLOAD_SUCCESS": {
       const user = model.value.auth.user
         ? { ...model.value.auth.user, avatar_url: action.payload }
         : null;
       if (user) proposeAuthAction({ type: "SET_AUTHENTICATED", payload: user });
       model.value = { ...model.value, status: "idle" };
       break;
+    }
     case "UPLOAD_ERROR":
       model.value = {
         ...model.value,
@@ -67,7 +68,7 @@ const react = async (action: Action) => {
         body: formData,
       });
       if (!response.ok) throw new Error(await response.text());
-      const { avatarUrl } = await response.json();
+      const { avatarUrl } = (await response.json()) as { avatarUrl: string };
       propose({ type: "UPLOAD_SUCCESS", payload: avatarUrl });
     } catch (e) {
       propose({
@@ -83,15 +84,11 @@ const propose = (action: Action) => {
   void react(action);
 };
 
-// Ensure initial state is correct if the page is loaded directly.
 if (model.value.auth.status !== authState.value.status) {
   propose({ type: "AUTH_STATE_CHANGED", payload: authState.value });
 }
 
-// --- View Function ---
 export const ProfileView = (): ViewResult => {
-  // The subscription to the global auth store is set up when this view is rendered.
-  // The router will call the returned `cleanup` function when we navigate away.
   const cleanup = authState.subscribe((newAuthState) => {
     propose({ type: "AUTH_STATE_CHANGED", payload: newAuthState });
   });
@@ -102,7 +99,6 @@ export const ProfileView = (): ViewResult => {
   };
 
   const triggerFileInput = () => {
-    // Since this view is not in a Shadow DOM, we can safely query the document.
     document.getElementById("avatar-upload")?.click();
   };
 
@@ -140,9 +136,7 @@ export const ProfileView = (): ViewResult => {
             />
           </div>
           ${model.value.error
-            ? html`
-                <p class=${styles.errorText}>${model.value.error}</p>
-              `
+            ? html`<p class=${styles.errorText}>${model.value.error}</p>`
             : ""}
         </div>
       </div>

@@ -1,4 +1,4 @@
-// File: views/NotesView.ts
+// File: components/pages/notes-list-page.ts
 import { html, type TemplateResult } from "lit-html";
 import { repeat } from "lit-html/directives/repeat.js";
 import { signal } from "@preact/signals-core";
@@ -82,7 +82,7 @@ const update = (action: Action) => {
   }
 };
 
-const react = async (action: Action) => {
+const react = (action: Action) => {
   switch (action.type) {
     case "FETCH_NOTES_START": {
       pipe(
@@ -96,7 +96,9 @@ const react = async (action: Action) => {
           onFailure: (e) =>
             propose({
               type: "FETCH_NOTES_ERROR",
-              payload: `Failed to fetch notes: ${e.message}`,
+              payload: `Failed to fetch notes: ${
+                e instanceof Error ? e.message : String(e)
+              }`,
             }),
         }),
         runClientEffect,
@@ -127,7 +129,6 @@ const react = async (action: Action) => {
       break;
     }
     case "CREATE_NOTE_SUCCESS":
-      // --- LOGGING ADDED ---
       runClientEffect(
         clientLog(
           "info",
@@ -151,10 +152,10 @@ export const NotesView = (): ViewResult => {
     if (model.value.isLoading) {
       return html`
         <div class=${styles.skeletonContainer}>
-          ${[...Array(3)].map(
-            () => html`
-              <div class=${styles.skeletonItem}></div>
-            `,
+          ${repeat(
+            [1, 2, 3],
+            (item) => item,
+            () => html`<div class=${styles.skeletonItem}></div>`,
           )}
         </div>
       `;
@@ -217,9 +218,7 @@ export const NotesView = (): ViewResult => {
           </div>
         </div>
         ${model.value.error
-          ? html`
-              <div class=${styles.errorText}>${model.value.error}</div>
-            `
+          ? html`<div class=${styles.errorText}>${model.value.error}</div>`
           : ""}
         ${renderNotes()}
       </div>
@@ -227,5 +226,4 @@ export const NotesView = (): ViewResult => {
   };
 };
 
-// Initial data load, runs only once when the module is first imported.
 propose({ type: "FETCH_NOTES_START" });

@@ -1,7 +1,7 @@
 // File: components/pages/note-detail-page.ts
 import { html, type TemplateResult } from "lit-html";
 import { signal, type Signal } from "@preact/signals-core";
-import { pipe, Effect, Exit, Cause } from "effect";
+import { pipe, Effect } from "effect";
 import { runClientEffect } from "../../lib/client/runtime";
 import type { NoteDto } from "../../types/generated/Note";
 import styles from "./NoteDetailView.module.css";
@@ -37,30 +37,21 @@ interface NoteController {
 }
 
 // --- Controller Cache & Lifecycle Management ---
-
-/**
- * The cache entry for a controller, including a mechanism
- * to handle deferred cleanup.
- */
 interface ControllerCacheEntry {
   controller: NoteController;
   cleanupTimeoutId?: number;
 }
-
-// Attach cache to the global window object to survive HMR reloads in dev.
-if (!(window as any).noteDetailControllers) {
-  (window as any).noteDetailControllers = new Map<
-    string,
-    ControllerCacheEntry
-  >();
+interface WindowWithNoteControllers extends Window {
+  noteDetailControllers: Map<string, ControllerCacheEntry>;
 }
-const controllers: Map<string, ControllerCacheEntry> = (window as any)
-  .noteDetailControllers;
+declare const window: WindowWithNoteControllers;
 
-/**
- * Creates a controller for a given note ID. This function contains the
- * complete state management logic for a single note detail view.
- */
+if (!window.noteDetailControllers) {
+  window.noteDetailControllers = new Map<string, ControllerCacheEntry>();
+}
+const controllers: Map<string, ControllerCacheEntry> =
+  window.noteDetailControllers;
+
 function createNoteController(id: string): NoteController {
   const modelSignal = signal<Model>({
     status: "loading",
@@ -242,7 +233,6 @@ function createNoteController(id: string): NoteController {
             "NoteDetail:cleanup",
           ),
         );
-        // Defer the deletion. If we re-render the same page, this will be cancelled.
         entry.cleanupTimeoutId = window.setTimeout(() => {
           controllers.delete(id);
           runClientEffect(
@@ -259,11 +249,6 @@ function createNoteController(id: string): NoteController {
   };
 }
 
-/**
- * Gets a controller from the cache or creates a new one. Crucially, it
- * cancels any pending cleanup for the requested controller, preventing the
- * infinite loop during re-renders.
- */
 function getNoteController(id: string): NoteController {
   let entry = controllers.get(id);
 
@@ -297,9 +282,6 @@ function getNoteController(id: string): NoteController {
   return entry.controller;
 }
 
-/**
- * The main view function for the Note Detail page.
- */
 export const NoteDetailView = (id: string): ViewResult => {
   const controller = getNoteController(id);
   const model = controller.modelSignal.value;
@@ -307,17 +289,11 @@ export const NoteDetailView = (id: string): ViewResult => {
   const renderStatus = () => {
     switch (model.status) {
       case "saving":
-        return html`
-          Saving...
-        `;
+        return html`Saving...`;
       case "saved":
-        return html`
-          <span class="text-green-600">Saved</span>
-        `;
+        return html`<span class="text-green-600">Saved</span>`;
       case "error":
-        return html`
-          <span class="text-red-600">${model.error}</span>
-        `;
+        return html`<span class="text-red-600">${model.error}</span>`;
       default:
         return html``;
     }
@@ -327,9 +303,7 @@ export const NoteDetailView = (id: string): ViewResult => {
     template: html`
       <div class=${styles.container}>
         ${model.status === "loading"
-          ? html`
-              <p class="p-8 text-center text-zinc-500">Loading note...</p>
-            `
+          ? html`<p class="p-8 text-center text-zinc-500">Loading note...</p>`
           : model.note
             ? html`
                 <div class=${styles.editor}>

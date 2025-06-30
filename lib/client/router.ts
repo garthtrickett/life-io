@@ -19,15 +19,14 @@ export interface ViewResult {
 }
 
 export interface Route {
-  pattern: RegExp;
-  view: (...args: any[]) => ViewResult;
+  pattern: RegExp; // FIX: Explicitly type the view function's arguments as strings
+  view: (...args: string[]) => ViewResult;
   meta: {
     requiresAuth?: boolean;
     requiresPerms?: string[];
   };
 }
 
-// --- FIX START: Define a consistent return type for the router ---
 /**
  * Represents the successfully matched route object that the router will always return.
  * It includes the original route definition plus the extracted URL parameters.
@@ -35,7 +34,6 @@ export interface Route {
 type MatchedRoute = Route & {
   params: string[];
 };
-// --- FIX END ---
 
 // The reactive signal that holds the current path.
 export const currentPage = signal(window.location.pathname);
@@ -58,7 +56,6 @@ const routes: Route[] = [
   { pattern: /^\/unauthorized$/, view: UnauthorizedView, meta: {} },
 ];
 
-// --- FIX: Add the explicit return type annotation to the function signature ---
 export const router = (): MatchedRoute => {
   const path = currentPage.value;
   runClientEffect(
@@ -75,7 +72,6 @@ export const router = (): MatchedRoute => {
           "router",
         ),
       );
-      // Return the route and its matched params
       return { ...route, params: match.slice(1) };
     }
   }
@@ -87,14 +83,12 @@ export const router = (): MatchedRoute => {
       "router",
     ),
   );
-  // --- FIX START: Ensure the fallback route matches the MatchedRoute shape ---
   return {
     pattern: /^\/404$/,
     view: NotFoundView,
     meta: {},
-    params: [], // Add the missing 'params' property
+    params: [],
   };
-  // --- FIX END ---
 };
 
 // Public function for programmatic navigation.

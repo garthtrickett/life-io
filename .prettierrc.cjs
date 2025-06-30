@@ -6,5 +6,5 @@ module.exports = {
   printWidth: 80,
   plugins: ["prettier-plugin-tailwindcss"],
   // Add this line to fix whitespace formatting in Lit templates
-  htmlWhitespaceSensitivity: "ignore",
+  // htmlWhitespaceSensitivity: "ignore",
 };

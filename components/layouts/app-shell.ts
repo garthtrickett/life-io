@@ -34,12 +34,7 @@ effect(() => {
   // --- 1. GUARD LOGIC ---
   // If auth is still initializing, show a loading screen and stop.
   if (auth.status === "initializing" || auth.status === "authenticating") {
-    render(
-      html`
-        <p>Loading...</p>
-      `,
-      appRoot,
-    ); // Simple loading indicator
+    render(html` <p>Loading...</p> `, appRoot); // Simple loading indicator
     return;
   }
 

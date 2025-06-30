@@ -3,7 +3,6 @@ import { signal } from "@preact/signals-core";
 import { Effect, pipe } from "effect";
 import { trpc } from "../../../lib/client/trpc";
 import type { User } from "../../../types/generated/public/User";
-import { clientLog } from "../../../lib/client/logger.client";
 
 // --- Model and Action Types ---
 export interface AuthModel {
