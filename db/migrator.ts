@@ -2,12 +2,12 @@
 import { Effect, Exit, Cause } from "effect";
 import { db } from "./kysely";
 import { serverLog } from "../lib/server/logger.server";
-import { Migrator, FileMigrationProvider } from "kysely";
-import * as path from "node:path";
-import { promises as fs } from "node:fs";
+import { Migrator } from "kysely";
+// --- MODIFICATION START ---
+// Import the new embedded provider instead of the file-based one
+import { EmbeddedCentralMigrationProvider } from "../lib/server/migrations/EmbeddedCentralMigrationProvider";
+// --- MODIFICATION END ---
 
-// This migrator uses Kysely's default file-based discovery,
-// so it does not need the manual centralMigrationObjects manifest.
 const runMigrations = (direction: "up" | "down") =>
   Effect.gen(function* () {
     yield* serverLog(
@@ -19,11 +19,10 @@ const runMigrations = (direction: "up" | "down") =>
 
     const migrator = new Migrator({
       db,
-      provider: new FileMigrationProvider({
-        fs,
-        path,
-        migrationFolder: path.join(process.cwd(), "migrations"),
-      }),
+      // --- MODIFICATION START ---
+      // Use the new provider here
+      provider: new EmbeddedCentralMigrationProvider(),
+      // --- MODIFICATION END ---
     });
 
     const { error, results } = yield* Effect.tryPromise({
@@ -56,12 +55,11 @@ const runMigrations = (direction: "up" | "down") =>
         undefined,
         "EffectMigrator",
       );
-      // The type of `error` is `unknown` here, which `Effect.fail` can handle.
       return yield* Effect.fail(error);
     }
   });
 
-// --- Execution Logic ---
+// --- Execution Logic (No changes needed here) ---
 
 const getDirection = () => {
   const directionArg = Bun.argv[2];

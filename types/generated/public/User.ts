@@ -19,6 +19,8 @@ export default interface UserTable {
   permissions: ColumnType<string[] | null, string[] | null, string[] | null>;
 
   avatar_url: ColumnType<string | null, string | null, string | null>;
+
+  email_verified: ColumnType<boolean, boolean | undefined, boolean>;
 }
 
 export type User = Selectable<UserTable>;

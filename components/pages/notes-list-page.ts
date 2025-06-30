@@ -10,6 +10,7 @@ import styles from "./NotesView.module.css";
 import { navigate } from "../../lib/client/router";
 import { clientLog } from "../../lib/client/logger.client";
 import { trpc } from "../../lib/client/trpc";
+import { animate, stagger } from "motion";
 
 interface ViewResult {
   template: TemplateResult;
@@ -38,7 +39,6 @@ const model = signal<Model>({
 });
 
 const update = (action: Action) => {
-  // ... (update logic remains unchanged)
   switch (action.type) {
     case "FETCH_NOTES_START":
       if (model.value.isLoading && model.value.notes.length === 0) {
@@ -87,7 +87,7 @@ const update = (action: Action) => {
   }
 };
 
-const react = (action: Action) => {
+const react = async (action: Action) => {
   switch (action.type) {
     case "FETCH_NOTES_START": {
       const fetchEffect = pipe(
@@ -108,6 +108,22 @@ const react = (action: Action) => {
         }),
       );
       void runClientPromise(fetchEffect);
+      break;
+    }
+    case "FETCH_NOTES_SUCCESS": {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      const noteElements = Array.from(
+        document
+          .querySelector("app-shell")
+          ?.shadowRoot?.querySelectorAll("ul li") ?? [],
+      );
+      if (noteElements.length > 0) {
+        animate(
+          noteElements,
+          { opacity: [0, 1], transform: ["translateY(20px)", "translateY(0)"] },
+          { delay: stagger(0.07), duration: 0.5 },
+        );
+      }
       break;
     }
     case "CREATE_NOTE_START": {

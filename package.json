@@ -2,15 +2,15 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently \"bun --watch server.ts\" \"vite\"",
-    "lint": "eslint . --ext .ts,.js --cache",
+    "lint": "eslint . --ext .ts,.js --cache --fix",
     "format": "prettier --write .",
     "build": "vite build && bun type-check",
     "start": "NODE_ENV=production bun run server.ts",
     "db:generate": "bun run scripts/generate-types.ts",
-    "db:migrate": "bun run scripts/migrate.ts up",
+    "db:migrate": "bun run db/migrator.ts up",
     "db:seed": "bun run scripts/seed.ts",
     "migrate": "bun run db:migrate && bun run db:generate && bun run db:seed",
-    "migrate:down": "bun run scripts/migrate.ts down",
+    "migrate:down": "bun run db/migrator.ts down",
     "type-check": "bunx tsc --noemit",
     "start:prod": "bun run db:migrate && bun run db:seed && bun run start"
   },

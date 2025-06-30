@@ -31,6 +31,7 @@ const seedProgram = Effect.gen(function* () {
     email: "garthtrickett@gmail.com",
     password_hash: hashedPassword,
     permissions: [perms.note.read, perms.note.write],
+    email_verified: true,
   };
 
   const db = yield* Db;
@@ -46,6 +47,7 @@ const seedProgram = Effect.gen(function* () {
               email: TEST_USER.email,
               password_hash: TEST_USER.password_hash,
               permissions: TEST_USER.permissions,
+              email_verified: TEST_USER.email_verified,
             }),
           )
           .returning("id")

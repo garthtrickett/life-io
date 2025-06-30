@@ -15,13 +15,6 @@ const execAsync = promisify(exec);
 const generateTypes = Effect.gen(function* () {
   yield* serverLog("info", "🚀 Starting Kanel type generation...");
 
-  // Check if DATABASE_URL is set, as Kanel requires it.
-  if (!process.env.DATABASE_URL) {
-    return yield* Effect.fail(
-      new Error("DATABASE_URL is not set in the environment variables."),
-    );
-  }
-
   // Define the Kanel command to be executed.
   const command = `bunx kanel --config ./.kanelrc.cjs`;
 

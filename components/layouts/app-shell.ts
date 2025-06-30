@@ -6,7 +6,7 @@ import { AppLayout } from "./AppLayout";
 import { clientLog } from "../../lib/client/logger.client";
 import { runClientUnscoped } from "../../lib/client/runtime";
 import { authState } from "../../lib/client/stores/authStore";
-import { html, nothing } from "lit-html";
+import { html } from "lit-html";
 import type { ViewResult } from "../../lib/client/router";
 
 /* -------------------------------------------------------------- */
@@ -23,9 +23,7 @@ window.addEventListener("popstate", () => {
   const navigateTo = () => {
     currentPage.value = window.location.pathname;
   };
-  // @ts-ignore
   if (document.startViewTransition) {
-    // @ts-ignore
     document.startViewTransition(navigateTo);
   } else {
     navigateTo();

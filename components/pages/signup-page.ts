@@ -1,18 +1,16 @@
-// components/pages/signup-page.ts
+// File: ./components/pages/signup-page.ts
 import { html, type TemplateResult, nothing } from "lit-html";
 import { signal } from "@preact/signals-core";
 import { pipe, Effect, Exit, Cause } from "effect";
 import { trpc } from "../../lib/client/trpc";
-import { proposeAuthAction } from "../../lib/client/stores/authStore";
 import { clientLog } from "../../lib/client/logger.client";
-import styles from "./SignupView.module.css";
-import type { User } from "../../types/generated/public/User";
 import { NotionButton } from "../ui/notion-button";
 import { runClientPromise, runClientUnscoped } from "../../lib/client/runtime";
+import { navigate } from "../../lib/client/router";
 
+// --- Types ---
 interface ViewResult {
   template: TemplateResult;
-  cleanup?: () => void;
 }
 interface Model {
   email: string;
@@ -24,9 +22,10 @@ type Action =
   | { type: "UPDATE_EMAIL"; payload: string }
   | { type: "UPDATE_PASSWORD"; payload: string }
   | { type: "SIGNUP_START" }
-  | { type: "SIGNUP_SUCCESS"; payload: { sessionId: string; user: User } }
+  | { type: "SIGNUP_SUCCESS"; payload: { success: boolean; email: string } }
   | { type: "SIGNUP_ERROR"; payload: string };
 
+// --- State ---
 const model = signal<Model>({
   email: "",
   password: "",
@@ -34,8 +33,8 @@ const model = signal<Model>({
   isLoading: false,
 });
 
+// --- Update (State Reducer) ---
 const update = (action: Action) => {
-  // ... (update logic remains unchanged)
   switch (action.type) {
     case "UPDATE_EMAIL":
       model.value = { ...model.value, email: action.payload, error: null };
@@ -59,6 +58,7 @@ const update = (action: Action) => {
   }
 };
 
+// --- React (Side Effects) ---
 const react = async (action: Action) => {
   if (action.type === "SIGNUP_START") {
     const signupEffect = pipe(
@@ -71,16 +71,6 @@ const react = async (action: Action) => {
         catch: (err) =>
           new Error(err instanceof Error ? err.message : String(err)),
       }),
-      Effect.tap((result) =>
-        Effect.forkDaemon(
-          clientLog(
-            "info",
-            `User signup successful, setting auth state.`,
-            result.user.id,
-            "SignupView",
-          ),
-        ),
-      ),
     );
 
     const exit = await runClientPromise(Effect.exit(signupEffect));
@@ -97,31 +87,25 @@ const react = async (action: Action) => {
     }
   }
   if (action.type === "SIGNUP_SUCCESS") {
-    const { sessionId, user } = action.payload;
-    const expires = new Date();
-    expires.setDate(expires.getDate() + 30);
-    document.cookie = `session_id=${sessionId}; path=/; expires=${expires.toUTCString()}; SameSite=Lax`;
-
-    proposeAuthAction({
-      type: "SET_AUTHENTICATED",
-      payload: user,
-    });
+    runClientUnscoped(
+      clientLog(
+        "info",
+        `Signup success for ${action.payload.email}. Navigating to /check-email.`,
+        undefined,
+        "SignupView:react",
+      ),
+    );
+    navigate("/check-email");
   }
 };
 
+// --- Propose (Action Dispatcher) ---
 const propose = (action: Action) => {
-  runClientUnscoped(
-    clientLog(
-      "debug",
-      `SignupView: Proposing action ${action.type}`,
-      undefined,
-      "SignupView:propose",
-    ),
-  );
   update(action);
   void react(action);
 };
 
+// --- View ---
 export const SignupView = (): ViewResult => {
   const handleSignupSubmit = (e: Event) => {
     e.preventDefault();
@@ -131,16 +115,18 @@ export const SignupView = (): ViewResult => {
 
   return {
     template: html`
-      <div class=${styles.container}>
-        <div class=${styles.formWrapper}>
-          <h2 class=${styles.title}>Create Account</h2>
+      <div class="flex min-h-screen items-center justify-center bg-gray-100">
+        <div class="w-full max-w-md rounded-lg bg-white p-8 shadow-md">
+          <h2 class="mb-6 text-center text-2xl font-bold">Create Account</h2>
           <form @submit=${handleSignupSubmit}>
-            <div class=${styles.field}>
-              <label for="email" class=${styles.label}>Email</label>
+            <div class="mb-4">
+              <label for="email" class="block text-sm font-medium text-gray-700"
+                >Email</label
+              >
               <input
                 type="email"
                 id="email"
-                class=${styles.input}
+                class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-zinc-500 focus:outline-none focus:ring-zinc-500 sm:text-sm"
                 .value=${model.value.email}
                 @input=${(e: Event) =>
                   propose({
@@ -150,14 +136,17 @@ export const SignupView = (): ViewResult => {
                 required
               />
             </div>
-            <div class=${styles.field}>
-              <label for="password" class=${styles.label}>
+            <div class="mb-6">
+              <label
+                for="password"
+                class="block text-sm font-medium text-gray-700"
+              >
                 Password (min. 8 characters)
               </label>
               <input
                 type="password"
                 id="password"
-                class=${styles.input}
+                class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-zinc-500 focus:outline-none focus:ring-zinc-500 sm:text-sm"
                 .value=${model.value.password}
                 @input=${(e: Event) =>
                   propose({
@@ -168,17 +157,25 @@ export const SignupView = (): ViewResult => {
               />
             </div>
             ${model.value.error
-              ? html`<div class=${styles.errorText}>${model.value.error}</div>`
+              ? html`<div class="mb-4 text-sm text-red-500">
+                  ${model.value.error}
+                </div>`
               : nothing}
             ${NotionButton({
               children: model.value.isLoading ? "Signing up..." : "Sign Up",
               type: "submit",
               loading: model.value.isLoading,
-              onClick: handleSignupSubmit,
             })}
           </form>
-          <div class=${styles.linkContainer}>
-            <a href="/login" class=${styles.link}>
+          <div class="mt-4 text-center text-sm">
+            <a
+              href="/login"
+              class="font-medium text-zinc-600 hover:text-zinc-500"
+              @click=${(e: Event) => {
+                e.preventDefault();
+                navigate("/login");
+              }}
+            >
               Already have an account? Log in.
             </a>
           </div>
