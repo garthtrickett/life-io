@@ -1,52 +1,44 @@
-// File: lib/client/router.ts
+// lib/client/router.ts
 import { signal } from "@preact/signals-core";
-import { type TemplateResult } from "lit-html";
-import { LoginView } from "../../components/pages/login-page";
-import { SignupView } from "../../components/pages/signup-page";
+import { TemplateResult } from "lit";
 import { NotesView } from "../../components/pages/notes-list-page";
 import { NoteDetailView } from "../../components/pages/note-detail-page";
+import { LoginView } from "../../components/pages/login-page";
+import { SignupView } from "../../components/pages/signup-page";
 import { ProfileView } from "../../components/pages/profile-page";
 import { NotFoundView } from "../../components/pages/not-found-page";
 import { UnauthorizedView } from "../../components/pages/unauthorized-page";
-import { runClientEffect } from "./runtime";
 import { clientLog } from "./logger.client";
+import { runClientUnscoped } from "./runtime";
 import { perms } from "../shared/permissions";
 
-// --- Types ---
+/* ------------------------------------------------------------------ */
+/* Types                                                              */
+/* ------------------------------------------------------------------ */
 export interface ViewResult {
   template: TemplateResult;
   cleanup?: () => void;
 }
-
 export interface Route {
-  pattern: RegExp; // FIX: Explicitly type the view function's arguments as strings
+  pattern: RegExp;
   view: (...args: string[]) => ViewResult;
-  meta: {
-    requiresAuth?: boolean;
-    requiresPerms?: string[];
-  };
+  meta: { requiresAuth?: boolean; requiresPerms?: string[] };
 }
+type MatchedRoute = Route & { params: string[] };
 
-/**
- * Represents the successfully matched route object that the router will always return.
- * It includes the original route definition plus the extracted URL parameters.
- */
-type MatchedRoute = Route & {
-  params: string[];
-};
-
-// The reactive signal that holds the current path.
+/* ------------------------------------------------------------------ */
+/* Internal state                                                     */
+/* ------------------------------------------------------------------ */
 export const currentPage = signal(window.location.pathname);
 
-// A map of URL patterns to View functions.
 const routes: Route[] = [
   {
     pattern: /^\/$/,
     view: NotesView,
     meta: { requiresAuth: true, requiresPerms: [perms.note.read] },
   },
-  { pattern: /^\/login$/, view: LoginView, meta: { requiresAuth: false } },
-  { pattern: /^\/signup$/, view: SignupView, meta: { requiresAuth: false } },
+  { pattern: /^\/login$/, view: LoginView, meta: {} },
+  { pattern: /^\/signup$/, view: SignupView, meta: {} },
   {
     pattern: /^\/notes\/([^/]+)$/,
     view: NoteDetailView,
@@ -58,16 +50,17 @@ const routes: Route[] = [
 
 export const router = (): MatchedRoute => {
   const path = currentPage.value;
-  runClientEffect(
-    clientLog("info", `Routing for path: ${path}`, undefined, "router"),
+  runClientUnscoped(
+    clientLog("info", `Routing for path: '${path}'`, undefined, "router"),
   );
+
   for (const route of routes) {
     const match = path.match(route.pattern);
     if (match) {
-      runClientEffect(
+      runClientUnscoped(
         clientLog(
           "info",
-          `Route matched: ${route.pattern}.`,
+          `Route matched: ${route.pattern}`,
           undefined,
           "router",
         ),
@@ -75,29 +68,33 @@ export const router = (): MatchedRoute => {
       return { ...route, params: match.slice(1) };
     }
   }
-  runClientEffect(
+  runClientUnscoped(
     clientLog(
       "warn",
-      `No route matched for path: ${path}. Falling back to 404.`,
+      `No match for path '${path}'. Falling back to 404.`,
       undefined,
       "router",
     ),
   );
-  return {
-    pattern: /^\/404$/,
-    view: NotFoundView,
-    meta: {},
-    params: [],
-  };
+  return { pattern: /^\/404$/, view: NotFoundView, meta: {}, params: [] };
 };
 
-// Public function for programmatic navigation.
+/* Public helper ----------------------------------------------------- */
 export const navigate = (path: string) => {
-  if (currentPage.value !== path) {
-    runClientEffect(
-      clientLog("info", `Navigating to ${path}`, undefined, "navigate"),
+  if (currentPage.value === path) {
+    runClientUnscoped(
+      clientLog(
+        "warn",
+        `Maps('${path}') ignored – already there.`,
+        undefined,
+        "navigate",
+      ),
     );
-    window.history.pushState({}, "", path);
-    currentPage.value = path;
+    return;
   }
+  runClientUnscoped(
+    clientLog("info", `Maps → '${path}'`, undefined, "navigate"),
+  );
+  window.history.pushState({}, "", path);
+  currentPage.value = path;
 };

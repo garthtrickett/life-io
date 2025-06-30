@@ -1,18 +1,16 @@
-// File: components/pages/notes-list-page.ts
-import { html, type TemplateResult, nothing } from "lit-html";
+// File: ./components/pages/notes-list-page.ts
+// --- FIX START ---
+import { html, type TemplateResult } from "lit-html";
 import { repeat } from "lit-html/directives/repeat.js";
 import { signal } from "@preact/signals-core";
 import { pipe, Effect } from "effect";
-import { trpc } from "../../lib/client/trpc";
-import { runClientEffect } from "../../lib/client/runtime";
+import { runClientPromise, runClientUnscoped } from "../../lib/client/runtime";
 import type { NoteDto } from "../../types/generated/Note";
 import styles from "./NotesView.module.css";
 import { navigate } from "../../lib/client/router";
 import { clientLog } from "../../lib/client/logger.client";
-import { NotionButton } from "../ui/notion-button";
-import "../ui/skeleton-loader.ts";
+import { trpc } from "../../lib/client/trpc";
 
-// --- Types ---
 interface ViewResult {
   template: TemplateResult;
   cleanup?: () => void;
@@ -32,7 +30,6 @@ type Action =
   | { type: "CREATE_NOTE_ERROR"; payload: string }
   | { type: "SORT_NOTES_AZ" };
 
-// --- Module-level state and logic ---
 const model = signal<Model>({
   notes: [],
   isLoading: true,
@@ -40,11 +37,13 @@ const model = signal<Model>({
   error: null,
 });
 
-const hasAnimatedIn = signal(false);
-
-const update = (action: Action): void => {
+const update = (action: Action) => {
+  // ... (update logic remains unchanged)
   switch (action.type) {
     case "FETCH_NOTES_START":
+      if (model.value.isLoading && model.value.notes.length === 0) {
+        return;
+      }
       model.value = { ...model.value, isLoading: true, error: null };
       break;
     case "FETCH_NOTES_SUCCESS":
@@ -55,7 +54,11 @@ const update = (action: Action): void => {
       };
       break;
     case "FETCH_NOTES_ERROR":
-      model.value = { ...model.value, isLoading: false, error: action.payload };
+      model.value = {
+        ...model.value,
+        isLoading: false,
+        error: action.payload,
+      };
       break;
     case "CREATE_NOTE_START":
       model.value = { ...model.value, isCreating: true, error: null };
@@ -87,7 +90,7 @@ const update = (action: Action): void => {
 const react = (action: Action) => {
   switch (action.type) {
     case "FETCH_NOTES_START": {
-      pipe(
+      const fetchEffect = pipe(
         Effect.tryPromise(() => trpc.note.list.query()),
         Effect.match({
           onSuccess: (notes) =>
@@ -103,23 +106,12 @@ const react = (action: Action) => {
               }`,
             }),
         }),
-        runClientEffect,
       );
-      break;
-    }
-    case "FETCH_NOTES_SUCCESS": {
-      if (!hasAnimatedIn.value) {
-        requestAnimationFrame(() => {
-          const notesList = document.querySelector("#notes-list");
-          if (notesList && notesList.children.length > 0) {
-            hasAnimatedIn.value = true;
-          }
-        });
-      }
+      void runClientPromise(fetchEffect);
       break;
     }
     case "CREATE_NOTE_START": {
-      pipe(
+      const createEffect = pipe(
         Effect.tryPromise(() =>
           trpc.note.create.mutate({ title: "Untitled Note", content: "" }),
         ),
@@ -137,12 +129,12 @@ const react = (action: Action) => {
           onFailure: (e) =>
             propose({ type: "CREATE_NOTE_ERROR", payload: e.message }),
         }),
-        runClientEffect,
       );
+      void runClientPromise(createEffect);
       break;
     }
     case "CREATE_NOTE_SUCCESS":
-      runClientEffect(
+      runClientUnscoped(
         clientLog(
           "info",
           `Note creation success. Navigating to /notes/${action.payload.id}`,
@@ -156,8 +148,16 @@ const react = (action: Action) => {
 };
 
 const propose = (action: Action) => {
+  runClientUnscoped(
+    clientLog(
+      "debug",
+      `NotesView: Proposing action ${action.type}`,
+      undefined,
+      "NotesView:propose",
+    ),
+  );
   update(action);
-  react(action);
+  void react(action);
 };
 
 export const NotesView = (): ViewResult => {
@@ -165,13 +165,32 @@ export const NotesView = (): ViewResult => {
     propose({ type: "FETCH_NOTES_START" });
   }
 
+  const cleanup = () => {
+    runClientUnscoped(
+      clientLog(
+        "debug",
+        "NotesView cleanup running, resetting state.",
+        undefined,
+        "NotesView:cleanup",
+      ),
+    );
+    model.value = {
+      notes: [],
+      isLoading: true,
+      isCreating: false,
+      error: null,
+    };
+  };
   const renderNotes = () => {
+    // ... (render logic remains unchanged)
     if (model.value.isLoading) {
       return html`
-        <div class="space-y-3">
-          <skeleton-loader class="h-12 w-full"></skeleton-loader>
-          <skeleton-loader class="h-12 w-full"></skeleton-loader>
-          <skeleton-loader class="h-12 w-2/3"></skeleton-loader>
+        <div class=${styles.skeletonContainer}>
+          ${repeat(
+            [1, 2, 3],
+            (item) => item,
+            () => html`<div class=${styles.skeletonItem}></div>`,
+          )}
         </div>
       `;
     }
@@ -184,12 +203,12 @@ export const NotesView = (): ViewResult => {
       `;
     }
     return html`
-      <ul id="notes-list" class=${styles.notesList}>
+      <ul class=${styles.notesList}>
         ${repeat(
           model.value.notes,
           (note) => note.id,
           (note) => html`
-            <li style="visibility: hidden">
+            <li>
               <a
                 href="/notes/${note.id}"
                 class=${styles.noteItem}
@@ -223,23 +242,22 @@ export const NotesView = (): ViewResult => {
             >
               Sort A-Z
             </button>
-            ${NotionButton({
-              children: model.value.isCreating
-                ? "Creating..."
-                : "Create New Note",
-              loading: model.value.isCreating,
-              onClick: () => propose({ type: "CREATE_NOTE_START" }),
-            })}
+            <button
+              @click=${() => propose({ type: "CREATE_NOTE_START" })}
+              ?disabled=${model.value.isCreating}
+              class=${styles.createButton}
+            >
+              ${model.value.isCreating ? "Creating..." : "Create New Note"}
+            </button>
           </div>
         </div>
         ${model.value.error
           ? html`<div class=${styles.errorText}>${model.value.error}</div>`
-          : nothing}
+          : ""}
         ${renderNotes()}
       </div>
     `,
-    cleanup: () => {
-      hasAnimatedIn.value = false;
-    },
+    cleanup,
   };
 };
+// --- FIX END ---

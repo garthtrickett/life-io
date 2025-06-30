@@ -1,8 +1,9 @@
-// File: components/pages/note-detail-page.ts
+// File: ./components/pages/note-detail-page.ts
+// --- FIX START ---
 import { html, type TemplateResult } from "lit-html";
 import { signal, type Signal } from "@preact/signals-core";
 import { pipe, Effect } from "effect";
-import { runClientEffect } from "../../lib/client/runtime";
+import { runClientPromise, runClientUnscoped } from "../../lib/client/runtime";
 import type { NoteDto } from "../../types/generated/Note";
 import styles from "./NoteDetailView.module.css";
 import { trpc } from "../../lib/client/trpc";
@@ -29,14 +30,13 @@ type Action =
   | { type: "SAVE_ERROR"; payload: string }
   | { type: "RESET_SAVE_STATUS" };
 
-// --- Controller Definition ---
+// --- Controller Definition & Cache ---
+// ... (Controller definition and cache logic remain unchanged)
 interface NoteController {
   modelSignal: Signal<Model>;
   propose: (action: Action) => void;
   cleanup: () => void;
 }
-
-// --- Controller Cache & Lifecycle Management ---
 interface ControllerCacheEntry {
   controller: NoteController;
   cleanupTimeoutId?: number;
@@ -45,7 +45,6 @@ interface WindowWithNoteControllers extends Window {
   noteDetailControllers: Map<string, ControllerCacheEntry>;
 }
 declare const window: WindowWithNoteControllers;
-
 if (!window.noteDetailControllers) {
   window.noteDetailControllers = new Map<string, ControllerCacheEntry>();
 }
@@ -63,6 +62,7 @@ function createNoteController(id: string): NoteController {
   let updateTimeout: number | undefined;
 
   const update = (action: Action) => {
+    // ... (update logic remains unchanged)
     const model = modelSignal.value;
     switch (action.type) {
       case "FETCH_START":
@@ -157,12 +157,20 @@ function createNoteController(id: string): NoteController {
               propose({ type: "FETCH_ERROR", payload: err.message }),
           }),
         );
-        runClientEffect(fetchEffect);
+        void runClientPromise(fetchEffect);
         break;
       }
       case "UPDATE_TITLE":
       case "UPDATE_CONTENT":
         clearTimeout(updateTimeout);
+        runClientUnscoped(
+          clientLog(
+            "debug",
+            `Autosave timeout set for note: ${id}`,
+            undefined,
+            "NoteDetail:react:update",
+          ),
+        );
         updateTimeout = window.setTimeout(
           () => propose({ type: "SAVE_START" }),
           500,
@@ -178,6 +186,14 @@ function createNoteController(id: string): NoteController {
           content: model.note.content,
         });
         if (currentNoteContent === originalNoteContent) {
+          runClientUnscoped(
+            clientLog(
+              "info",
+              `Save skipped, no changes detected for note: ${id}`,
+              undefined,
+              "NoteDetail:react:save",
+            ),
+          );
           propose({ type: "RESET_SAVE_STATUS" });
           return;
         }
@@ -202,7 +218,7 @@ function createNoteController(id: string): NoteController {
               propose({ type: "SAVE_ERROR", payload: err.message }),
           }),
         );
-        runClientEffect(saveEffect);
+        void runClientPromise(saveEffect);
         break;
       }
       case "SAVE_SUCCESS":
@@ -212,6 +228,14 @@ function createNoteController(id: string): NoteController {
   };
 
   const propose = (action: Action) => {
+    runClientUnscoped(
+      clientLog(
+        "debug",
+        `NoteDetailView(${id}): Proposing action ${action.type}`,
+        undefined,
+        `NoteDetail:propose`,
+      ),
+    );
     update(action);
     void react(action);
   };
@@ -225,7 +249,7 @@ function createNoteController(id: string): NoteController {
       clearTimeout(updateTimeout);
       const entry = controllers.get(id);
       if (entry) {
-        runClientEffect(
+        runClientUnscoped(
           clientLog(
             "debug",
             `Scheduling cleanup for controller: ${id}`,
@@ -235,7 +259,7 @@ function createNoteController(id: string): NoteController {
         );
         entry.cleanupTimeoutId = window.setTimeout(() => {
           controllers.delete(id);
-          runClientEffect(
+          runClientUnscoped(
             clientLog(
               "info",
               `Controller for note ${id} has been garbage collected.`,
@@ -253,7 +277,7 @@ function getNoteController(id: string): NoteController {
   let entry = controllers.get(id);
 
   if (entry?.cleanupTimeoutId) {
-    runClientEffect(
+    runClientUnscoped(
       clientLog(
         "debug",
         `Cancelling pending cleanup for controller: ${id}`,
@@ -266,7 +290,7 @@ function getNoteController(id: string): NoteController {
   }
 
   if (!entry) {
-    runClientEffect(
+    runClientUnscoped(
       clientLog(
         "info",
         `No controller found for id: ${id}. Creating a new one.`,
@@ -287,6 +311,7 @@ export const NoteDetailView = (id: string): ViewResult => {
   const model = controller.modelSignal.value;
 
   const renderStatus = () => {
+    // ... (render logic remains unchanged)
     switch (model.status) {
       case "saving":
         return html`Saving...`;
@@ -344,3 +369,4 @@ export const NoteDetailView = (id: string): ViewResult => {
     cleanup: controller.cleanup,
   };
 };
+// --- FIX END ---

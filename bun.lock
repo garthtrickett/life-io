@@ -18,7 +18,6 @@
         "dotenv": "^16.4.5",
         "effect": "^3.16.9",
         "elysia": "^1.3.5",
-        "haunted": "^6.1.0",
         "kysely": "^0.28.2",
         "kysely-neon": "^1.1.1",
         "lit": "^3.3.0",
@@ -762,8 +761,6 @@
     "has-flag": ["has-flag@4.0.0", "", {}, "sha512-EykJT/Q1KjTWctppgIAgfSO0tKVuZUjhgMr17kqTumMl6Afv3EISleU7qZUzoXDFTAHTDC4NOoG/ZxU3EvlMPQ=="],
 
     "hasown": ["hasown@2.0.2", "", { "dependencies": { "function-bind": "^1.1.2" } }, "sha512-0hJU9SCPvmMzIBdZFqNPXWa6dqh7WdH0cII9y+CyS8rG3nL48Bclra9HmKhVVUHyPWNH5Y7xDwAB7bfgSjkUMQ=="],
-
-    "haunted": ["haunted@6.1.0", "", { "dependencies": { "lit": "^3.0.0", "lit-html": "^3.0.0" } }, "sha512-FjqhqCkySCfZ3PHW72u3VUkdvmIlVt07KmQH7kpWcYjeb6q5ttSMogwezO8NKFkpo391Iegm14KjPoIVeGJriQ=="],
 
     "help-me": ["help-me@5.0.0", "", {}, "sha512-7xgomUX6ADmcYzFik0HzAxh/73YlKR9bmFzf51CZwR+b6YtzU2m0u49hQCqV6SvlqIqsaxovfwdvbnsw3b/zpg=="],
 

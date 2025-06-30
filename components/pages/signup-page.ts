@@ -1,16 +1,15 @@
-// File: ./components/pages/signup-page.ts
+// components/pages/signup-page.ts
 import { html, type TemplateResult, nothing } from "lit-html";
 import { signal } from "@preact/signals-core";
 import { pipe, Effect, Exit, Cause } from "effect";
 import { trpc } from "../../lib/client/trpc";
 import { proposeAuthAction } from "../../lib/client/stores/authStore";
-import { navigate } from "../../lib/client/router";
 import { clientLog } from "../../lib/client/logger.client";
 import styles from "./SignupView.module.css";
 import type { User } from "../../types/generated/public/User";
-import { NotionButton } from "../ui/notion-button"; // <-- 1. Import component
+import { NotionButton } from "../ui/notion-button";
+import { runClientPromise, runClientUnscoped } from "../../lib/client/runtime";
 
-// --- Types ---
 interface ViewResult {
   template: TemplateResult;
   cleanup?: () => void;
@@ -28,7 +27,6 @@ type Action =
   | { type: "SIGNUP_SUCCESS"; payload: { sessionId: string; user: User } }
   | { type: "SIGNUP_ERROR"; payload: string };
 
-// --- Module-level state and logic ---
 const model = signal<Model>({
   email: "",
   password: "",
@@ -37,6 +35,7 @@ const model = signal<Model>({
 });
 
 const update = (action: Action) => {
+  // ... (update logic remains unchanged)
   switch (action.type) {
     case "UPDATE_EMAIL":
       model.value = { ...model.value, email: action.payload, error: null };
@@ -73,16 +72,18 @@ const react = async (action: Action) => {
           new Error(err instanceof Error ? err.message : String(err)),
       }),
       Effect.tap((result) =>
-        clientLog(
-          "info",
-          `User signup successful, setting auth state.`,
-          result.user.id,
-          "SignupView",
+        Effect.forkDaemon(
+          clientLog(
+            "info",
+            `User signup successful, setting auth state.`,
+            result.user.id,
+            "SignupView",
+          ),
         ),
       ),
     );
 
-    const exit = await Effect.runPromiseExit(signupEffect);
+    const exit = await runClientPromise(Effect.exit(signupEffect));
 
     if (Exit.isSuccess(exit)) {
       propose({ type: "SIGNUP_SUCCESS", payload: exit.value });
@@ -105,16 +106,22 @@ const react = async (action: Action) => {
       type: "SET_AUTHENTICATED",
       payload: user,
     });
-    navigate("/");
   }
 };
 
 const propose = (action: Action) => {
+  runClientUnscoped(
+    clientLog(
+      "debug",
+      `SignupView: Proposing action ${action.type}`,
+      undefined,
+      "SignupView:propose",
+    ),
+  );
   update(action);
   void react(action);
 };
 
-// --- View Function ---
 export const SignupView = (): ViewResult => {
   const handleSignupSubmit = (e: Event) => {
     e.preventDefault();

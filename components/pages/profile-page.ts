@@ -1,4 +1,4 @@
-// File: components/pages/profile-page.ts
+// components/pages/profile-page.ts
 import { html, nothing, type TemplateResult } from "lit-html";
 import { signal } from "@preact/signals-core";
 import {
@@ -7,9 +7,10 @@ import {
   type AuthModel,
 } from "../../lib/client/stores/authStore";
 import styles from "./ProfileView.module.css";
-import { NotionButton } from "../ui/notion-button"; // <-- 1. Import the new button component
+import { NotionButton } from "../ui/notion-button";
+import { runClientUnscoped } from "../../lib/client/runtime";
+import { clientLog } from "../../lib/client/logger.client";
 
-// --- Types ---
 interface ViewResult {
   template: TemplateResult;
   cleanup?: () => void;
@@ -25,7 +26,6 @@ type Action =
   | { type: "UPLOAD_SUCCESS"; payload: string }
   | { type: "UPLOAD_ERROR"; payload: string };
 
-// --- Module-level state and logic ---
 const model = signal<Model>({
   auth: authState.value,
   status: "idle",
@@ -33,6 +33,7 @@ const model = signal<Model>({
 });
 
 const update = (action: Action) => {
+  // ... (update logic remains unchanged)
   switch (action.type) {
     case "AUTH_STATE_CHANGED":
       model.value = { ...model.value, auth: action.payload };
@@ -80,11 +81,18 @@ const react = async (action: Action) => {
 };
 
 const propose = (action: Action) => {
+  runClientUnscoped(
+    clientLog(
+      "debug",
+      `ProfileView: Proposing action ${action.type}`,
+      model.value.auth.user?.id,
+      "ProfileView:propose",
+    ),
+  );
   update(action);
   void react(action);
 };
 
-// This ensures the local model is in sync with the global auth store
 if (model.value.auth.status !== authState.value.status) {
   propose({ type: "AUTH_STATE_CHANGED", payload: authState.value });
 }
@@ -100,13 +108,11 @@ export const ProfileView = (): ViewResult => {
   };
 
   const triggerFileInput = () => {
-    // This function now just handles the logic, to be passed to the button's onClick.
     document.getElementById("avatar-upload")?.click();
   };
 
   const user = model.value.auth.user;
   if (!user) {
-    // Handle case where user is not logged in, maybe show a loading or error state
     return { template: html`<p>Loading profile...</p>`, cleanup };
   }
 

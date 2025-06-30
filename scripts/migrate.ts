@@ -4,13 +4,16 @@ import * as path from "node:path";
 import { promises as fs } from "node:fs";
 import { db } from "../db/kysely";
 import { serverLog } from "../lib/server/logger.server";
-import { runServerEffect } from "../lib/server/runtime";
+// --- FIX: Import the renamed `runServerUnscoped` ---
+import { runServerUnscoped } from "../lib/server/runtime";
 
 async function migrate(direction: "up" | "down") {
-  runServerEffect(
+  // --- FIX: Use the renamed `runServerUnscoped` ---
+  runServerUnscoped(
     serverLog(
       "info",
       `Running migrations: ${direction}`,
+
       undefined,
       "MigrationScript",
     ),
@@ -30,10 +33,12 @@ async function migrate(direction: "up" | "down") {
     results?: MigrationResult[],
   ) => {
     results?.forEach(({ status, migrationName }) => {
-      runServerEffect(
+      // --- FIX: Use the renamed `runServerUnscoped` ---
+      runServerUnscoped(
         serverLog(
           status === "Success" ? "info" : "error",
           `Migration "${migrationName}" status: ${status}`,
+
           undefined,
           "MigrationScript",
         ),
@@ -46,11 +51,12 @@ async function migrate(direction: "up" | "down") {
           ? error.message
           : typeof error === "string"
             ? error
-            : JSON.stringify(error, null, 2);
-      runServerEffect(
+            : JSON.stringify(error, null, 2); // --- FIX: Use the renamed `runServerUnscoped` ---
+      runServerUnscoped(
         serverLog(
           "error",
           `Migration failed: ${errorMessage}`,
+
           undefined,
           "MigrationScript",
         ),
@@ -72,10 +78,11 @@ async function migrate(direction: "up" | "down") {
 
 const directionArg = process.argv[2];
 if (directionArg !== "up" && directionArg !== "down") {
-  runServerEffect(
+  runServerUnscoped(
     serverLog(
       "error",
       "Invalid argument. Use 'up' or 'down'.",
+
       undefined,
       "MigrationScript",
     ),
@@ -83,9 +90,11 @@ if (directionArg !== "up" && directionArg !== "down") {
   process.exit(1);
 } else {
   void migrate(directionArg).then(() => {
-    runServerEffect(
+    // --- FIX: Use the renamed `runServerUnscoped` ---
+    runServerUnscoped(
       serverLog(
         "info",
+
         "✅ Migrations complete!",
         undefined,
         "MigrationScript",

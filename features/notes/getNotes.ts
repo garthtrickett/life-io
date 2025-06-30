@@ -8,11 +8,13 @@ export const getNotes = (userId: string) =>
   Effect.gen(function* () {
     const db = yield* Db;
 
-    yield* serverLog(
-      "info",
-      `Attempting to fetch all notes for user ID: "${userId}"`,
-      userId,
-      "GetNotes",
+    yield* Effect.forkDaemon(
+      serverLog(
+        "info",
+        `Attempting to fetch all notes for user ID: "${userId}"`,
+        userId,
+        "GetNotes",
+      ),
     );
 
     const result = yield* pipe(
@@ -27,20 +29,24 @@ export const getNotes = (userId: string) =>
         catch: (error) => new Error(`Database Error: ${String(error)}`),
       }),
       Effect.tap((notes) =>
-        serverLog(
-          "info",
-          `Successfully fetched ${notes.length} notes.`,
-          userId,
-          "GetNotes",
+        Effect.forkDaemon(
+          serverLog(
+            "info",
+            `Successfully fetched ${notes.length} notes.`,
+            userId,
+            "GetNotes",
+          ),
         ),
       ),
       Effect.catchAll((error) =>
         pipe(
-          serverLog(
-            "error",
-            `Failed to fetch notes: ${error.message}`,
-            userId,
-            "GetNotes",
+          Effect.forkDaemon(
+            serverLog(
+              "error",
+              `Failed to fetch notes: ${error.message}`,
+              userId,
+              "GetNotes",
+            ),
           ),
           Effect.andThen(() => Effect.fail(error)),
         ),

@@ -1,18 +1,53 @@
-// File: ./trpc/trpc.ts
+// FILE: /trpc/trpc.ts
 import { initTRPC, TRPCError } from "@trpc/server";
-import superjson from "superjson"; // 1. Import superjson
+import superjson from "superjson";
 import type { Context } from "./context";
+import { serverLog } from "../lib/server/logger.server";
+import { runServerPromise } from "../lib/server/runtime";
+import { Effect } from "effect";
 
-// 2. Add the transformer to the initTRPC call
 const t = initTRPC.context<Context>().create({
   transformer: superjson,
 });
 
-export const router = t.router;
-export const publicProcedure = t.procedure;
+const loggerMiddleware = t.middleware(({ ctx, path, type, next }) => {
+  const program = Effect.gen(function* () {
+    const userId = ctx.user?.id;
 
-// The rest of the file remains exactly the same...
-export const loggedInProcedure = t.procedure.use(async ({ ctx, next }) => {
+    yield* Effect.forkDaemon(
+      serverLog("info", `tRPC → [${type}] ${path}`, userId, "tRPC:req"),
+    );
+
+    const result = yield* Effect.tryPromise({
+      try: () => next({ ctx }),
+      catch: (e) => e as Error,
+    });
+
+    const status = result.ok && !("error" in result) ? "OK" : "ERR";
+
+    yield* Effect.forkDaemon(
+      serverLog(
+        "info",
+        `tRPC ← [${type}] ${path} (${status})`,
+        userId,
+        "tRPC:res",
+      ),
+    );
+
+    if (!result.ok && "error" in result) {
+      return yield* Effect.fail(result.error);
+    }
+
+    return result;
+  });
+
+  return runServerPromise(program);
+});
+
+export const router = t.router;
+export const publicProcedure = t.procedure.use(loggerMiddleware);
+
+export const loggedInProcedure = publicProcedure.use(async ({ ctx, next }) => {
   if (!ctx.user || !ctx.session) {
     throw new TRPCError({ code: "UNAUTHORIZED" });
   }
@@ -30,26 +65,15 @@ export function createPermissionProtectedProcedure(
 ) {
   const needed = Array.isArray(requiredPerms) ? requiredPerms : [requiredPerms];
 
-  return t.procedure.use(
-    t.middleware(({ ctx, next }) => {
-      if (!ctx.user || !ctx.session) {
-        throw new TRPCError({ code: "UNAUTHORIZED" });
-      }
-      const userPermissions = ctx.user.permissions || [];
-      const hasAllPerms = needed.every((p) => userPermissions.includes(p));
-      if (!hasAllPerms) {
-        throw new TRPCError({
-          code: "FORBIDDEN",
-          message: "You do not have permission to perform this action.",
-        });
-      }
-      return next({
-        ctx: {
-          ...ctx,
-          user: ctx.user,
-          session: ctx.session,
-        },
+  return loggedInProcedure.use(({ ctx, next }) => {
+    const userPerms = ctx.user.permissions ?? [];
+    const allowed = needed.every((p) => userPerms.includes(p));
+    if (!allowed) {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: "You do not have permission to perform this action.",
       });
-    }),
-  );
+    }
+    return next();
+  });
 }

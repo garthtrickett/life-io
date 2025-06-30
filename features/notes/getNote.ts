@@ -1,4 +1,4 @@
-// FILE: features/notes/getNote.ts
+// features/notes/getNote.ts
 import { Effect, pipe } from "effect";
 import { Db } from "../../db/DbTag";
 import { serverLog } from "../../lib/server/logger.server";
@@ -9,11 +9,13 @@ export const getNote = (noteId: string, userId: string) =>
   Effect.gen(function* () {
     const db = yield* Db;
 
-    yield* serverLog(
-      "info",
-      `Attempting to fetch note with ID: "${noteId}"`,
-      userId,
-      "GetNote",
+    yield* Effect.forkDaemon(
+      serverLog(
+        "info",
+        `Attempting to fetch note with ID: "${noteId}"`,
+        userId,
+        "GetNote",
+      ),
     );
 
     const result = yield* pipe(
@@ -23,27 +25,31 @@ export const getNote = (noteId: string, userId: string) =>
             .selectFrom("note")
             .selectAll()
             .where("id", "=", noteId as NoteId)
-            .where("user_id", "=", userId as UserId) // Ensure user owns the note
+            .where("user_id", "=", userId as UserId) // Ensure user
             .executeTakeFirst(),
         catch: (error) => new Error(`Database Error: ${String(error)}`),
       }),
       Effect.tap((note) =>
-        serverLog(
-          "info",
-          note
-            ? `Successfully fetched note: ${note.title}`
-            : `Note with ID ${noteId} not found.`,
-          userId,
-          "GetNote",
+        Effect.forkDaemon(
+          serverLog(
+            "info",
+            note
+              ? `Successfully fetched note: ${note.title}`
+              : `Note with ID ${noteId} not found.`,
+            userId,
+            "GetNote",
+          ),
         ),
       ),
       Effect.catchAll((error) =>
         pipe(
-          serverLog(
-            "error",
-            `Failed to fetch note: ${error.message}`,
-            userId,
-            "GetNote",
+          Effect.forkDaemon(
+            serverLog(
+              "error",
+              `Failed to fetch note: ${error.message}`,
+              userId,
+              "GetNote",
+            ),
           ),
           Effect.andThen(() => Effect.fail(error)),
         ),

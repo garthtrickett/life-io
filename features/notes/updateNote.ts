@@ -10,11 +10,13 @@ export const updateNote = (noteId: NoteId, userId: UserId, note: NoteUpdate) =>
   Effect.gen(function* () {
     const db = yield* Db;
 
-    yield* serverLog(
-      "info",
-      `Attempting to update note with ID: "${noteId}"`,
-      userId,
-      "UpdateNote",
+    yield* Effect.forkDaemon(
+      serverLog(
+        "info",
+        `Attempting to update note with ID: "${noteId}"`,
+        userId,
+        "UpdateNote",
+      ),
     );
 
     const result = yield* pipe(
@@ -22,28 +24,32 @@ export const updateNote = (noteId: NoteId, userId: UserId, note: NoteUpdate) =>
         try: () =>
           db
             .updateTable("note")
-            .set({ ...note, updated_at: new Date() }) // Also update the timestamp
+            .set({ ...note, updated_at: new Date() })
             .where("id", "=", noteId)
-            .where("user_id", "=", userId) // Security check
+            .where("user_id", "=", userId)
             .returningAll()
             .executeTakeFirst(),
         catch: (error) => new Error(`Database Error: ${String(error)}`),
       }),
       Effect.tap((updatedNote) =>
-        serverLog(
-          "info",
-          `Successfully updated note with ID: ${updatedNote?.id}`,
-          userId,
-          "UpdateNote",
+        Effect.forkDaemon(
+          serverLog(
+            "info",
+            `Successfully updated note with ID: ${updatedNote?.id}`,
+            userId,
+            "UpdateNote",
+          ),
         ),
       ),
       Effect.catchAll((error) =>
         pipe(
-          serverLog(
-            "error",
-            `Failed to update note: ${error.message}`,
-            userId,
-            "UpdateNote",
+          Effect.forkDaemon(
+            serverLog(
+              "error",
+              `Failed to update note: ${error.message}`,
+              userId,
+              "UpdateNote",
+            ),
           ),
           Effect.andThen(() => Effect.fail(error)),
         ),

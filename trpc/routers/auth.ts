@@ -1,13 +1,19 @@
-// FILE: trpc/routers/auth.ts
+// File: ./trpc/routers/auth.ts
+// --- FIX START ---
 import { router, publicProcedure, loggedInProcedure } from "../trpc";
 import { t } from "elysia";
 import { compile } from "@elysiajs/trpc";
 import { Effect } from "effect";
-import { DbLayer } from "../../db/DbLayer";
-import { argon2id, createSession, deleteSession } from "../../lib/server/auth";
+import {
+  argon2id,
+  createSessionEffect,
+  deleteSessionEffect,
+} from "../../lib/server/auth";
 import { TRPCError } from "@trpc/server";
 import type { NewUser } from "../../types/generated/public/User";
 import { perms } from "../../lib/shared/permissions";
+import { runServerPromise } from "../../lib/server/runtime";
+import { serverLog } from "../../lib/server/logger.server";
 
 const SignupInput = t.Object({
   email: t.String({ format: "email" }),
@@ -22,70 +28,158 @@ const LoginInput = t.Object({
 export const authRouter = router({
   signup: publicProcedure
     .input(compile(SignupInput))
-    .mutation(async ({ input, ctx }) => {
+    .mutation(({ input, ctx }) => {
       const { email, password } = input as typeof SignupInput.static;
-      const passwordHash = await argon2id.hash(password);
 
-      const program = Effect.tryPromise({
-        try: () =>
-          ctx.db
-            .insertInto("user")
-            .values({
-              email: email.toLowerCase(),
-              password_hash: passwordHash,
-              // FIX: Assign default read/write permissions for notes to new users
-              permissions: [perms.note.read, perms.note.write],
-            } as NewUser)
-            .returningAll() // <-- Return the full user object
-            .executeTakeFirstOrThrow(),
-        catch: () =>
-          new TRPCError({
-            code: "CONFLICT",
-            message: "An account with this email already exists.",
-          }),
-      }).pipe(Effect.provide(DbLayer));
+      const program = Effect.gen(function* () {
+        yield* serverLog(
+          "info",
+          `Attempting to sign up user: ${email}`,
+          undefined,
+          "auth:signup",
+        );
+        const passwordHash = yield* Effect.tryPromise({
+          try: () => argon2id.hash(password),
+          catch: () =>
+            new TRPCError({
+              code: "INTERNAL_SERVER_ERROR",
+              message: "Could not hash password",
+            }),
+        });
 
-      const user = await Effect.runPromise(program);
-      const sessionId = await createSession(user.id);
-      return { sessionId, user }; // <-- Return both session and user
+        yield* serverLog(
+          "info",
+          `Password hashed for user: ${email}`,
+          undefined,
+          "auth:signup",
+        );
+
+        const user = yield* Effect.tryPromise({
+          try: () =>
+            ctx.db
+              .insertInto("user")
+              .values({
+                email: email.toLowerCase(),
+                password_hash: passwordHash,
+                permissions: [perms.note.read, perms.note.write],
+              } as NewUser)
+              .returningAll()
+              .executeTakeFirstOrThrow(),
+          catch: () =>
+            new TRPCError({
+              code: "CONFLICT",
+              message: "An account with this email already exists.",
+            }),
+        });
+
+        yield* serverLog(
+          "info",
+          `User created successfully: ${user.id}`,
+          user.id,
+          "auth:signup",
+        );
+        const sessionId = yield* createSessionEffect(user.id);
+        return { sessionId, user };
+      });
+
+      return runServerPromise(program);
     }),
 
   login: publicProcedure
     .input(compile(LoginInput))
-    .mutation(async ({ input, ctx }) => {
+    .mutation(({ input, ctx }) => {
       const { email, password } = input as typeof LoginInput.static;
 
-      const user = await ctx.db
-        .selectFrom("user")
-        .selectAll()
-        .where("email", "=", email.toLowerCase())
-        .executeTakeFirst();
+      const program = Effect.gen(function* () {
+        yield* serverLog(
+          "info",
+          `Login attempt for user: ${email}`,
+          undefined,
+          "auth:login",
+        );
 
-      if (!user || !user.password_hash) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: "Invalid email or password.",
+        const user = yield* Effect.tryPromise({
+          try: () =>
+            ctx.db
+              .selectFrom("user")
+              .selectAll()
+              .where("email", "=", email.toLowerCase())
+              .executeTakeFirst(),
+          catch: (e) =>
+            new TRPCError({
+              code: "INTERNAL_SERVER_ERROR",
+              message: String(e),
+            }),
         });
-      }
 
-      const validPassword = await argon2id.verify(user.password_hash, password);
-      if (!validPassword) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: "Invalid email or password.",
+        if (!user || !user.password_hash) {
+          yield* serverLog(
+            "warn",
+            `Login failed: User not found for email: ${email}`,
+            undefined,
+            "auth:login",
+          );
+          return yield* Effect.fail(
+            new TRPCError({
+              code: "BAD_REQUEST",
+              message: "Invalid email or password.",
+            }),
+          );
+        }
+
+        const validPassword = yield* Effect.tryPromise({
+          try: () => argon2id.verify(user.password_hash, password),
+          catch: (e) =>
+            new TRPCError({
+              code: "INTERNAL_SERVER_ERROR",
+              message: String(e),
+            }),
         });
-      }
 
-      const sessionId = await createSession(user.id);
-      return { sessionId, user }; // <-- Return both session and user
+        if (!validPassword) {
+          yield* serverLog(
+            "warn",
+            `Login failed: Invalid password for user: ${user.id}`,
+            user.id,
+            "auth:login",
+          );
+          return yield* Effect.fail(
+            new TRPCError({
+              code: "BAD_REQUEST",
+              message: "Invalid email or password.",
+            }),
+          );
+        }
+
+        yield* serverLog(
+          "info",
+          `Login successful for user: ${user.id}`,
+          user.id,
+          "auth:login",
+        );
+        const sessionId = yield* createSessionEffect(user.id);
+        return { sessionId, user };
+      });
+
+      return runServerPromise(program);
     }),
 
-  logout: loggedInProcedure.mutation(async ({ ctx }) => {
-    await deleteSession(ctx.session.id);
-    return { success: true };
+  logout: loggedInProcedure.mutation(({ ctx }) => {
+    const program = Effect.gen(function* () {
+      yield* serverLog(
+        "info",
+        `User initiated logout.`,
+        ctx.user.id,
+        "auth:logout",
+      );
+      yield* deleteSessionEffect(ctx.session.id);
+      return { success: true };
+    });
+    return runServerPromise(program);
   }),
 
   me: publicProcedure.query(({ ctx }) => {
     return ctx.user;
   }),
 });
+// --- FIX END ---

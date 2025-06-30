@@ -1,7 +1,8 @@
 // File: ./trpc/context.ts
 import { db } from "../db/kysely";
 import type { FetchCreateContextFnOptions } from "@trpc/server/adapters/fetch";
-import { validateSession } from "../lib/server/auth";
+import { validateSessionEffect } from "../lib/server/auth";
+import { runServerPromise } from "../lib/server/runtime";
 
 export const createContext = async ({ req }: FetchCreateContextFnOptions) => {
   // A simple way to get a cookie, in a real app you might use a library
@@ -15,7 +16,9 @@ export const createContext = async ({ req }: FetchCreateContextFnOptions) => {
     return { db, user: null, session: null };
   }
 
-  const { user, session } = await validateSession(sessionId);
+  const { user, session } = await runServerPromise(
+    validateSessionEffect(sessionId),
+  );
 
   return {
     db,

@@ -1,12 +1,11 @@
-// File: components/layouts/AppLayout.ts
+// components/layouts/AppLayout.ts
 import { html, type TemplateResult } from "lit-html";
 import {
   authState,
   proposeAuthAction,
 } from "../../lib/client/stores/authStore";
-import { signal } from "@preact/signals-core";
 import { clientLog } from "../../lib/client/logger.client";
-import { runClientEffect } from "../../lib/client/runtime";
+import { runClientUnscoped } from "../../lib/client/runtime";
 
 interface Props {
   children: TemplateResult;
@@ -18,14 +17,9 @@ interface ViewResult {
 }
 
 export const AppLayout = ({ children }: Props): ViewResult => {
-  const auth = signal(authState.value);
-  const cleanup = authState.subscribe(
-    (newAuthState) => (auth.value = newAuthState),
-  );
-
   const onLogout = () => {
     if (authState.value.user) {
-      runClientEffect(
+      runClientUnscoped(
         clientLog(
           "info",
           "User clicked logout, proposing LOGOUT_START action.",
@@ -46,10 +40,10 @@ export const AppLayout = ({ children }: Props): ViewResult => {
           <a href="/" class="text-2xl font-bold text-zinc-800">NotesApp</a>
           <nav>
             <div class="flex items-center space-x-4">
-              ${auth.value.status === "authenticated"
+              ${authState.value.status === "authenticated"
                 ? html`
                     <span class="text-sm text-zinc-600"
-                      >Welcome, ${auth.value.user?.email}</span
+                      >Welcome, ${authState.value.user?.email}</span
                     >
                     <a href="/" class="text-zinc-600 hover:text-zinc-900"
                       >Notes</a
@@ -78,6 +72,5 @@ export const AppLayout = ({ children }: Props): ViewResult => {
         <main class="p-4">${children}</main>
       </div>
     `,
-    cleanup,
   };
 };
