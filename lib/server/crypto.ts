@@ -3,12 +3,14 @@ import { randomBytes } from "node:crypto";
 import { Context, Effect, Layer } from "effect";
 
 // 1. Define the service interface. This is the "shape" of our service.
+// eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
 export interface Crypto {
   readonly randomBytes: (length: number) => Effect.Effect<Buffer, never, never>;
 }
 
 // 2. Create the Tag using the class-based pattern. This is both the Tag
 //    and the service type.
+// eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
 export class Crypto extends Context.Tag("Crypto")<Crypto, Crypto>() {}
 
 // 3. Create the live Layer.
