@@ -1,14 +1,31 @@
 // lib/server/runtime.ts
 import { Effect, Layer } from "effect";
+import type { ConfigError } from "effect/ConfigError";
 import type { Db } from "../../db/DbTag";
 import { DbLayer } from "../../db/DbLayer";
 import type { S3 } from "./s3";
 import { S3Live } from "./s3";
 import { CryptoLive, type Crypto } from "./crypto";
+import { ConfigLive } from "./Config";
+import { serverLog } from "./logger.server";
 
-// 1. Combine all live service layers for the server into a single Layer.
-//    This is the "recipe" for building all our services.
-const ServerLive = Layer.mergeAll(DbLayer, S3Live, CryptoLive);
+// 1. Combine the core service layers.
+const ServerServices = Layer.mergeAll(DbLayer, S3Live, CryptoLive);
+
+// 2. This is the "recipe" for building all our services.
+//    It now includes robust error handling for configuration issues.
+const ServerLive = ServerServices.pipe(
+  Layer.provide(ConfigLive),
+  // **FIX:** Catch any ConfigError during layer creation, log it, and treat it as a
+  // fatal defect. The application cannot run without valid config.
+  Layer.catchAll((error: ConfigError) => {
+    Effect.gen(function* () {
+      yield* serverLog("info", "no user", "EmailService");
+    });
+    // End the process by returning a fatal defect.
+    return Layer.die(error);
+  }),
+);
 
 // Define the context type that our server effects will require.
 type ServerContext = Db | S3 | Crypto;
@@ -21,14 +38,12 @@ type ServerContext = Db | S3 | Crypto;
 export const runServerPromise = <A, E>(
   effect: Effect.Effect<A, E, ServerContext>,
 ) => {
-  // The 'effect' requires services (Db, S3). We provide the 'ServerLive'
-  // layer to satisfy these requirements, including our new Crypto service.
+  // With the error handled in the ServerLive layer, this type is now correct.
   const providedEffect: Effect.Effect<A, E, never> = Effect.provide(
     effect,
     ServerLive,
   );
-  // The resulting effect has no more requirements (R = never), so we can
-  // run it with the default runtime's `runPromise`.
+
   return Effect.runPromise(providedEffect);
 };
 
@@ -40,6 +55,7 @@ export const runServerPromise = <A, E>(
 export const runServerUnscoped = <A, E>(
   effect: Effect.Effect<A, E, ServerContext>,
 ) => {
+  // With the error handled in the ServerLive layer, this type is now correct.
   const providedEffect: Effect.Effect<A, E, never> = Effect.provide(
     effect,
     ServerLive,

@@ -6,7 +6,6 @@ import { Config as EffectConfig, Context, Layer, pipe } from "effect";
 const NeonConfig = EffectConfig.all({
   url: EffectConfig.string("DATABASE_URL"),
   localUrl: EffectConfig.string("DATABASE_URL_LOCAL"),
-  // FIX: Use the pipeable `withDefault` operator
   useLocalProxy: pipe(
     EffectConfig.boolean("USE_LOCAL_NEON_PROXY"),
     EffectConfig.withDefault(false),
@@ -23,17 +22,18 @@ const S3Config = EffectConfig.all({
   bucketName: EffectConfig.string("BUCKET_NAME"),
   publicAvatarUrl: EffectConfig.string("PUBLIC_AVATAR_URL"),
   endpointUrl: EffectConfig.string("AWS_ENDPOINT_URL_S3"),
-  accessKeyId: EffectConfig.secret("AWS_ACCESS_KEY_ID"),
-  secretAccessKey: EffectConfig.secret("AWS_SECRET_ACCESS_KEY"),
+  // FIX: Replace deprecated `secret` with `redacted`
+  accessKeyId: EffectConfig.redacted("AWS_ACCESS_KEY_ID"),
+  secretAccessKey: EffectConfig.redacted("AWS_SECRET_ACCESS_KEY"),
   region: EffectConfig.string("AWS_REGION"),
 });
 
 const LogtailConfig = EffectConfig.all({
-  sourceToken: EffectConfig.secret("LOGTAIL_SOURCE_TOKEN"),
+  // FIX: Replace deprecated `secret` with `redacted`
+  sourceToken: EffectConfig.redacted("LOGTAIL_SOURCE_TOKEN"),
 });
 
 const AppInfoConfig = EffectConfig.all({
-  // FIX: Use the pipeable `withDefault` operator
   nodeEnv: pipe(
     EffectConfig.string("NODE_ENV"),
     EffectConfig.withDefault("development"),
@@ -57,7 +57,6 @@ const AppConfigObject = EffectConfig.all({
  * The main Config service for the application.
  * Other services will depend on this to get their configuration.
  */
-// FIX: Use EffectConfig.Success to correctly extract the type from the Config object.
 export class Config extends Context.Tag("app/Config")<
   Config,
   EffectConfig.Config.Success<typeof AppConfigObject>
