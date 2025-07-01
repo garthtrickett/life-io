@@ -1,6 +1,6 @@
-// File: ./components/pages/verify-email-page.ts (Refactored)
-import { html, type TemplateResult } from "lit-html";
-import { signal } from "@preact/signals-core";
+// File: ./components/pages/verify-email-page.ts
+import { render, html, type TemplateResult } from "lit-html";
+import { signal, effect } from "@preact/signals-core";
 import { pipe, Effect, Data } from "effect";
 import { trpc } from "../../lib/client/trpc";
 import { runClientPromise, runClientUnscoped } from "../../lib/client/runtime";
@@ -17,16 +17,15 @@ class UnknownVerificationError extends Data.TaggedError(
   readonly cause: unknown;
 }> {}
 
+// --- Types ---
 interface ViewResult {
   template: TemplateResult;
   cleanup?: () => void;
 }
-
 interface Model {
   status: "verifying" | "success" | "error";
   message: string | null;
 }
-
 interface VerifySuccessPayload {
   user: User;
   sessionId: string;
@@ -49,7 +48,7 @@ const update = (action: Action) => {
     case "VERIFY_SUCCESS":
       model.value = {
         status: "success",
-        message: "Email verified successfully! You can now log in.",
+        message: "Email verified successfully! Redirecting you...",
       };
       break;
     case "VERIFY_ERROR": {
@@ -83,8 +82,8 @@ const react = async (action: Action, token: string) => {
       Effect.match({
         onSuccess: (result) => {
           propose(token)({
-            type: "VERIFY_SUCCESS", // The payload is now an object
-            payload: result,
+            type: "VERIFY_SUCCESS",
+            payload: result as VerifySuccessPayload,
           });
         },
         onFailure: (error) => {
@@ -116,42 +115,42 @@ const propose = (token: string) => (action: Action) => {
 };
 
 export const VerifyEmailView = (token: string): ViewResult => {
-  // FIX: Replace useEffect with a one-time-run condition check.
-  // This ensures the verification starts automatically only on the first render.
+  const container = document.createElement("div");
+
+  // Trigger verification only once when the component mounts
   if (model.value.status === "verifying" && model.value.message === null) {
     propose(token)({ type: "VERIFY_START" });
   }
 
-  const renderContent = () => {
-    switch (model.value.status) {
-      case "verifying":
-        return html` <div
-            class="h-12 w-12 animate-spin rounded-full border-4 border-zinc-300 border-t-zinc-600"
-          ></div>
-          <p class="mt-4 text-zinc-600">
-            ${model.value.message || "Verifying..."}
-          </p>`;
-      case "success":
-        return html` <h2 class="text-2xl font-bold text-green-600">Success!</h2>
-          <p class="mt-4 text-zinc-600">${model.value.message}</p>
-          <p class="mt-2 text-sm text-zinc-500">
-            Redirecting you to your notes...
-          </p>`;
-      case "error":
-        return html` <h2 class="text-2xl font-bold text-red-600">Error</h2>
-          <p class="mt-4 text-zinc-600">${model.value.message}</p>
-          <div class="mt-6">
-            <a
-              href="/login"
-              class="font-medium text-zinc-600 hover:text-zinc-500"
-              >Back to Login</a
-            >
-          </div>`;
-    }
-  };
+  const renderView = effect(() => {
+    const renderContent = () => {
+      switch (model.value.status) {
+        case "verifying":
+          return html`<div
+              class="h-12 w-12 animate-spin rounded-full border-4 border-zinc-300 border-t-zinc-600"
+            ></div>
+            <p class="mt-4 text-zinc-600">
+              ${model.value.message || "Verifying..."}
+            </p>`;
+        case "success":
+          return html`<h2 class="text-2xl font-bold text-green-600">
+              Success!
+            </h2>
+            <p class="mt-4 text-zinc-600">${model.value.message}</p>`;
+        case "error":
+          return html`<h2 class="text-2xl font-bold text-red-600">Error</h2>
+            <p class="mt-4 text-zinc-600">${model.value.message}</p>
+            <div class="mt-6">
+              <a
+                href="/login"
+                class="font-medium text-zinc-600 hover:text-zinc-500"
+                >Back to Login</a
+              >
+            </div>`;
+      }
+    };
 
-  return {
-    template: html`
+    const template = html`
       <div class="flex min-h-screen items-center justify-center bg-gray-100">
         <div
           class="flex w-full max-w-md flex-col items-center rounded-lg bg-white p-8 text-center shadow-md"
@@ -159,9 +158,14 @@ export const VerifyEmailView = (token: string): ViewResult => {
           ${renderContent()}
         </div>
       </div>
-    `,
+    `;
+    render(template, container);
+  });
+
+  return {
+    template: html`${container}`,
     cleanup: () => {
-      // Reset the state when the view is unmounted.
+      renderView();
       model.value = { status: "verifying", message: null };
     },
   };

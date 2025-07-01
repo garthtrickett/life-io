@@ -1,8 +1,7 @@
 // File: ./components/pages/notes-list-page.ts
-// --- FIX START ---
-import { html, type TemplateResult } from "lit-html";
+import { render, html, type TemplateResult } from "lit-html";
 import { repeat } from "lit-html/directives/repeat.js";
-import { signal } from "@preact/signals-core";
+import { signal, effect } from "@preact/signals-core";
 import { pipe, Effect } from "effect";
 import { runClientPromise, runClientUnscoped } from "../../lib/client/runtime";
 import type { NoteDto } from "../../types/generated/Note";
@@ -177,74 +176,60 @@ const propose = (action: Action) => {
 };
 
 export const NotesView = (): ViewResult => {
+  const container = document.createElement("div");
+
+  // Initial data fetch
   if (model.value.isLoading && model.value.notes.length === 0) {
     propose({ type: "FETCH_NOTES_START" });
   }
 
-  const cleanup = () => {
-    runClientUnscoped(
-      clientLog(
-        "debug",
-        "NotesView cleanup running, resetting state.",
-        undefined,
-        "NotesView:cleanup",
-      ),
-    );
-    model.value = {
-      notes: [],
-      isLoading: true,
-      isCreating: false,
-      error: null,
-    };
-  };
-  const renderNotes = () => {
-    // ... (render logic remains unchanged)
-    if (model.value.isLoading) {
+  const renderEffect = effect(() => {
+    const renderNotes = () => {
+      if (model.value.isLoading) {
+        return html`
+          <div class=${styles.skeletonContainer}>
+            ${repeat(
+              [1, 2, 3],
+              (item) => item,
+              () => html`<div class=${styles.skeletonItem}></div>`,
+            )}
+          </div>
+        `;
+      }
+      if (model.value.notes.length === 0) {
+        return html`
+          <div class=${styles.emptyState}>
+            <h3>No notes yet</h3>
+            <p>Click "Create New Note" to get started.</p>
+          </div>
+        `;
+      }
       return html`
-        <div class=${styles.skeletonContainer}>
+        <ul class=${styles.notesList}>
           ${repeat(
-            [1, 2, 3],
-            (item) => item,
-            () => html`<div class=${styles.skeletonItem}></div>`,
+            model.value.notes,
+            (note) => note.id,
+            (note) => html`
+              <li>
+                <a
+                  href="/notes/${note.id}"
+                  class=${styles.noteItem}
+                  @click=${(e: Event) => {
+                    e.preventDefault();
+                    navigate(`/notes/${note.id}`);
+                  }}
+                >
+                  <h3>${note.title}</h3>
+                  <p>${note.content || "No additional content"}</p>
+                </a>
+              </li>
+            `,
           )}
-        </div>
+        </ul>
       `;
-    }
-    if (model.value.notes.length === 0) {
-      return html`
-        <div class=${styles.emptyState}>
-          <h3>No notes yet</h3>
-          <p>Click "Create New Note" to get started.</p>
-        </div>
-      `;
-    }
-    return html`
-      <ul class=${styles.notesList}>
-        ${repeat(
-          model.value.notes,
-          (note) => note.id,
-          (note) => html`
-            <li>
-              <a
-                href="/notes/${note.id}"
-                class=${styles.noteItem}
-                @click=${(e: Event) => {
-                  e.preventDefault();
-                  navigate(`/notes/${note.id}`);
-                }}
-              >
-                <h3>${note.title}</h3>
-                <p>${note.content || "No additional content"}</p>
-              </a>
-            </li>
-          `,
-        )}
-      </ul>
-    `;
-  };
+    };
 
-  return {
-    template: html`
+    const template = html`
       <div class=${styles.container}>
         <div class=${styles.header}>
           <div>
@@ -272,8 +257,28 @@ export const NotesView = (): ViewResult => {
           : ""}
         ${renderNotes()}
       </div>
-    `,
-    cleanup,
+    `;
+    render(template, container);
+  });
+
+  return {
+    template: html`${container}`,
+    cleanup: () => {
+      renderEffect();
+      runClientUnscoped(
+        clientLog(
+          "debug",
+          "NotesView cleanup running, resetting state.",
+          undefined,
+          "NotesView:cleanup",
+        ),
+      );
+      model.value = {
+        notes: [],
+        isLoading: true,
+        isCreating: false,
+        error: null,
+      };
+    },
   };
 };
-// --- FIX END ---

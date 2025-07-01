@@ -1,17 +1,19 @@
-// File: ./components/pages/login-page.ts (Refactored for strictness)
-import { html, type TemplateResult, nothing } from "lit-html";
-import { signal } from "@preact/signals-core";
-import { pipe, Effect, Exit, Cause } from "effect";
+// File: ./components/pages/login-page.ts
+import { render, html, type TemplateResult, nothing } from "lit-html";
+import { signal, effect } from "@preact/signals-core";
+import { pipe, Effect } from "effect";
 import { trpc } from "../../lib/client/trpc";
 import { proposeAuthAction } from "../../lib/client/stores/authStore";
 import { NotionButton } from "../ui/notion-button";
-import { runClientPromise } from "../../lib/client/runtime";
+import { runClientPromise, runClientUnscoped } from "../../lib/client/runtime";
 import { navigate } from "../../lib/client/router";
-import { User } from "../../types/generated/public/User";
+import type { User } from "../../types/generated/public/User";
+import { clientLog } from "../../lib/client/logger.client";
 
 // --- Types ---
 interface ViewResult {
   template: TemplateResult;
+  cleanup?: () => void;
 }
 interface Model {
   email: string;
@@ -23,7 +25,6 @@ interface LoginSuccessPayload {
   sessionId: string;
   user: User;
 }
-
 type Action =
   | { type: "UPDATE_EMAIL"; payload: string }
   | { type: "UPDATE_PASSWORD"; payload: string }
@@ -59,6 +60,7 @@ const update = (action: Action) => {
       break;
   }
 };
+
 // --- React (Side Effects) ---
 const react = async (action: Action) => {
   if (action.type === "LOGIN_START") {
@@ -70,25 +72,21 @@ const react = async (action: Action) => {
             password: model.value.password,
           }),
         catch: (err) =>
-          new Error(err instanceof Error ? err.message : String(err)),
+          new Error(
+            err instanceof Error ? err.message : "An unknown error occurred.",
+          ),
+      }),
+      Effect.match({
+        onSuccess: (result) =>
+          propose({
+            type: "LOGIN_SUCCESS",
+            payload: result as LoginSuccessPayload,
+          }),
+        onFailure: (error) =>
+          propose({ type: "LOGIN_ERROR", payload: error.message }),
       }),
     );
-
-    const exit = await runClientPromise(Effect.exit(loginEffect));
-
-    if (Exit.isSuccess(exit)) {
-      propose({
-        type: "LOGIN_SUCCESS",
-        // --- FIX: Safely cast the `unknown` success value from the exit ---
-        payload: exit.value as LoginSuccessPayload,
-      });
-    } else {
-      const error = Cause.squash(exit.cause);
-      // --- FIX: Safely handle the `unknown` error type from Cause.squash ---
-      const errorMessage =
-        error instanceof Error ? error.message : "An unknown error occurred.";
-      propose({ type: "LOGIN_ERROR", payload: errorMessage });
-    }
+    await runClientPromise(loginEffect);
   }
 
   if (action.type === "LOGIN_SUCCESS") {
@@ -96,7 +94,6 @@ const react = async (action: Action) => {
     const expires = new Date();
     expires.setDate(expires.getDate() + 30);
     document.cookie = `session_id=${sessionId}; path=/; expires=${expires.toUTCString()}; SameSite=Lax`;
-
     proposeAuthAction({ type: "SET_AUTHENTICATED", payload: user });
   }
 };
@@ -109,13 +106,15 @@ const propose = (action: Action) => {
 
 // --- View ---
 export const LoginView = (): ViewResult => {
-  const handleLoginSubmit = (e: Event) => {
-    e.preventDefault();
-    propose({ type: "LOGIN_START" });
-  };
+  const container = document.createElement("div");
 
-  return {
-    template: html`
+  const renderView = effect(() => {
+    const handleLoginSubmit = (e: Event) => {
+      e.preventDefault();
+      propose({ type: "LOGIN_START" });
+    };
+
+    const template = html`
       <div class="flex min-h-screen items-center justify-center bg-gray-100">
         <div class="w-full max-w-md rounded-lg bg-white p-8 shadow-md">
           <h2 class="mb-6 text-center text-2xl font-bold">Login</h2>
@@ -193,6 +192,15 @@ export const LoginView = (): ViewResult => {
           </div>
         </div>
       </div>
-    `,
+    `;
+    render(template, container);
+  });
+
+  return {
+    template: html`${container}`,
+    cleanup: () => {
+      renderView(); // Disposes of the effect
+      model.value = { email: "", password: "", error: null, isLoading: false };
+    },
   };
 };

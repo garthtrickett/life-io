@@ -1,6 +1,6 @@
-// components/pages/profile-page.ts
-import { html, nothing, type TemplateResult } from "lit-html";
-import { signal } from "@preact/signals-core";
+// File: ./components/pages/profile-page.ts
+import { render, html, nothing, type TemplateResult } from "lit-html";
+import { signal, effect } from "@preact/signals-core";
 import {
   authState,
   proposeAuthAction,
@@ -19,7 +19,7 @@ interface ViewResult {
   cleanup?: () => void;
 }
 
-// --- UPDATED MODEL ---
+// --- Model ---
 interface Model {
   auth: AuthModel;
   status: "idle" | "loading" | "success" | "error";
@@ -31,7 +31,7 @@ interface Model {
   confirmPassword: string;
 }
 
-// --- UPDATED ACTIONS ---
+// --- Actions ---
 type Action =
   | { type: "AUTH_STATE_CHANGED"; payload: AuthModel }
   | { type: "UPLOAD_START"; payload: File }
@@ -56,15 +56,12 @@ const model = signal<Model>({
   confirmPassword: "",
 });
 
-// --- UPDATED STATE REDUCER ---
+// --- Update ---
 const update = (action: Action) => {
   const currentModel = model.value;
   switch (action.type) {
     case "AUTH_STATE_CHANGED":
-      model.value = {
-        ...currentModel,
-        auth: action.payload,
-      };
+      model.value = { ...currentModel, auth: action.payload };
       break;
     case "UPLOAD_START":
       model.value = {
@@ -158,7 +155,7 @@ const update = (action: Action) => {
   }
 };
 
-// --- UPDATED SIDE EFFECTS ---
+// --- React ---
 const react = async (action: Action) => {
   if (action.type === "UPLOAD_START") {
     const formData = new FormData();
@@ -179,7 +176,6 @@ const react = async (action: Action) => {
     }
   } else if (action.type === "CHANGE_PASSWORD_START") {
     const { oldPassword, newPassword, confirmPassword } = model.value;
-
     if (newPassword !== confirmPassword) {
       propose({
         type: "CHANGE_PASSWORD_ERROR",
@@ -200,14 +196,6 @@ const react = async (action: Action) => {
             err instanceof Error ? err.message : "An unknown error occurred.",
           ),
       }),
-      Effect.tap(() =>
-        clientLog(
-          "info",
-          `Password change successful for user.`,
-          model.value.auth.user!.id,
-          "ProfileView:react",
-        ),
-      ),
     );
 
     const exit = await runClientPromise(Effect.exit(changePasswordEffect));
@@ -241,139 +229,143 @@ const propose = (action: Action) => {
   void react(action);
 };
 
-if (model.value.auth.status !== authState.value.status) {
-  propose({ type: "AUTH_STATE_CHANGED", payload: authState.value });
-}
-
+// --- View ---
 export const ProfileView = (): ViewResult => {
-  const cleanup = authState.subscribe((newAuthState) => {
+  const container = document.createElement("div");
+
+  // Subscribe to global auth state changes
+  const authUnsubscribe = authState.subscribe((newAuthState) => {
     propose({ type: "AUTH_STATE_CHANGED", payload: newAuthState });
   });
 
-  const handleFileChange = (e: Event) => {
-    const file = (e.target as HTMLInputElement).files?.[0];
-    if (file) propose({ type: "UPLOAD_START", payload: file });
-  };
+  const renderView = effect(() => {
+    const m = model.value;
+    const user = m.auth.user;
 
-  const triggerFileInput = () => {
-    document.getElementById("avatar-upload")?.click();
-  };
+    if (!user) {
+      render(html`<p>Loading profile...</p>`, container);
+      return;
+    }
 
-  const onPasswordSubmit = (e: Event) => {
-    e.preventDefault();
-    propose({ type: "CHANGE_PASSWORD_START" });
-  };
+    const handleFileChange = (e: Event) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (file) propose({ type: "UPLOAD_START", payload: file });
+    };
 
-  const passwordChangeForm = html`
-    <form @submit=${onPasswordSubmit} class="mt-6 space-y-4 text-left">
-      ${NotionInput({
-        id: "oldPassword",
-        label: "Old Password",
-        type: "password",
-        value: model.value.oldPassword,
-        onInput: (e: Event) =>
-          propose({
-            type: "UPDATE_OLD_PASSWORD",
-            payload: (e.target as HTMLInputElement).value,
-          }),
-        required: true,
-      })}
-      ${NotionInput({
-        id: "newPassword",
-        label: "New Password (min. 8 characters)",
-        type: "password",
-        value: model.value.newPassword,
-        onInput: (e: Event) =>
-          propose({
-            type: "UPDATE_NEW_PASSWORD",
-            payload: (e.target as HTMLInputElement).value,
-          }),
-        required: true,
-      })}
-      ${NotionInput({
-        id: "confirmPassword",
-        label: "Confirm New Password",
-        type: "password",
-        value: model.value.confirmPassword,
-        onInput: (e: Event) =>
-          propose({
-            type: "UPDATE_CONFIRM_PASSWORD",
-            payload: (e.target as HTMLInputElement).value,
-          }),
-        required: true,
-      })}
-      <div class="flex items-center gap-4 pt-2">
-        ${NotionButton({
-          children:
-            model.value.loadingAction === "changePassword"
-              ? "Saving..."
-              : "Save Password",
-          type: "submit",
-          loading: model.value.loadingAction === "changePassword",
-          disabled: model.value.status === "loading",
+    const triggerFileInput = () => {
+      document.getElementById("avatar-upload")?.click();
+    };
+
+    const onPasswordSubmit = (e: Event) => {
+      e.preventDefault();
+      propose({ type: "CHANGE_PASSWORD_START" });
+    };
+
+    const avatarUrl =
+      user.avatar_url ||
+      `https://ui-avatars.com/api/?name=${encodeURIComponent(user.email)}`;
+
+    const passwordChangeForm = html`
+      <form @submit=${onPasswordSubmit} class="mt-6 space-y-4 text-left">
+        ${NotionInput({
+          id: "oldPassword",
+          label: "Old Password",
+          type: "password",
+          value: m.oldPassword,
+          onInput: (e) =>
+            propose({
+              type: "UPDATE_OLD_PASSWORD",
+              payload: (e.target as HTMLInputElement).value,
+            }),
+          required: true,
         })}
-        <button
-          type="button"
-          @click=${() => propose({ type: "TOGGLE_CHANGE_PASSWORD_FORM" })}
-          class="text-sm font-medium text-zinc-600 hover:text-zinc-500"
-        >
-          Cancel
-        </button>
-      </div>
-    </form>
-  `;
+        ${NotionInput({
+          id: "newPassword",
+          label: "New Password (min. 8 characters)",
+          type: "password",
+          value: m.newPassword,
+          onInput: (e) =>
+            propose({
+              type: "UPDATE_NEW_PASSWORD",
+              payload: (e.target as HTMLInputElement).value,
+            }),
+          required: true,
+        })}
+        ${NotionInput({
+          id: "confirmPassword",
+          label: "Confirm New Password",
+          type: "password",
+          value: m.confirmPassword,
+          onInput: (e) =>
+            propose({
+              type: "UPDATE_CONFIRM_PASSWORD",
+              payload: (e.target as HTMLInputElement).value,
+            }),
+          required: true,
+        })}
+        <div class="flex items-center gap-4 pt-2">
+          ${NotionButton({
+            children:
+              m.loadingAction === "changePassword"
+                ? "Saving..."
+                : "Save Password",
+            type: "submit",
+            loading: m.loadingAction === "changePassword",
+            disabled: m.status === "loading",
+          })}
+          <button
+            type="button"
+            @click=${() => propose({ type: "TOGGLE_CHANGE_PASSWORD_FORM" })}
+            class="text-sm font-medium text-zinc-600 hover:text-zinc-500"
+          >
+            Cancel
+          </button>
+        </div>
+      </form>
+    `;
 
-  const user = model.value.auth.user;
-  if (!user) {
-    return { template: html`<p>Loading profile...</p>`, cleanup };
-  }
-
-  const avatarUrl =
-    user.avatar_url ||
-    `https://ui-avatars.com/api/?name=${encodeURIComponent(user.email)}`;
-
-  return {
-    template: html`
+    const template = html`
       <div class=${styles.container}>
         <div class=${styles.profileCard}>
           <h2 class=${styles.title}>Your Profile</h2>
 
-          ${model.value.message
+          ${m.message
             ? html`<div
-                class="${model.value.status === "success"
+                class="${m.status === "success"
                   ? "bg-green-100 text-green-700"
                   : "bg-red-100 text-red-700"} mt-4 rounded-md p-4 text-center text-sm"
               >
-                <p>${model.value.message}</p>
+                <p>${m.message}</p>
               </div>`
             : nothing}
+
           <div class=${styles.avatarContainer}>
             <img src=${avatarUrl} alt="Profile avatar" class=${styles.avatar} />
             <p class=${styles.email}>${user.email}</p>
           </div>
+
           <div class=${styles.uploadSection}>
-            ${model.value.isChangingPassword
+            ${m.isChangingPassword
               ? passwordChangeForm
               : html`
                   <div class="mt-4 flex flex-col items-center gap-4">
                     ${NotionButton({
                       children:
-                        model.value.loadingAction === "upload"
+                        m.loadingAction === "upload"
                           ? "Uploading..."
                           : "Change Picture",
-                      loading: model.value.loadingAction === "upload",
+                      loading: m.loadingAction === "upload",
                       onClick: triggerFileInput,
-                      disabled: model.value.status === "loading",
+                      disabled: m.status === "loading",
                     })}
                     ${NotionButton({
                       children: "Change Password",
                       onClick: () =>
                         propose({ type: "TOGGLE_CHANGE_PASSWORD_FORM" }),
-                      disabled: model.value.status === "loading",
+                      disabled: m.status === "loading",
                     })}
                   </div>
                 `}
-
             <input
               id="avatar-upload"
               type="file"
@@ -384,8 +376,15 @@ export const ProfileView = (): ViewResult => {
           </div>
         </div>
       </div>
-    `,
+    `;
+    render(template, container);
+  });
+
+  return {
+    template: html`${container}`,
     cleanup: () => {
+      renderView();
+      authUnsubscribe();
       model.value = {
         auth: authState.value,
         status: "idle",

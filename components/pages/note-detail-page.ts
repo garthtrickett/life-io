@@ -1,6 +1,6 @@
 // File: ./components/pages/note-detail-page.ts
-import { html, type TemplateResult } from "lit-html";
-import { signal, type Signal } from "@preact/signals-core";
+import { render, html, type TemplateResult } from "lit-html";
+import { signal, effect, type Signal } from "@preact/signals-core";
 import { pipe, Effect, Data } from "effect";
 import { runClientPromise, runClientUnscoped } from "../../lib/client/runtime";
 import type { NoteDto } from "../../types/generated/Note";
@@ -8,7 +8,7 @@ import styles from "./NoteDetailView.module.css";
 import { trpc } from "../../lib/client/trpc";
 import { clientLog } from "../../lib/client/logger.client";
 
-// --- Custom Error Types (NEW) ---
+// --- Custom Error Types ---
 class NoteFetchError extends Data.TaggedError("NoteFetchError")<{
   readonly cause: unknown;
 }> {}
@@ -30,16 +30,16 @@ interface Model {
   error: string | null;
 }
 
-// --- UPDATED ACTION ---
+// --- Action ---
 type Action =
   | { type: "FETCH_START" }
   | { type: "FETCH_SUCCESS"; payload: NoteDto }
-  | { type: "FETCH_ERROR"; payload: NoteFetchError } // Typed error
+  | { type: "FETCH_ERROR"; payload: NoteFetchError }
   | { type: "UPDATE_TITLE"; payload: string }
   | { type: "UPDATE_CONTENT"; payload: string }
   | { type: "SAVE_START" }
   | { type: "SAVE_SUCCESS"; payload: NoteDto }
-  | { type: "SAVE_ERROR"; payload: NoteSaveError | NoteValidationError } // Typed error
+  | { type: "SAVE_ERROR"; payload: NoteSaveError | NoteValidationError }
   | { type: "RESET_SAVE_STATUS" };
 
 interface NoteController {
@@ -67,7 +67,6 @@ function createNoteController(id: string): NoteController {
     note: null,
     error: null,
   });
-
   let originalNoteContent = "";
   let updateTimeout: number | undefined;
 
@@ -88,7 +87,6 @@ function createNoteController(id: string): NoteController {
           content: action.payload.content,
         });
         break;
-      // --- REFACTORED: Set specific error message ---
       case "FETCH_ERROR": {
         modelSignal.value = {
           status: "error",
@@ -130,7 +128,6 @@ function createNoteController(id: string): NoteController {
           content: action.payload.content,
         });
         break;
-      // --- REFACTORED: Handle specific save errors ---
       case "SAVE_ERROR": {
         let message = "An unknown error occurred while saving.";
         if (action.payload._tag === "NoteValidationError") {
@@ -142,7 +139,9 @@ function createNoteController(id: string): NoteController {
         break;
       }
       case "RESET_SAVE_STATUS":
-        modelSignal.value = { ...model, status: "idle" };
+        if (modelSignal.value.status === "saved") {
+          modelSignal.value = { ...model, status: "idle" };
+        }
         break;
     }
   };
@@ -246,7 +245,10 @@ function createNoteController(id: string): NoteController {
       if (entry) {
         entry.cleanupTimeoutId = window.setTimeout(() => {
           controllers.delete(id);
-        }, 30000);
+          runClientUnscoped(
+            clientLog("debug", `Cleaned up controller for note ${id}.`),
+          );
+        }, 30000); // Clean up after 30 seconds of inactivity
       }
     },
   };
@@ -267,24 +269,25 @@ function getNoteController(id: string): NoteController {
 }
 
 export const NoteDetailView = (id: string): ViewResult => {
+  const container = document.createElement("div");
   const controller = getNoteController(id);
-  const model = controller.modelSignal.value;
 
-  const renderStatus = () => {
-    switch (model.status) {
-      case "saving":
-        return html`Saving...`;
-      case "saved":
-        return html`<span class="text-green-600">Saved</span>`;
-      case "error":
-        return html`<span class="text-red-600">${model.error}</span>`;
-      default:
-        return html``;
-    }
-  };
+  const renderView = effect(() => {
+    const model = controller.modelSignal.value;
+    const renderStatus = () => {
+      switch (model.status) {
+        case "saving":
+          return html`Saving...`;
+        case "saved":
+          return html`<span class="text-green-600">Saved</span>`;
+        case "error":
+          return html`<span class="text-red-600">${model.error}</span>`;
+        default:
+          return html``;
+      }
+    };
 
-  return {
-    template: html`
+    const template = html`
       <div class=${styles.container}>
         ${model.status === "loading"
           ? html`<p class="p-8 text-center text-zinc-500">Loading note...</p>`
@@ -324,7 +327,15 @@ export const NoteDetailView = (id: string): ViewResult => {
                 </div>
               `}
       </div>
-    `,
-    cleanup: controller.cleanup,
+    `;
+    render(template, container);
+  });
+
+  return {
+    template: html`${container}`,
+    cleanup: () => {
+      renderView();
+      controller.cleanup();
+    },
   };
 };

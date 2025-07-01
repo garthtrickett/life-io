@@ -1,6 +1,6 @@
 // File: ./components/pages/signup-page.ts
-import { html, type TemplateResult, nothing } from "lit-html";
-import { signal } from "@preact/signals-core";
+import { render, html, type TemplateResult, nothing } from "lit-html";
+import { signal, effect } from "@preact/signals-core";
 import { pipe, Effect, Data } from "effect";
 import { trpc } from "../../lib/client/trpc";
 import { clientLog } from "../../lib/client/logger.client";
@@ -17,6 +17,7 @@ class UnknownSignupError extends Data.TaggedError("UnknownSignupError")<{
 // --- Types ---
 interface ViewResult {
   template: TemplateResult;
+  cleanup?: () => void;
 }
 interface Model {
   email: string;
@@ -96,7 +97,6 @@ const react = async (action: Action) => {
         },
       }),
     );
-
     await runClientPromise(signupEffect);
   }
   if (action.type === "SIGNUP_SUCCESS") {
@@ -119,14 +119,16 @@ const propose = (action: Action) => {
 
 // --- View ---
 export const SignupView = (): ViewResult => {
-  const handleSignupSubmit = (e: Event) => {
-    e.preventDefault();
-    if (model.value.isLoading) return;
-    propose({ type: "SIGNUP_START" });
-  };
+  const container = document.createElement("div");
 
-  return {
-    template: html`
+  const renderView = effect(() => {
+    const handleSignupSubmit = (e: Event) => {
+      e.preventDefault();
+      if (model.value.isLoading) return;
+      propose({ type: "SIGNUP_START" });
+    };
+
+    const template = html`
       <div class="flex min-h-screen items-center justify-center bg-gray-100">
         <div class="w-full max-w-md rounded-lg bg-white p-8 shadow-md">
           <h2 class="mb-6 text-center text-2xl font-bold">Create Account</h2>
@@ -191,6 +193,15 @@ export const SignupView = (): ViewResult => {
           </div>
         </div>
       </div>
-    `,
+    `;
+    render(template, container);
+  });
+
+  return {
+    template: html`${container}`,
+    cleanup: () => {
+      renderView(); // Disposes the effect
+      model.value = { email: "", password: "", error: null, isLoading: false };
+    },
   };
 };

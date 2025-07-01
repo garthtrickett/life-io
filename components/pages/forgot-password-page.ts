@@ -1,7 +1,6 @@
 // File: ./components/pages/forgot-password-page.ts
-// File: ./components/pages/forgot-password-page.ts (Refactored)
-import { html, type TemplateResult, nothing } from "lit-html";
-import { signal } from "@preact/signals-core";
+import { render, html, type TemplateResult, nothing } from "lit-html";
+import { signal, effect } from "@preact/signals-core";
 import { pipe, Effect, Data } from "effect";
 import { trpc } from "../../lib/client/trpc";
 import { clientLog } from "../../lib/client/logger.client";
@@ -54,9 +53,7 @@ const update = (action: Action) => {
       };
       break;
     case "REQUEST_ERROR":
-      // For security, we show the same message on error as on success.
-      // This prevents leaking information about which emails are registered.
-      // The specific error is logged internally.
+      // For security, show the same message as success to prevent email enumeration.
       model.value = {
         ...model.value,
         status: "success",
@@ -112,14 +109,16 @@ const propose = (action: Action) => {
 };
 
 export const ForgotPasswordView = (): ViewResult => {
-  const handleSubmit = (e: Event) => {
-    e.preventDefault();
-    if (model.value.status === "loading") return;
-    propose({ type: "REQUEST_START" });
-  };
+  const container = document.createElement("div");
 
-  return {
-    template: html`
+  const renderView = effect(() => {
+    const handleSubmit = (e: Event) => {
+      e.preventDefault();
+      if (model.value.status === "loading") return;
+      propose({ type: "REQUEST_START" });
+    };
+
+    const template = html`
       <div class="flex min-h-screen items-center justify-center bg-gray-100">
         <div class="w-full max-w-md rounded-lg bg-white p-8 shadow-md">
           <h2 class="mb-6 text-center text-2xl font-bold">Forgot Password</h2>
@@ -189,6 +188,15 @@ export const ForgotPasswordView = (): ViewResult => {
                 </div>`}
         </div>
       </div>
-    `,
+    `;
+    render(template, container);
+  });
+
+  return {
+    template: html`${container}`,
+    cleanup: () => {
+      renderView();
+      model.value = { email: "", status: "idle", message: null };
+    },
   };
 };

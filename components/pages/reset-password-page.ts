@@ -1,7 +1,6 @@
 // File: ./components/pages/reset-password-page.ts
-// File: ./components/pages/reset-password-page.ts (Refactored)
-import { html, type TemplateResult, nothing } from "lit-html";
-import { signal } from "@preact/signals-core";
+import { render, html, type TemplateResult, nothing } from "lit-html";
+import { signal, effect } from "@preact/signals-core";
 import { pipe, Effect, Data } from "effect";
 import { trpc } from "../../lib/client/trpc";
 import { navigate } from "../../lib/client/router";
@@ -29,6 +28,7 @@ type Action =
   | { type: "RESET_START" }
   | { type: "RESET_SUCCESS" }
   | { type: "RESET_ERROR"; payload: InvalidTokenError | PasswordResetError };
+
 const model = signal<Model>({ password: "", status: "idle", message: null });
 
 const update = (action: Action) => {
@@ -105,14 +105,16 @@ const propose = (token: string) => (action: Action) => {
 };
 
 export const ResetPasswordView = (token: string): ViewResult => {
-  const handleSubmit = (e: Event) => {
-    e.preventDefault();
-    if (model.value.status === "loading") return;
-    propose(token)({ type: "RESET_START" });
-  };
+  const container = document.createElement("div");
 
-  return {
-    template: html`
+  const renderView = effect(() => {
+    const handleSubmit = (e: Event) => {
+      e.preventDefault();
+      if (model.value.status === "loading") return;
+      propose(token)({ type: "RESET_START" });
+    };
+
+    const template = html`
       <div class="flex min-h-screen items-center justify-center bg-gray-100">
         <div class="w-full max-w-md rounded-lg bg-white p-8 shadow-md">
           <h2 class="mb-6 text-center text-2xl font-bold">Reset Password</h2>
@@ -157,8 +159,14 @@ export const ResetPasswordView = (token: string): ViewResult => {
               </form>`}
         </div>
       </div>
-    `,
+    `;
+    render(template, container);
+  });
+
+  return {
+    template: html`${container}`,
     cleanup: () => {
+      renderView();
       model.value = { password: "", status: "idle", message: null };
     },
   };
