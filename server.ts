@@ -16,11 +16,16 @@ import {
 import { Elysia } from "elysia";
 
 import { PutObjectCommand } from "@aws-sdk/client-s3";
-import { db } from "./db/kysely";
 import { validateSessionEffect } from "./lib/server/auth";
 
 import { serverLog } from "./lib/server/logger.server";
-import { runServerPromise, runServerUnscoped } from "./lib/server/runtime";
+// --- MODIFIED ---
+// Import ServerLive to provide all services at the application root
+import {
+  runServerPromise,
+  runServerUnscoped,
+  ServerLive,
+} from "./lib/server/runtime";
 import { createContext } from "./trpc/context";
 import { appRouter } from "./trpc/router";
 // --- Service Imports ---
@@ -30,6 +35,8 @@ import { generateId } from "./lib/server/utils";
 import { Schema } from "@effect/schema";
 // --- FIX: Import the function directly for stricter type compliance ---
 import { formatErrorSync } from "@effect/schema/TreeFormatter";
+import { Db } from "./db/DbTag";
+
 // --- Custom Error Types for Avatar Upload ---
 class AuthError extends Data.TaggedError("AuthError")<{ message: string }> {}
 class FileError extends Data.TaggedError("FileError")<{ message: string }> {}
@@ -94,6 +101,7 @@ const logClientMessageEffect = (body: unknown) =>
     }
     return new Response(null, { status: 204 });
   });
+
 // --- Refactored Effect for handling avatar uploads with typed errors ---
 const avatarUploadEffect = (context: { request: Request; body: unknown }) =>
   Effect.gen(function* () {
@@ -105,6 +113,7 @@ const avatarUploadEffect = (context: { request: Request; body: unknown }) =>
     );
 
     const s3 = yield* S3;
+    const db = yield* Db; // Get DB from context
 
     const decodedBody = yield* Schema.decodeUnknown(AvatarUploadBody)(
       context.body,
@@ -346,8 +355,12 @@ Looked for 'index.html' at: ${indexHtmlPath}. Please run 'bun run build' before 
   return app;
 });
 
-// --- App execution (unchanged) ---
-void Effect.runPromiseExit(setupApp).then((exit) => {
+// --- MODIFIED: App execution now provides all services to `setupApp` ---
+// By providing the ServerLive layer, we satisfy all service dependencies
+// for the entire application, including the scheduled jobs.
+const program = Effect.provide(setupApp, ServerLive);
+
+void Effect.runPromiseExit(program).then((exit) => {
   if (Exit.isSuccess(exit)) {
     const app = exit.value;
     const server = app.listen(42069, () => {
@@ -365,10 +378,10 @@ void Effect.runPromiseExit(setupApp).then((exit) => {
       console.info(`\nReceived ${signal}. Shutting down gracefully...`);
       await server.stop();
       await runServerPromise(
-        serverLog("info", "Closing database connections before exit."),
+        serverLog("info", "Graceful shutdown complete. Exiting."),
       );
-      await db.destroy();
-      console.info("Database connections closed.");
+      // The manual db.destroy() is no longer necessary as the runtime
+      // manages the lifecycle of the DbLayer.
       process.exit(0);
     };
 

@@ -38,7 +38,13 @@ const makeDb = Effect.gen(function* () {
   });
 });
 
-// To maintain the global `db` export without a major refactor, we
-// run the effect synchronously at startup. This is a pragmatic choice.
-const dbProgram = Effect.provide(makeDb, ConfigLive);
-export const db = Effect.runSync(dbProgram);
+// --- REMOVED ---
+// The following lines that created a global, synchronously-run instance have been removed.
+//
+// const dbProgram = Effect.provide(makeDb, ConfigLive);
+// export const db = Effect.runSync(dbProgram);
+
+// --- ADDED ---
+// We now export the "live" program that creates the DB connection,
+// which will be used to build our DbLayer.
+export const makeDbLive = Effect.provide(makeDb, ConfigLive);

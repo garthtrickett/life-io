@@ -1,14 +1,18 @@
 // File: ./db/migrator.ts
 import { Effect, Exit, Cause } from "effect";
-import { db } from "./kysely";
+import { Kysely } from "kysely";
+// --- REMOVED ---
+// import { db } from "./kysely";
+// --- ADDED ---
+import { makeDbLive } from "./kysely"; // Import the effect that creates the DB
+import { Database } from "../types";
+
 import { serverLog } from "../lib/server/logger.server";
 import { Migrator } from "kysely";
-// --- MODIFICATION START ---
-// Import the new embedded provider instead of the file-based one
 import { EmbeddedCentralMigrationProvider } from "../lib/server/migrations/EmbeddedCentralMigrationProvider";
-// --- MODIFICATION END ---
 
-const runMigrations = (direction: "up" | "down") =>
+// --- MODIFIED: The function now accepts the db instance ---
+const runMigrations = (direction: "up" | "down", db: Kysely<Database>) =>
   Effect.gen(function* () {
     yield* serverLog(
       "info",
@@ -18,11 +22,8 @@ const runMigrations = (direction: "up" | "down") =>
     );
 
     const migrator = new Migrator({
-      db,
-      // --- MODIFICATION START ---
-      // Use the new provider here
+      db, // Use the passed-in instance
       provider: new EmbeddedCentralMigrationProvider(),
-      // --- MODIFICATION END ---
     });
 
     const { error, results } = yield* Effect.tryPromise({
@@ -59,8 +60,7 @@ const runMigrations = (direction: "up" | "down") =>
     }
   });
 
-// --- Execution Logic (No changes needed here) ---
-
+// --- MODIFIED: Execution logic now builds its own runtime ---
 const getDirection = () => {
   const directionArg = Bun.argv[2];
   if (directionArg !== "up" && directionArg !== "down") {
@@ -71,21 +71,32 @@ const getDirection = () => {
 };
 
 const direction = getDirection();
-const program = runMigrations(direction);
 
-void Effect.runPromiseExit(program)
-  .then((exit) => {
-    if (Exit.isFailure(exit)) {
-      console.error(`❌ Migration via migrator.ts failed ('${direction}'):`);
-      console.error(Cause.pretty(exit.cause));
-      process.exit(1);
-    } else {
-      console.info(
-        `✅ Migrations via migrator.ts completed successfully ('${direction}').`,
-      );
-      process.exit(0);
-    }
-  })
-  .finally(() => {
-    void db.destroy();
-  });
+// Create a main program that first builds the DB connection, then runs migrations
+const program = Effect.gen(function* () {
+  // 1. Create the db instance from our live effect
+  const db = yield* makeDbLive;
+
+  // 2. Ensure the connection is destroyed after the main logic runs
+  yield* Effect.ensuring(
+    runMigrations(direction, db),
+    Effect.promise(() => db.destroy()),
+  );
+});
+
+void Effect.runPromiseExit(program).then((exit) => {
+  if (Exit.isFailure(exit)) {
+    console.error(`❌ Migration via migrator.ts failed ('${direction}'):`);
+    console.error(Cause.pretty(exit.cause));
+    process.exit(1);
+  } else {
+    console.info(
+      `✅ Migrations via migrator.ts completed successfully ('${direction}').`,
+    );
+    process.exit(0);
+  }
+});
+// --- REMOVED: db.destroy() is now handled within the main `program` effect ---
+// .finally(() => {
+//   void db.destroy();
+// });

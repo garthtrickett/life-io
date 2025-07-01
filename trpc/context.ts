@@ -1,5 +1,7 @@
 // File: trpc/context.ts
-import { db } from "../db/kysely";
+// --- REMOVED ---
+// import { db } from "../db/kysely";
+
 import type { FetchCreateContextFnOptions } from "@trpc/server/adapters/fetch";
 import { validateSessionEffect } from "../lib/server/auth";
 import { runServerPromise } from "../lib/server/runtime";
@@ -7,6 +9,8 @@ import { Effect, Option } from "effect";
 import type { User } from "../types/generated/public/User";
 import type { Kysely } from "kysely";
 import type { Database } from "../types";
+// --- ADDED ---
+import { Db } from "../db/DbTag";
 
 /**
  * The context created for each tRPC request, containing the database
@@ -23,13 +27,15 @@ export interface Context {
  * It retrieves the session from the request, validates it, and returns
  * the context with the user and session information.
  *
+ * --- MODIFIED: It now depends on the `Db` service ---
  * @param opts Options from the tRPC fetch adapter, including the request object.
  * @returns An `Effect` that resolves to the `Context`.
  */
 const createContextEffect = ({
   req,
-}: FetchCreateContextFnOptions): Effect.Effect<Context, Error> =>
+}: FetchCreateContextFnOptions): Effect.Effect<Context, Error, Db> =>
   Effect.gen(function* () {
+    const db = yield* Db; // Get the DB instance from the context
     const cookieHeader = req.headers.get("Cookie") ?? "";
     const sessionIdOption = Option.fromNullable(
       cookieHeader
@@ -40,6 +46,7 @@ const createContextEffect = ({
 
     // If there's no session ID, return a context for an unauthenticated user.
     if (Option.isNone(sessionIdOption)) {
+      // Use the db instance from the context here
       return { db, user: null, session: null };
     }
 
@@ -47,6 +54,7 @@ const createContextEffect = ({
     const { user, session } = yield* validateSessionEffect(
       sessionIdOption.value,
     );
+    // And also use the db instance from the context here
     return { db, user, session };
   });
 
@@ -58,5 +66,6 @@ const createContextEffect = ({
 export const createContext = (
   opts: FetchCreateContextFnOptions,
 ): Promise<Context> => {
+  // runServerPromise will provide the necessary DbLayer
   return runServerPromise(createContextEffect(opts));
 };

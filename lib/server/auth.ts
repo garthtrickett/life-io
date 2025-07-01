@@ -2,20 +2,25 @@
 import { TimeSpan, createDate } from "oslo";
 import { alphabet, generateRandomString } from "oslo/crypto";
 import { Argon2id } from "oslo/password";
-import { db } from "../../db/kysely";
+// --- REMOVED ---
+// import { db } from "../../db/kysely";
 import type { User } from "../../types/generated/public/User";
 import type { SessionId } from "../../types/generated/public/Session";
 import type { UserId } from "../../types/generated/public/User";
 import { runServerPromise } from "./runtime";
 import { serverLog } from "./logger.server";
 import { Effect, Option } from "effect";
+// --- ADDED ---
+import { Db } from "../../db/DbTag";
 
 export const argon2id = new Argon2id();
 
+// --- MODIFIED: This effect now depends on the `Db` service ---
 export const createSessionEffect = (
   userId: string,
-): Effect.Effect<string, Error> =>
+): Effect.Effect<string, Error, Db> =>
   Effect.gen(function* () {
+    const db = yield* Db; // Get the DB instance from the context
     const sessionId = generateRandomString(40, alphabet("a-z", "0-9"));
     const expiresAt = createDate(new TimeSpan(30, "d"));
     yield* Effect.tryPromise({
@@ -36,10 +41,12 @@ export const createSessionEffect = (
     return sessionId;
   });
 
+// --- MODIFIED: This effect now depends on the `Db` service ---
 export const deleteSessionEffect = (
   sessionId: string,
-): Effect.Effect<void, Error> =>
+): Effect.Effect<void, Error, Db> =>
   Effect.gen(function* () {
+    const db = yield* Db; // Get the DB instance from the context
     yield* Effect.tryPromise({
       try: () =>
         db
@@ -56,14 +63,17 @@ export const deleteSessionEffect = (
 /**
  * Validates a session ID and returns the user and session.
  * This is now an Effect program for better safety and composability.
+ * --- MODIFIED: This effect now depends on the `Db` service ---
  */
 export const validateSessionEffect = (
   sessionId: string,
 ): Effect.Effect<
   { user: User | null; session: { id: string } | null },
-  Error
+  Error,
+  Db
 > =>
   Effect.gen(function* () {
+    const db = yield* Db; // Get the DB instance from the context
     const sessionOption = yield* Effect.tryPromise({
       try: () =>
         db
@@ -137,5 +147,6 @@ export const validateSessionEffect = (
   });
 
 // The async version is kept for compatibility if needed, but new code should use the Effect version.
+// This function doesn't need to change, as `runServerPromise` provides the required `Db` context.
 export const validateSession = (sessionId: string) =>
   runServerPromise(validateSessionEffect(sessionId));

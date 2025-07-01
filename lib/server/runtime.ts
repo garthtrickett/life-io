@@ -14,7 +14,7 @@ const ServerServices = Layer.mergeAll(DbLayer, S3Live, CryptoLive);
 
 // 2. This is the "recipe" for building all our services.
 //    It now includes robust error handling for configuration issues.
-const ServerLive = ServerServices.pipe(
+export const ServerLive = ServerServices.pipe(
   Layer.provide(ConfigLive),
   // **FIX:** Catch any ConfigError during layer creation, log it, and treat it as a
   // fatal defect. The application cannot run without valid config.

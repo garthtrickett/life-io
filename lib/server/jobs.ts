@@ -1,71 +1,80 @@
+// lib/server/jobs.ts
 import { Effect } from "effect";
-import { db } from "../../db/kysely";
+// --- REMOVED ---
+// import { db } from "../../db/kysely";
+// --- ADDED ---
+import { Db } from "../../db/DbTag";
+
 import { serverLog } from "./logger.server";
 import { EmailSendError } from "../../features/auth/Errors";
 import { sendEmail } from "./email";
 
 /**
  * Effect to clean up expired email verification and password reset tokens.
+ * --- MODIFIED: This effect now depends on the `Db` service ---
  */
-export const cleanupExpiredTokensEffect = Effect.gen(function* () {
-  yield* serverLog(
-    "info",
-    "Starting cleanup of expired tokens...",
-    undefined,
-    "Job:TokenCleanup",
-  );
+export const cleanupExpiredTokensEffect: Effect.Effect<void, Error, Db> =
+  Effect.gen(function* () {
+    const db = yield* Db; // Get the DB instance from the context
 
-  const now = new Date();
+    yield* serverLog(
+      "info",
+      "Starting cleanup of expired tokens...",
+      undefined,
+      "Job:TokenCleanup",
+    );
 
-  // Clean up expired email verification tokens
-  const deletedEmailTokens = yield* Effect.tryPromise({
-    try: () =>
-      db
-        .deleteFrom("email_verification_token")
-        .where("expires_at", "<", now)
-        .execute(),
-    catch: (cause) =>
-      new Error(
-        `Failed to delete expired email verification tokens: ${String(cause)}`,
-      ),
+    const now = new Date();
+
+    // Clean up expired email verification tokens
+    const deletedEmailTokens = yield* Effect.tryPromise({
+      try: () =>
+        db
+          .deleteFrom("email_verification_token")
+          .where("expires_at", "<", now)
+          .execute(),
+      catch: (cause) =>
+        new Error(
+          `Failed to delete expired email verification tokens: ${String(cause)}`,
+        ),
+    });
+
+    // FIX: Access the first element for numDeletedRows
+    yield* serverLog(
+      "info",
+      `Cleaned up ${deletedEmailTokens[0]?.numDeletedRows ?? 0} expired email verification tokens.`,
+      undefined,
+      "Job:TokenCleanup",
+    );
+
+    // Clean up expired password reset tokens
+    const deletedPasswordTokens = yield* Effect.tryPromise({
+      try: () =>
+        db
+          .deleteFrom("password_reset_token")
+          .where("expires_at", "<", now)
+          .execute(),
+      catch: (cause) =>
+        new Error(
+          `Failed to delete expired password reset tokens: ${String(cause)}`,
+        ),
+    });
+
+    // FIX: Access the first element for numDeletedRows
+    yield* serverLog(
+      "info",
+      `Cleaned up ${deletedPasswordTokens[0]?.numDeletedRows ?? 0} expired password reset tokens.`,
+      undefined,
+      "Job:TokenCleanup",
+    );
+
+    yield* serverLog(
+      "info",
+      "Finished cleanup of expired tokens.",
+      undefined,
+      "Job:TokenCleanup",
+    );
   });
-
-  // FIX: Access the first element for numDeletedRows
-  yield* serverLog(
-    "info",
-    `Cleaned up ${deletedEmailTokens[0]?.numDeletedRows ?? 0} expired email verification tokens.`,
-    undefined,
-    "Job:TokenCleanup",
-  );
-
-  // Clean up expired password reset tokens
-  const deletedPasswordTokens = yield* Effect.tryPromise({
-    try: () =>
-      db
-        .deleteFrom("password_reset_token")
-        .where("expires_at", "<", now)
-        .execute(),
-    catch: (cause) =>
-      new Error(
-        `Failed to delete expired password reset tokens: ${String(cause)}`,
-      ),
-  });
-
-  // FIX: Access the first element for numDeletedRows
-  yield* serverLog(
-    "info",
-    `Cleaned up ${deletedPasswordTokens[0]?.numDeletedRows ?? 0} expired password reset tokens.`,
-    undefined,
-    "Job:TokenCleanup",
-  );
-
-  yield* serverLog(
-    "info",
-    "Finished cleanup of expired tokens.",
-    undefined,
-    "Job:TokenCleanup",
-  );
-});
 
 /**
  * Effect to retry sending failed emails.

@@ -1,5 +1,7 @@
 // scripts/seed.ts
-import { db } from "../db/kysely";
+// --- REMOVED ---
+// import { db } from "../db/kysely";
+
 import { serverLog } from "../lib/server/logger.server";
 import { perms } from "../lib/shared/permissions";
 import type { UserId } from "../types/generated/public/User";
@@ -9,7 +11,6 @@ import { DbLayer } from "../db/DbLayer";
 import { Db } from "../db/DbTag";
 
 const TEST_USER_PASSWORD = "password123";
-
 const seedProgram = Effect.gen(function* () {
   yield* Effect.forkDaemon(
     serverLog(
@@ -83,7 +84,10 @@ const program = pipe(
     ),
   ),
   Effect.provide(DbLayer),
-  Effect.ensuring(Effect.promise(() => db.destroy())),
+  // --- REMOVED ---
+  // The manual `db.destroy()` is no longer needed. The DbLayer provided
+  // to the effect will manage the connection lifecycle automatically.
+  // Effect.ensuring(Effect.promise(() => db.destroy())),
 );
 
 void Effect.runPromiseExit(program).then((exit) => {
