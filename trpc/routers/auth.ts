@@ -485,7 +485,6 @@ export const authRouter = router({
       return runServerPromise(program);
     }),
 
-  // --- RESET PASSWORD (REFACTORED with strict null checks) ---
   resetPassword: publicProcedure
     .input(s(ResetPasswordInput))
     .mutation(({ input }) => {
@@ -506,7 +505,6 @@ export const authRouter = router({
         Effect.flatMap((storedToken) =>
           pipe(
             Effect.sync(() => storedToken),
-            // --- FIX: Safely handles potentially null/undefined token and expiration check ---
             Effect.filterOrFail(
               (t): t is NonNullable<typeof t> =>
                 !!t && isWithinExpirationDate(t.expires_at),
@@ -592,50 +590,31 @@ export const authRouter = router({
       return runServerPromise(program);
     }),
 
-  // --- VERIFY EMAIL (REFACTORED with strict null checks) ---
+  // --- VERIFY EMAIL (REFACTORED to log the user in) ---
   verifyEmail: publicProcedure
     .input(s(VerifyEmailInput))
     .mutation(({ input }) => {
       const { token } = input;
       const program = pipe(
+        // 1. Find, validate, and delete the token in one go
         Db,
         Effect.flatMap((db) =>
           Effect.tryPromise({
             try: () =>
               db
-                .selectFrom("email_verification_token")
-                .selectAll()
+                .deleteFrom("email_verification_token")
                 .where("id", "=", token as EmailVerificationTokenId)
+                .returningAll()
                 .executeTakeFirst(),
             catch: (cause) => new AuthDatabaseError({ cause }),
           }),
         ),
-        Effect.flatMap((storedToken) =>
-          pipe(
-            Effect.sync(() => storedToken),
-            // --- FIX: Safely handles potentially null/undefined token and expiration check ---
-            Effect.filterOrFail(
-              (t): t is NonNullable<typeof t> =>
-                !!t && isWithinExpirationDate(t.expires_at),
-              () => new TokenInvalidError(),
-            ),
-            Effect.tap((validToken) =>
-              pipe(
-                Db,
-                Effect.flatMap((db) =>
-                  Effect.tryPromise({
-                    try: () =>
-                      db
-                        .deleteFrom("email_verification_token")
-                        .where("id", "=", validToken.id)
-                        .execute(),
-                    catch: (cause) => new AuthDatabaseError({ cause }),
-                  }),
-                ),
-              ),
-            ),
-          ),
+        Effect.flatMap(Option.fromNullable),
+        Effect.filterOrFail(
+          (t) => isWithinExpirationDate(t.expires_at),
+          () => new TokenInvalidError(),
         ),
+        // 2. Once token is valid, update the user as verified
         Effect.flatMap((storedToken) =>
           pipe(
             Db,
@@ -646,21 +625,32 @@ export const authRouter = router({
                     .updateTable("user")
                     .set({ email_verified: true })
                     .where("id", "=", storedToken.user_id)
-                    .execute(),
+                    .returningAll()
+                    .executeTakeFirstOrThrow(),
                 catch: (cause) => new AuthDatabaseError({ cause }),
               }),
             ),
-            Effect.tap(() =>
+            Effect.tap((validToken) =>
               serverLog(
                 "info",
-                `Email verified for user ${storedToken.user_id}`,
-                storedToken.user_id,
+                `Email verified for user ${validToken.id}`,
+                validToken.id,
                 "auth:verifyEmail",
               ),
             ),
           ),
         ),
-        Effect.map(() => ({ success: true })),
+        // 3. Create a session for the now-verified user
+        Effect.flatMap((user) =>
+          pipe(
+            createSessionEffect(user.id),
+            Effect.map((sessionId) => ({ user, sessionId })),
+          ),
+        ),
+        // 4. Handle all possible errors from the pipeline
+        Effect.catchTags({
+          NoSuchElementException: () => Effect.fail(new TokenInvalidError()),
+        }),
       ).pipe(
         Effect.catchTags({
           TokenInvalidError: () =>

@@ -1,5 +1,4 @@
-// File: lib/client/router.ts
-import { signal } from "@preact/signals-core";
+// lib/client/router.ts
 import { TemplateResult } from "lit";
 import { NotesView } from "../../components/pages/notes-list-page";
 import { NoteDetailView } from "../../components/pages/note-detail-page";
@@ -26,42 +25,44 @@ export interface ViewResult {
 export interface Route {
   pattern: RegExp;
   view: (...args: string[]) => ViewResult;
-  meta: { requiresAuth?: boolean; requiresPerms?: string[] };
+  meta: {
+    requiresAuth?: boolean;
+    requiresPerms?: string[];
+    isPublicOnly?: boolean;
+  };
 }
 type MatchedRoute = Route & { params: string[] };
 
 /* ------------------------------------------------------------------ */
-/* Internal state                                                     */
+/* Route Definitions                                                  */
 /* ------------------------------------------------------------------ */
-export const currentPage = signal(window.location.pathname);
-
 const routes: Route[] = [
   {
     pattern: /^\/$/,
     view: NotesView,
     meta: { requiresAuth: true, requiresPerms: [perms.note.read] },
   },
-  { pattern: /^\/login$/, view: LoginView, meta: {} },
-  { pattern: /^\/signup$/, view: SignupView, meta: {} },
+  { pattern: /^\/login$/, view: LoginView, meta: { isPublicOnly: true } },
+  { pattern: /^\/signup$/, view: SignupView, meta: { isPublicOnly: true } },
   {
     pattern: /^\/check-email$/,
     view: CheckEmailView,
-    meta: {},
+    meta: { isPublicOnly: true },
   },
   {
     pattern: /^\/forgot-password$/,
     view: ForgotPasswordView,
-    meta: {},
+    meta: { isPublicOnly: true },
   },
   {
     pattern: /^\/reset-password\/([^/]+)$/,
     view: ResetPasswordView,
-    meta: {},
+    meta: { isPublicOnly: true },
   },
   {
     pattern: /^\/verify-email\/([^/]+)$/,
     view: VerifyEmailView,
-    meta: {},
+    meta: { isPublicOnly: true },
   },
   {
     pattern: /^\/notes\/([^/]+)$/,
@@ -72,8 +73,11 @@ const routes: Route[] = [
   { pattern: /^\/unauthorized$/, view: UnauthorizedView, meta: {} },
 ];
 
-export const router = (): MatchedRoute => {
-  const path = currentPage.value;
+/* ------------------------------------------------------------------ */
+/* Pure Functions                                                     */
+/* ------------------------------------------------------------------ */
+
+export const matchRoute = (path: string): MatchedRoute => {
   runClientUnscoped(
     clientLog("info", `Routing for path: '${path}'`, undefined, "router"),
   );
@@ -102,15 +106,13 @@ export const router = (): MatchedRoute => {
   return { pattern: /^\/404$/, view: NotFoundView, meta: {}, params: [] };
 };
 
-/* Public helper ----------------------------------------------------- */
 export const navigate = (path: string) => {
-  if (currentPage.value === path) {
+  if (window.location.pathname === path) {
     return;
   }
 
   const navigateTo = () => {
-    window.history.pushState({}, "", path);
-    currentPage.value = path;
+    window.dispatchEvent(new CustomEvent("navigate-to", { detail: { path } }));
   };
 
   if (document.startViewTransition) {

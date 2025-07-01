@@ -1,12 +1,13 @@
-// File: ./components/pages/verify-email-page.ts
 // File: ./components/pages/verify-email-page.ts (Refactored)
 import { html, type TemplateResult } from "lit-html";
 import { signal } from "@preact/signals-core";
 import { pipe, Effect, Data } from "effect";
 import { trpc } from "../../lib/client/trpc";
-import { useEffect } from "../../lib/client/lifecycle";
-import { runClientPromise } from "../../lib/client/runtime";
-import { NotionButton } from "../ui/notion-button";
+import { runClientPromise, runClientUnscoped } from "../../lib/client/runtime";
+import { proposeAuthAction } from "../../lib/client/stores/authStore";
+import { navigate } from "../../lib/client/router";
+import type { User } from "../../types/generated/public/User";
+import { clientLog } from "../../lib/client/logger.client";
 
 // --- Custom Error Types ---
 class InvalidTokenError extends Data.TaggedError("InvalidTokenError") {}
@@ -26,9 +27,13 @@ interface Model {
   message: string | null;
 }
 
+interface VerifySuccessPayload {
+  user: User;
+  sessionId: string;
+}
 type Action =
   | { type: "VERIFY_START" }
-  | { type: "VERIFY_SUCCESS"; payload: string }
+  | { type: "VERIFY_SUCCESS"; payload: VerifySuccessPayload }
   | {
       type: "VERIFY_ERROR";
       payload: InvalidTokenError | UnknownVerificationError;
@@ -42,7 +47,10 @@ const update = (action: Action) => {
       model.value = { status: "verifying", message: "Verifying your email..." };
       break;
     case "VERIFY_SUCCESS":
-      model.value = { status: "success", message: action.payload };
+      model.value = {
+        status: "success",
+        message: "Email verified successfully! You can now log in.",
+      };
       break;
     case "VERIFY_ERROR": {
       let errorMessage = "An unknown error occurred during verification.";
@@ -73,10 +81,10 @@ const react = async (action: Action, token: string) => {
         },
       }),
       Effect.match({
-        onSuccess: () => {
+        onSuccess: (result) => {
           propose(token)({
-            type: "VERIFY_SUCCESS",
-            payload: "Email verified successfully! You can now log in.",
+            type: "VERIFY_SUCCESS", // The payload is now an object
+            payload: result,
           });
         },
         onFailure: (error) => {
@@ -86,6 +94,20 @@ const react = async (action: Action, token: string) => {
     );
     await runClientPromise(verifyEffect);
   }
+  if (action.type === "VERIFY_SUCCESS") {
+    const { user, sessionId } = action.payload;
+    const expires = new Date();
+    expires.setDate(expires.getDate() + 30);
+    document.cookie = `session_id=${sessionId}; path=/; expires=${expires.toUTCString()}; SameSite=Lax`;
+    proposeAuthAction({ type: "SET_AUTHENTICATED", payload: user });
+    runClientUnscoped(
+      clientLog(
+        "info",
+        "Email verified and user logged in. Navigating to home.",
+      ),
+    );
+    navigate("/");
+  }
 };
 
 const propose = (token: string) => (action: Action) => {
@@ -94,13 +116,11 @@ const propose = (token: string) => (action: Action) => {
 };
 
 export const VerifyEmailView = (token: string): ViewResult => {
-  const effectScope = {};
-
-  useEffect(() => {
-    if (model.value.status === "verifying" && model.value.message === null) {
-      propose(token)({ type: "VERIFY_START" });
-    }
-  }, effectScope);
+  // FIX: Replace useEffect with a one-time-run condition check.
+  // This ensures the verification starts automatically only on the first render.
+  if (model.value.status === "verifying" && model.value.message === null) {
+    propose(token)({ type: "VERIFY_START" });
+  }
 
   const renderContent = () => {
     switch (model.value.status) {
@@ -114,9 +134,9 @@ export const VerifyEmailView = (token: string): ViewResult => {
       case "success":
         return html` <h2 class="text-2xl font-bold text-green-600">Success!</h2>
           <p class="mt-4 text-zinc-600">${model.value.message}</p>
-          <div class="mt-6">
-            ${NotionButton({ children: "Go to Login", href: "/login" })}
-          </div>`;
+          <p class="mt-2 text-sm text-zinc-500">
+            Redirecting you to your notes...
+          </p>`;
       case "error":
         return html` <h2 class="text-2xl font-bold text-red-600">Error</h2>
           <p class="mt-4 text-zinc-600">${model.value.message}</p>
@@ -141,6 +161,7 @@ export const VerifyEmailView = (token: string): ViewResult => {
       </div>
     `,
     cleanup: () => {
+      // Reset the state when the view is unmounted.
       model.value = { status: "verifying", message: null };
     },
   };
