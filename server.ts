@@ -1,8 +1,18 @@
-// File: ./server.ts (Refactored for strictness)
+// File: ./server.ts (Refactored for strictness and scheduled jobs)
 import { existsSync, readFileSync } from "node:fs";
 import { staticPlugin } from "@elysiajs/static";
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
-import { Cause, Data, Effect, Exit, Option } from "effect";
+import {
+  Cause,
+  Data,
+  Effect,
+  Exit,
+  Option,
+  Schedule,
+  pipe,
+  Duration,
+} from "effect";
+// Import Schedule and Duration
 import { Elysia } from "elysia";
 
 import { PutObjectCommand } from "@aws-sdk/client-s3";
@@ -13,7 +23,6 @@ import { serverLog } from "./lib/server/logger.server";
 import { runServerPromise, runServerUnscoped } from "./lib/server/runtime";
 import { createContext } from "./trpc/context";
 import { appRouter } from "./trpc/router";
-
 // --- Service Imports ---
 import { S3 } from "./lib/server/s3";
 import { generateId } from "./lib/server/utils";
@@ -21,7 +30,6 @@ import { generateId } from "./lib/server/utils";
 import { Schema } from "@effect/schema";
 // --- FIX: Import the function directly for stricter type compliance ---
 import { formatErrorSync } from "@effect/schema/TreeFormatter";
-
 // --- Custom Error Types for Avatar Upload ---
 class AuthError extends Data.TaggedError("AuthError")<{ message: string }> {}
 class FileError extends Data.TaggedError("FileError")<{ message: string }> {}
@@ -31,6 +39,13 @@ class S3UploadError extends Data.TaggedError("S3UploadError")<{
 class DbUpdateError extends Data.TaggedError("DbUpdateError")<{
   cause: unknown;
 }> {}
+
+// --- NEW: Import scheduled jobs ---
+import {
+  cleanupExpiredTokensEffect,
+  retryFailedEmailsEffect,
+} from "./lib/server/jobs";
+//
 
 // --- Body Schemas with Effect Schema ---
 const AvatarUploadBody = Schema.Struct({
@@ -47,18 +62,15 @@ const AvatarUploadBody = Schema.Struct({
     ),
   ),
 });
-
 const ClientLogBody = Schema.Struct({
   level: Schema.String,
   args: Schema.Array(Schema.Any),
 });
 
 type ServerLoggableLevel = "info" | "error" | "warn" | "debug";
-
 const isLoggableLevel = (level: string): level is ServerLoggableLevel => {
   return ["info", "error", "warn", "debug"].includes(level);
 };
-
 const logClientMessageEffect = (body: unknown) =>
   Effect.gen(function* () {
     const { level: levelFromClient, args } = yield* Schema.decodeUnknown(
@@ -82,7 +94,6 @@ const logClientMessageEffect = (body: unknown) =>
     }
     return new Response(null, { status: 204 });
   });
-
 // --- Refactored Effect for handling avatar uploads with typed errors ---
 const avatarUploadEffect = (context: { request: Request; body: unknown }) =>
   Effect.gen(function* () {
@@ -124,7 +135,6 @@ const avatarUploadEffect = (context: { request: Request; body: unknown }) =>
         () => new AuthError({ message: "Session validation failed." }),
       ),
     );
-
     // --- FIX: strictNullChecks requires an explicit check for the 'user' object ---
     if (!user) {
       return yield* Effect.fail(
@@ -138,12 +148,10 @@ const avatarUploadEffect = (context: { request: Request; body: unknown }) =>
       user.id,
       "AvatarUpload",
     );
-
     const bucketName = process.env.BUCKET_NAME!;
     const fileExtension = avatar.type.split("/")[1] || "jpg";
     const randomId = yield* generateId(16);
     const key = `avatars/${user.id}/${Date.now()}-${randomId}.${fileExtension}`;
-
     const buffer = yield* Effect.tryPromise({
       try: () => avatar.arrayBuffer(),
       catch: (cause) =>
@@ -151,7 +159,6 @@ const avatarUploadEffect = (context: { request: Request; body: unknown }) =>
           message: `Failed to read avatar file: ${String(cause)}`,
         }),
     });
-
     yield* Effect.tryPromise({
       try: () =>
         s3.send(
@@ -162,6 +169,7 @@ const avatarUploadEffect = (context: { request: Request; body: unknown }) =>
             ContentType: avatar.type,
           }),
         ),
+
       catch: (cause) => new S3UploadError({ cause }),
     }).pipe(
       Effect.tap(() =>
@@ -181,7 +189,6 @@ const avatarUploadEffect = (context: { request: Request; body: unknown }) =>
         ),
       ),
     );
-
     const publicUrlBase = process.env.PUBLIC_AVATAR_URL!;
     const avatarUrl = `${publicUrlBase}/${key}`;
 
@@ -206,6 +213,7 @@ const avatarUploadEffect = (context: { request: Request; body: unknown }) =>
         serverLog(
           "error",
           `DB update failed: ${String(e.cause)}`,
+
           user.id,
           "AvatarUpload:DB",
         ),
@@ -240,6 +248,7 @@ const setupApp = Effect.gen(function* () {
             Effect.succeed(new Response(e.message, { status: 400 })),
           S3UploadError: () =>
             Effect.succeed(new Response("S3 upload failed.", { status: 500 })),
+
           DbUpdateError: () =>
             Effect.succeed(
               new Response("Database update failed.", { status: 500 }),
@@ -248,7 +257,6 @@ const setupApp = Effect.gen(function* () {
       ),
     ),
   );
-
   app.post("/log/client", ({ body }) =>
     runServerPromise(
       logClientMessageEffect(body).pipe(
@@ -259,7 +267,6 @@ const setupApp = Effect.gen(function* () {
       ),
     ),
   );
-
   if (isProduction) {
     yield* Effect.forkDaemon(
       serverLog(
@@ -278,7 +285,6 @@ const setupApp = Effect.gen(function* () {
       yield* Effect.forkDaemon(
         serverLog("info", `Serving static files from ${publicDir}`),
       );
-
       app.use(staticPlugin({ assets: publicDir, prefix: "" }));
       app.get(
         "*",
@@ -286,7 +292,8 @@ const setupApp = Effect.gen(function* () {
           new Response(indexHtml, { headers: { "Content-Type": "text/html" } }),
       );
     } else {
-      const errorMessage = `[Production Mode Error] Frontend build not found! Looked for 'index.html' at: ${indexHtmlPath}. Please run 'bun run build' before starting the production server.`;
+      const errorMessage = `[Production Mode Error] Frontend build not found!
+Looked for 'index.html' at: ${indexHtmlPath}. Please run 'bun run build' before starting the production server.`;
       return yield* Effect.fail(new Error(errorMessage));
     }
   } else {
@@ -297,6 +304,44 @@ const setupApp = Effect.gen(function* () {
       ),
     );
   }
+
+  // --- NEW: Schedule background jobs ---
+  yield* Effect.forkDaemon(
+    //
+    pipe(
+      cleanupExpiredTokensEffect, //
+      Effect.repeat(Schedule.spaced(Duration.hours(24))), // FIX: Use Duration.hours(24)
+      Effect.tapError((e) =>
+        serverLog(
+          "error",
+          `Expired token cleanup job failed: ${e.message}`,
+          undefined,
+          "Job:TokenCleanup",
+        ),
+      ), //
+    ),
+  );
+  yield* Effect.forkDaemon(
+    //
+    pipe(
+      retryFailedEmailsEffect, //
+      Effect.repeat(
+        Schedule.intersect(
+          Schedule.exponential(Duration.minutes(1)),
+          Schedule.recurs(5),
+        ),
+      ),
+      Effect.tapError((e) =>
+        serverLog(
+          "error",
+          `Email retry job failed: ${e.message}`,
+          undefined,
+          "Job:EmailRetry",
+        ),
+      ), //
+    ),
+  );
+  // --- END NEW ---
 
   return app;
 });

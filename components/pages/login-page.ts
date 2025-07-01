@@ -5,10 +5,9 @@ import { pipe, Effect } from "effect";
 import { trpc } from "../../lib/client/trpc";
 import { proposeAuthAction } from "../../lib/client/stores/authStore";
 import { NotionButton } from "../ui/notion-button";
-import { runClientPromise, runClientUnscoped } from "../../lib/client/runtime";
+import { runClientPromise } from "../../lib/client/runtime";
 import { navigate } from "../../lib/client/router";
 import type { User } from "../../types/generated/public/User";
-import { clientLog } from "../../lib/client/logger.client";
 
 // --- Types ---
 interface ViewResult {

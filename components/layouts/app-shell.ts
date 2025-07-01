@@ -127,7 +127,7 @@ export class AppShell extends HTMLElement {
     // Interrupt the fiber to ensure all resources and streams are cleaned up
     // when the component is removed from the DOM.
     if (this.mainFiber) {
-      runClientPromise(Fiber.interrupt(this.mainFiber));
+      void runClientPromise(Fiber.interrupt(this.mainFiber));
     }
   }
 }

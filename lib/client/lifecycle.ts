@@ -11,7 +11,7 @@ export interface LocationChange {
 export const locationStream: Stream.Stream<LocationChange> =
   Stream.async<LocationChange>((emit) => {
     const emitPath = (path: string) =>
-      emit(Effect.succeed(Chunk.fromIterable([{ path }])));
+      void emit(Effect.succeed(Chunk.fromIterable([{ path }])));
 
     emitPath(window.location.pathname);
 
@@ -43,9 +43,9 @@ export const locationStream: Stream.Stream<LocationChange> =
 // --- Auth Stream ---
 export const authStream: Stream.Stream<AuthModel> = Stream.async<AuthModel>(
   (emit) => {
-    emit(Effect.succeed(Chunk.of(authState.value)));
+    void emit(Effect.succeed(Chunk.of(authState.value)));
     const unsubscribe = authState.subscribe((value) => {
-      emit(Effect.succeed(Chunk.of(value)));
+      void emit(Effect.succeed(Chunk.of(value)));
     });
     return Effect.sync(unsubscribe);
   },
