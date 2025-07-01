@@ -11,7 +11,7 @@ echo "📦 Bundling project files into $OUTPUT_FILE..."
 
 # Find all files, excluding specified directories and the output file itself.
 # Then, for each file found, append its name and content to the output file.
-find . -path './node_modules' -prune -o -path './.git' -prune -o -name "$OUTPUT_FILE" -prune -o -type f -print | while IFS= read -r file; do
+find . -path './node_modules' -prune -o -path './dist' -prune -o -path './.git' -prune -o -name "$OUTPUT_FILE" -prune -o -type f -print | while IFS= read -r file; do
     # Append the file path as a header to the output file
     echo "File: $file" >> "$OUTPUT_FILE"
     
