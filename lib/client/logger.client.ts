@@ -1,5 +1,5 @@
 // lib/client/logger.client.ts
-import { Data, Effect, pipe, Schedule } from "effect";
+import { Console, Data, Effect, pipe, Schedule } from "effect";
 import type { LogLevel } from "../shared/logConfig";
 import { runClientUnscoped } from "./runtime";
 
@@ -41,22 +41,16 @@ const sendLogToServer = (
     }).pipe(Effect.mapError((cause) => new SendLogError({ cause })));
   }
 
-  // --- FIX START ---
-  // Create a base schedule for retries.
   const baseRetrySchedule = Schedule.exponential("100 millis").pipe(
     Schedule.jittered,
     Schedule.compose(Schedule.recurs(3)),
   );
 
-  // Use `Schedule.onDecision` to tap into the schedule's logic and perform a side-effect (logging).
-  // This is the idiomatic way to handle "on retry" actions.
   const loggingRetrySchedule = baseRetrySchedule.pipe(
     Schedule.onDecision(() =>
-      // This is a synchronous side-effect that does not require the `Console` service.
-      Effect.sync(() => console.warn(`Log transmission failed.`)),
+      Console.warn(`Log transmission failed. Retrying...`),
     ),
   );
-  // --- FIX END ---
 
   return Effect.tryPromise({
     try: () =>
@@ -77,7 +71,6 @@ const sendLogToServer = (
             }),
           ),
     ),
-    // Use the enhanced schedule directly with Effect.retry.
     Effect.retry(loggingRetrySchedule),
   );
 };
@@ -86,7 +79,6 @@ const createClientLogger = (): Logger => {
   return {
     info: (...args) => {
       console.info(...args);
-      // Run the logging effect in the background
       runClientUnscoped(sendLogToServer("info", args));
     },
     error: (...args) => {
@@ -104,12 +96,12 @@ const createClientLogger = (): Logger => {
   };
 };
 
-const createClientLoggerEffect = Effect.sync(() => {
-  console.info(
+const createClientLoggerEffect = pipe(
+  Console.log(
     "Client logger created. All logs will be sent to the server endpoint.",
-  );
-  return createClientLogger();
-});
+  ),
+  Effect.map(() => createClientLogger()),
+);
 
 export const clientLoggerPromise: Promise<Logger> = Effect.runPromise(
   createClientLoggerEffect,

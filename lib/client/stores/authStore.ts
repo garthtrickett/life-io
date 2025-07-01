@@ -1,8 +1,10 @@
-// File: store/authStore.ts
+// File: lib/client/stores/authStore.ts
 import { signal } from "@preact/signals-core";
 import { Effect, pipe } from "effect";
 import { trpc } from "../../../lib/client/trpc";
 import type { User } from "../../../types/generated/public/User";
+import { runClientPromise } from "../runtime";
+import { clientLog } from "../logger.client";
 
 // --- Model and Action Types ---
 export interface AuthModel {
@@ -49,46 +51,113 @@ const update = (model: AuthModel, action: AuthAction): AuthModel => {
 
 // --- Side-Effect "React" Function ---
 const react = async (action: AuthAction) => {
+  const currentUserId = authState.value.user?.id;
   switch (action.type) {
     case "AUTH_CHECK_START": {
-      await pipe(
-        Effect.tryPromise({
-          try: () => trpc.auth.me.query(),
-          catch: (err) => new Error(String(err)),
-        }),
-        // --- FIX: Handle the `User | null` return type explicitly ---
+      const authCheckEffect = pipe(
+        clientLog("info", "Starting auth check...", undefined, "authStore"),
+        Effect.andThen(
+          Effect.tryPromise({
+            try: () => trpc.auth.me.query(),
+            catch: (err) => new Error(String(err)),
+          }),
+        ),
         Effect.flatMap((user) =>
           user
-            ? Effect.succeed(
-                proposeAuthAction({
-                  type: "AUTH_CHECK_SUCCESS",
-                  payload: user,
-                }),
+            ? pipe(
+                clientLog(
+                  "info",
+                  `Auth check success for ${user.email}`,
+                  user.id,
+                  "authStore",
+                ),
+                Effect.andThen(
+                  Effect.sync(() =>
+                    proposeAuthAction({
+                      type: "AUTH_CHECK_SUCCESS",
+                      payload: user,
+                    }),
+                  ),
+                ),
               )
-            : Effect.succeed(proposeAuthAction({ type: "AUTH_CHECK_FAILURE" })),
+            : pipe(
+                clientLog(
+                  "info",
+                  "Auth check failed: No active session.",
+                  undefined,
+                  "authStore",
+                ),
+                Effect.andThen(
+                  Effect.sync(() =>
+                    proposeAuthAction({ type: "AUTH_CHECK_FAILURE" }),
+                  ),
+                ),
+              ),
         ),
-        Effect.catchAll(() =>
-          Effect.succeed(proposeAuthAction({ type: "AUTH_CHECK_FAILURE" })),
+        Effect.catchAll((error) =>
+          pipe(
+            clientLog(
+              "error",
+              `Auth check threw an error: ${String(error)}`,
+              undefined,
+              "authStore",
+            ),
+            Effect.andThen(
+              Effect.sync(() =>
+                proposeAuthAction({ type: "AUTH_CHECK_FAILURE" }),
+              ),
+            ),
+          ),
         ),
-        Effect.runPromise,
       );
+      await runClientPromise(authCheckEffect);
       break;
     }
     case "LOGOUT_START": {
-      await pipe(
-        Effect.tryPromise(() => trpc.auth.logout.mutate()),
+      const logoutEffect = pipe(
+        clientLog(
+          "info",
+          "Logout process started.",
+          currentUserId,
+          "authStore",
+        ),
+        Effect.andThen(Effect.tryPromise(() => trpc.auth.logout.mutate())),
         Effect.tap(() =>
           Effect.sync(() => {
             document.cookie =
               "session_id=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
           }),
         ),
-        Effect.andThen(() => proposeAuthAction({ type: "LOGOUT_SUCCESS" })),
-        Effect.catchAll(() =>
-          Effect.succeed(proposeAuthAction({ type: "LOGOUT_SUCCESS" })),
-        ), // Logout on client even if server fails
-        Effect.runPromise,
+        Effect.andThen(
+          pipe(
+            clientLog(
+              "info",
+              "Logout successful, client-side cleanup complete.",
+              currentUserId,
+              "authStore",
+            ),
+            Effect.andThen(
+              Effect.sync(() => proposeAuthAction({ type: "LOGOUT_SUCCESS" })),
+            ),
+          ),
+        ),
+        Effect.catchAll((error) =>
+          pipe(
+            clientLog(
+              "warn",
+              `Server logout failed, but proceeding with client-side cleanup: ${String(
+                error,
+              )}`,
+              currentUserId,
+              "authStore",
+            ),
+            Effect.andThen(
+              Effect.sync(() => proposeAuthAction({ type: "LOGOUT_SUCCESS" })),
+            ),
+          ),
+        ),
       );
+      await runClientPromise(logoutEffect);
       break;
     }
   }
