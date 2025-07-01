@@ -1,5 +1,4 @@
 // File: ./components/pages/signup-page.ts
-// File: ./components/pages/signup-page.ts (Refactored)
 import { html, type TemplateResult, nothing } from "lit-html";
 import { signal } from "@preact/signals-core";
 import { pipe, Effect, Data } from "effect";

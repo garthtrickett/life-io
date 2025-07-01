@@ -34,7 +34,7 @@ const createLoggerEffect = pipe(
       : Effect.succeed(pretty({ colorize: true }) as DestinationStream),
   ),
   Effect.map((stream: DestinationStream) =>
-    pino({ base: undefined, level: getEffectiveLogLevel() }, stream),
+    pino({ level: getEffectiveLogLevel() }, stream),
   ),
   Effect.tap(() => Console.log("Server Logger created successfully")),
 );

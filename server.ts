@@ -1,13 +1,11 @@
-// File: ./server.ts (Refactored)
+// File: ./server.ts (Refactored for strictness)
 import { existsSync, readFileSync } from "node:fs";
 import { staticPlugin } from "@elysiajs/static";
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import { Cause, Data, Effect, Exit, Option } from "effect";
 import { Elysia } from "elysia";
 
-import { s3 } from "./lib/server/s3";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
-import { randomBytes } from "node:crypto";
 import { db } from "./db/kysely";
 import { validateSessionEffect } from "./lib/server/auth";
 
@@ -16,9 +14,12 @@ import { runServerPromise, runServerUnscoped } from "./lib/server/runtime";
 import { createContext } from "./trpc/context";
 import { appRouter } from "./trpc/router";
 
+// --- Service Imports ---
+import { S3 } from "./lib/server/s3";
+import { generateId } from "./lib/server/utils";
 // --- Effect Schema imports ---
 import { Schema } from "@effect/schema";
-// FIX: Import the function directly
+// --- FIX: Import the function directly for stricter type compliance ---
 import { formatErrorSync } from "@effect/schema/TreeFormatter";
 
 // --- Custom Error Types for Avatar Upload ---
@@ -64,7 +65,7 @@ const logClientMessageEffect = (body: unknown) =>
       ClientLogBody,
     )(body).pipe(
       Effect.mapError(
-        // FIX: Call the function directly
+        // --- FIX: Call the function directly ---
         (e) => new FileError({ message: formatErrorSync(e) }),
       ),
     );
@@ -83,10 +84,7 @@ const logClientMessageEffect = (body: unknown) =>
   });
 
 // --- Refactored Effect for handling avatar uploads with typed errors ---
-const avatarUploadEffect = (context: {
-  request: Request;
-  body: unknown; // Body is now unknown and will be parsed by the effect
-}) =>
+const avatarUploadEffect = (context: { request: Request; body: unknown }) =>
   Effect.gen(function* () {
     yield* serverLog(
       "info",
@@ -95,11 +93,13 @@ const avatarUploadEffect = (context: {
       "AvatarUpload",
     );
 
+    const s3 = yield* S3;
+
     const decodedBody = yield* Schema.decodeUnknown(AvatarUploadBody)(
       context.body,
     ).pipe(
       Effect.mapError(
-        // FIX: Call the function directly
+        // --- FIX: Call the function directly ---
         (e) => new FileError({ message: formatErrorSync(e) }),
       ),
     );
@@ -125,6 +125,7 @@ const avatarUploadEffect = (context: {
       ),
     );
 
+    // --- FIX: strictNullChecks requires an explicit check for the 'user' object ---
     if (!user) {
       return yield* Effect.fail(
         new AuthError({ message: "Unauthorized: Invalid session." }),
@@ -140,7 +141,7 @@ const avatarUploadEffect = (context: {
 
     const bucketName = process.env.BUCKET_NAME!;
     const fileExtension = avatar.type.split("/")[1] || "jpg";
-    const randomId = randomBytes(16).toString("hex");
+    const randomId = yield* generateId(16);
     const key = `avatars/${user.id}/${Date.now()}-${randomId}.${fileExtension}`;
 
     const buffer = yield* Effect.tryPromise({
@@ -229,7 +230,6 @@ const setupApp = Effect.gen(function* () {
   app.get("/trpc/*", handleTrpc);
   app.post("/trpc/*", handleTrpc);
 
-  // Removed Elysia's validation object. Validation is now inside the effect.
   app.post("/api/user/avatar", (context) =>
     runServerPromise(
       avatarUploadEffect(context).pipe(
@@ -249,7 +249,6 @@ const setupApp = Effect.gen(function* () {
     ),
   );
 
-  // Removed Elysia's validation object. Validation is now inside the effect.
   app.post("/log/client", ({ body }) =>
     runServerPromise(
       logClientMessageEffect(body).pipe(

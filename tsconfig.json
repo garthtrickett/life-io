@@ -2,9 +2,11 @@
 {
   "compilerOptions": {
     "experimentalDecorators": true,
-    // --- FIX: Set to 'false' ---
+    // --- FIX: Stricter type-checking is now enabled ---
+    "strict": true,
+    "exactOptionalPropertyTypes": true,
     // Lit's decorators work by replacing class fields with accessors.
-    // When this is 'true' (the modern standard), it uses `Object.defineProperty`,
+    // When `useDefineForClassFields` is 'true', it uses `Object.defineProperty`,
     // which prevents Lit's decorators from working correctly. Setting it to 'false'
     // uses the legacy behavior that Lit's decorators rely on.
     "useDefineForClassFields": false,
@@ -14,11 +16,13 @@
     "target": "esnext",
     "module": "esnext",
     "moduleResolution": "bundler", // same algorithm Bun uses
-    "lib": ["esnext", "dom"], // add 'dom' for fetch, WebSocket, etc.
+    "lib": [
+      "esnext",
+      "dom"
+    ], // add 'dom' for fetch, WebSocket, etc.
     "verbatimModuleSyntax": false, // This is the correct option
     "esModuleInterop": true,
     /* ——— Strictness ——— */
-    "strict": true,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true, // faster CI without losing safety
     /* ——— Misc quality-of-life ——— */
@@ -30,6 +34,13 @@
     ]
   },
   /* ——— What to check ——— */
-  "include": ["./**/*.ts", "./**/*.tsx", "./types/**/*", "vite-env.d.ts"],
-  "exclude": ["node_modules"]
+  "include": [
+    "./**/*.ts",
+    "./**/*.tsx",
+    "./types/**/*",
+    "vite-env.d.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
 }

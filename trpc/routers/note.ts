@@ -19,7 +19,7 @@ import { s } from "../validator";
 // --- Input Schemas defined with Effect Schema ---
 const CreateNoteInput = Schema.Struct({
   title: Schema.String.pipe(
-    // FIX: The message is now a function that returns a string.
+    // --- FIX: In newer versions of @effect/schema, message must be a function ---
     Schema.minLength(1, { message: () => "Title cannot be empty." }),
   ),
   content: Schema.String,
@@ -32,7 +32,7 @@ const GetByIdInput = Schema.Struct({
 const UpdateNoteInput = Schema.Struct({
   id: NoteIdSchema,
   title: Schema.String.pipe(
-    // FIX: The message is now a function that returns a string.
+    // --- FIX: In newer versions of @effect/schema, message must be a function ---
     Schema.minLength(1, { message: () => "Title cannot be empty." }),
   ),
   content: Schema.String,

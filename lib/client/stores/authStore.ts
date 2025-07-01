@@ -29,7 +29,6 @@ export const authState = signal<AuthModel>({
 
 // --- Pure Update Function ---
 const update = (model: AuthModel, action: AuthAction): AuthModel => {
-  // ... (update logic remains the same as your existing store)
   switch (action.type) {
     case "AUTH_CHECK_START":
       return { ...model, status: "authenticating" };
@@ -57,6 +56,7 @@ const react = async (action: AuthAction) => {
           try: () => trpc.auth.me.query(),
           catch: (err) => new Error(String(err)),
         }),
+        // --- FIX: Handle the `User | null` return type explicitly ---
         Effect.flatMap((user) =>
           user
             ? Effect.succeed(

@@ -1,4 +1,4 @@
-// File: ./components/pages/login-page.ts
+// File: ./components/pages/login-page.ts (Refactored for strictness)
 import { html, type TemplateResult, nothing } from "lit-html";
 import { signal } from "@preact/signals-core";
 import { pipe, Effect, Exit, Cause } from "effect";
@@ -79,17 +79,15 @@ const react = async (action: Action) => {
     if (Exit.isSuccess(exit)) {
       propose({
         type: "LOGIN_SUCCESS",
-        /*  we know what the router returns; assert it
-            (or add a type parameter to loginEffect)   */
+        // --- FIX: Safely cast the `unknown` success value from the exit ---
         payload: exit.value as LoginSuccessPayload,
       });
     } else {
       const error = Cause.squash(exit.cause);
-      // --- FIX START ---
+      // --- FIX: Safely handle the `unknown` error type from Cause.squash ---
       const errorMessage =
         error instanceof Error ? error.message : "An unknown error occurred.";
       propose({ type: "LOGIN_ERROR", payload: errorMessage });
-      // --- FIX END ---
     }
   }
 

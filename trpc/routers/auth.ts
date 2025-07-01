@@ -1,4 +1,4 @@
-// File: trpc/routers/auth.ts
+// File: trpc/routers/auth.ts (Refactored for strictness)
 import { router, publicProcedure, loggedInProcedure } from "../trpc";
 import { Effect, pipe, Option } from "effect";
 import {
@@ -11,7 +11,6 @@ import type { NewUser } from "../../types/generated/public/User";
 import { perms } from "../../lib/shared/permissions";
 import { runServerPromise } from "../../lib/server/runtime";
 import { serverLog } from "../../lib/server/logger.server";
-import { generateId } from "../../lib/server/utils";
 import { createDate, isWithinExpirationDate } from "oslo";
 import { TimeSpan } from "oslo";
 import type { EmailVerificationTokenId } from "../../types/generated/public/EmailVerificationToken";
@@ -27,6 +26,7 @@ import {
   TokenCreationError,
   TokenInvalidError,
 } from "../../features/auth/Errors";
+import { generateId } from "../../lib/server/utils";
 
 // --- Schema Imports ---
 import { Schema } from "@effect/schema";
@@ -110,7 +110,7 @@ export const authRouter = router({
         "auth:signup",
       );
 
-      const verificationToken = generateId(40);
+      const verificationToken = yield* generateId(40);
       yield* Effect.tryPromise({
         try: () =>
           db
@@ -180,7 +180,7 @@ export const authRouter = router({
     return runServerPromise(program);
   }),
 
-  // --- LOGIN (REFACTORED with Effect.gen and fixed logic) ---
+  // --- LOGIN (REFACTORED with strict null checks) ---
   login: publicProcedure.input(s(LoginInput)).mutation(({ input }) => {
     const { email, password } = input;
 
@@ -193,7 +193,7 @@ export const authRouter = router({
         "auth:login",
       );
 
-      // 1. Find user or fail
+      // --- FIX: `executeTakeFirst` returns T | undefined. This is now handled safely. ---
       const user = yield* Effect.tryPromise({
         try: () =>
           db
@@ -209,12 +209,11 @@ export const authRouter = router({
         ),
       );
 
-      // 2. Check for password hash
+      // --- FIX: strictNullChecks means we must check password_hash exists ---
       if (!user.password_hash) {
         yield* Effect.fail(new InvalidCredentialsError());
       }
 
-      // 3. Check if email is verified
       if (!user.email_verified) {
         yield* serverLog(
           "warn",
@@ -225,7 +224,6 @@ export const authRouter = router({
         yield* Effect.fail(new EmailNotVerifiedError());
       }
 
-      // 4. Verify password
       const isValidPassword = yield* Effect.tryPromise({
         try: () => argon2id.verify(user.password_hash, password),
         catch: (cause) => new PasswordHashingError({ cause }),
@@ -235,7 +233,6 @@ export const authRouter = router({
         yield* Effect.fail(new InvalidCredentialsError());
       }
 
-      // 5. Create session
       const sessionId = yield* createSessionEffect(user.id).pipe(
         Effect.mapError((cause) => new AuthDatabaseError({ cause })),
       );
@@ -287,7 +284,7 @@ export const authRouter = router({
     );
   }),
 
-  // --- CHANGE PASSWORD (REFACTORED with Effect.gen and fixed logic) ---
+  // --- CHANGE PASSWORD (REFACTORED with strict null checks) ---
   changePassword: loggedInProcedure
     .input(s(ChangePasswordInput))
     .mutation(({ input, ctx }) => {
@@ -381,7 +378,6 @@ export const authRouter = router({
       return runServerPromise(program);
     }),
 
-  // --- LOGOUT ---
   logout: loggedInProcedure.mutation(({ ctx }) => {
     const program = Effect.gen(function* () {
       yield* serverLog(
@@ -396,12 +392,10 @@ export const authRouter = router({
     return runServerPromise(program);
   }),
 
-  // --- ME ---
   me: publicProcedure.query(({ ctx }) => {
     return ctx.user;
   }),
 
-  // --- REQUEST PASSWORD RESET ---
   requestPasswordReset: publicProcedure
     .input(s(RequestPasswordResetInput))
     .mutation(({ input }) => {
@@ -424,8 +418,9 @@ export const authRouter = router({
           catch: () => null,
         });
 
+        // --- FIX: Handles the case where the user might be null ---
         if (user) {
-          const tokenId = generateId(40);
+          const tokenId = yield* generateId(40);
           yield* Effect.tryPromise({
             try: () =>
               db
@@ -490,7 +485,7 @@ export const authRouter = router({
       return runServerPromise(program);
     }),
 
-  // --- RESET PASSWORD (REFACTORED) ---
+  // --- RESET PASSWORD (REFACTORED with strict null checks) ---
   resetPassword: publicProcedure
     .input(s(ResetPasswordInput))
     .mutation(({ input }) => {
@@ -511,7 +506,7 @@ export const authRouter = router({
         Effect.flatMap((storedToken) =>
           pipe(
             Effect.sync(() => storedToken),
-            // FIX: Use !!t to check for both null and undefined
+            // --- FIX: Safely handles potentially null/undefined token and expiration check ---
             Effect.filterOrFail(
               (t): t is NonNullable<typeof t> =>
                 !!t && isWithinExpirationDate(t.expires_at),
@@ -597,7 +592,7 @@ export const authRouter = router({
       return runServerPromise(program);
     }),
 
-  // --- VERIFY EMAIL (REFACTORED) ---
+  // --- VERIFY EMAIL (REFACTORED with strict null checks) ---
   verifyEmail: publicProcedure
     .input(s(VerifyEmailInput))
     .mutation(({ input }) => {
@@ -618,7 +613,7 @@ export const authRouter = router({
         Effect.flatMap((storedToken) =>
           pipe(
             Effect.sync(() => storedToken),
-            // FIX: Use !!t to check for both null and undefined
+            // --- FIX: Safely handles potentially null/undefined token and expiration check ---
             Effect.filterOrFail(
               (t): t is NonNullable<typeof t> =>
                 !!t && isWithinExpirationDate(t.expires_at),

@@ -1,30 +1,48 @@
 // lib/server/runtime.ts
-import { Runtime, Context } from "effect";
-import { db as kyselyInstance } from "../../db/kysely";
-import { Db } from "../../db/DbTag";
+import { Effect, Layer } from "effect";
+import type { Db } from "../../db/DbTag";
+import { DbLayer } from "../../db/DbLayer";
+import type { S3 } from "./s3";
+import { S3Live } from "./s3";
+import { CryptoLive, type Crypto } from "./crypto";
 
-const serverContext = Context.make(Db, kyselyInstance);
+// 1. Combine all live service layers for the server into a single Layer.
+//    This is the "recipe" for building all our services.
+const ServerLive = Layer.mergeAll(DbLayer, S3Live, CryptoLive);
 
-// 2. Build the runtime configuration, providing our new context
-//    and borrowing the default flags and fiberRefs.
-const serverRuntime = Runtime.make({
-  context: serverContext,
-  fiberRefs: Runtime.defaultRuntime.fiberRefs,
-  runtimeFlags: Runtime.defaultRuntime.runtimeFlags,
-});
+// Define the context type that our server effects will require.
+type ServerContext = Db | S3 | Crypto;
 
 /**
  * Executes a server-side Effect and returns a Promise of its result.
- * [cite_start]This should be used for all tRPC procedures that run Effects. [cite: 1958]
+ * This function takes an effect that requires services from our application,
+ * provides the live implementations via `ServerLive`, and then runs it.
  */
-export const runServerPromise = Runtime.runPromise(serverRuntime);
+export const runServerPromise = <A, E>(
+  effect: Effect.Effect<A, E, ServerContext>,
+) => {
+  // The 'effect' requires services (Db, S3). We provide the 'ServerLive'
+  // layer to satisfy these requirements, including our new Crypto service.
+  const providedEffect: Effect.Effect<A, E, never> = Effect.provide(
+    effect,
+    ServerLive,
+  );
+  // The resulting effect has no more requirements (R = never), so we can
+  // run it with the default runtime's `runPromise`.
+  return Effect.runPromise(providedEffect);
+};
 
 /**
- * Executes a server-side Effect in an unscoped manner, which is not tied
- * to the lifecycle of the parent fiber. [cite_start]This is suitable for top-level [cite: 1959]
- * "fire-and-forget" tasks that should not be interrupted, like logging
- * server startup.
- *
- * [cite_start]For tasks within a request, prefer `Effect.forkDaemon`. [cite: 1960]
+ * Executes a server-side Effect in a "fire-and-forget" manner.
+ * This function takes an effect, provides its required services,
+ * and then forks it into the background.
  */
-export const runServerUnscoped = Runtime.runFork(serverRuntime);
+export const runServerUnscoped = <A, E>(
+  effect: Effect.Effect<A, E, ServerContext>,
+) => {
+  const providedEffect: Effect.Effect<A, E, never> = Effect.provide(
+    effect,
+    ServerLive,
+  );
+  return Effect.runFork(providedEffect);
+};

@@ -1,7 +1,7 @@
 // lib/shared/domain.ts
 import { Effect } from "effect";
 import { Schema } from "@effect/schema";
-// FIX: Import the `formatErrorSync` function directly.
+// --- FIX: Import the `formatErrorSync` function directly for stricter type compliance ---
 import { formatErrorSync } from "@effect/schema/TreeFormatter";
 import { NoteIdSchema, UserIdSchema } from "./schemas";
 import type { NoteId } from "../../types/generated/public/Note";
@@ -13,7 +13,7 @@ import type { UserId } from "../../types/generated/public/User";
  */
 export const validateNoteId = (value: unknown): Effect.Effect<NoteId, Error> =>
   Schema.decodeUnknown(NoteIdSchema)(value).pipe(
-    // FIX: Call the function directly, not as a method on an object.
+    // --- FIX: Call the function directly, not as a method on an object ---
     Effect.mapError((e) => new Error(formatErrorSync(e))),
   );
 
@@ -23,6 +23,6 @@ export const validateNoteId = (value: unknown): Effect.Effect<NoteId, Error> =>
  */
 export const validateUserId = (value: unknown): Effect.Effect<UserId, Error> =>
   Schema.decodeUnknown(UserIdSchema)(value).pipe(
-    // FIX: Call the function directly, not as a method on an object.
+    // --- FIX: Call the function directly, not as a method on an object ---
     Effect.mapError((e) => new Error(formatErrorSync(e))),
   );
