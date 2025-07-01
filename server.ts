@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { staticPlugin } from "@elysiajs/static";
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import { Cause, Data, Effect, Exit, Option } from "effect";
-import { Elysia, t } from "elysia";
+import { Elysia } from "elysia";
 
 import { s3 } from "./lib/server/s3";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
@@ -16,6 +16,11 @@ import { runServerPromise, runServerUnscoped } from "./lib/server/runtime";
 import { createContext } from "./trpc/context";
 import { appRouter } from "./trpc/router";
 
+// --- Effect Schema imports ---
+import { Schema } from "@effect/schema";
+// FIX: Import the function directly
+import { formatErrorSync } from "@effect/schema/TreeFormatter";
+
 // --- Custom Error Types for Avatar Upload ---
 class AuthError extends Data.TaggedError("AuthError")<{ message: string }> {}
 class FileError extends Data.TaggedError("FileError")<{ message: string }> {}
@@ -26,15 +31,44 @@ class DbUpdateError extends Data.TaggedError("DbUpdateError")<{
   cause: unknown;
 }> {}
 
+// --- Body Schemas with Effect Schema ---
+const AvatarUploadBody = Schema.Struct({
+  avatar: Schema.instanceOf(File).pipe(
+    Schema.filter((file) => file.size <= 5 * 1024 * 1024, {
+      message: () => `File size must not exceed 5MB.`,
+    }),
+    Schema.filter(
+      (file) => ["image/jpeg", "image/png", "image/webp"].includes(file.type),
+      {
+        message: () =>
+          `File type must be one of: image/jpeg, image/png, image/webp.`,
+      },
+    ),
+  ),
+});
+
+const ClientLogBody = Schema.Struct({
+  level: Schema.String,
+  args: Schema.Array(Schema.Any),
+});
+
 type ServerLoggableLevel = "info" | "error" | "warn" | "debug";
 
 const isLoggableLevel = (level: string): level is ServerLoggableLevel => {
   return ["info", "error", "warn", "debug"].includes(level);
 };
 
-const logClientMessageEffect = (body: { level: string; args: unknown[] }) =>
+const logClientMessageEffect = (body: unknown) =>
   Effect.gen(function* () {
-    const { level: levelFromClient, args } = body;
+    const { level: levelFromClient, args } = yield* Schema.decodeUnknown(
+      ClientLogBody,
+    )(body).pipe(
+      Effect.mapError(
+        // FIX: Call the function directly
+        (e) => new FileError({ message: formatErrorSync(e) }),
+      ),
+    );
+
     if (isLoggableLevel(levelFromClient)) {
       yield* Effect.forkDaemon(
         serverLog(
@@ -51,7 +85,7 @@ const logClientMessageEffect = (body: { level: string; args: unknown[] }) =>
 // --- Refactored Effect for handling avatar uploads with typed errors ---
 const avatarUploadEffect = (context: {
   request: Request;
-  body: { avatar?: File };
+  body: unknown; // Body is now unknown and will be parsed by the effect
 }) =>
   Effect.gen(function* () {
     yield* serverLog(
@@ -60,6 +94,16 @@ const avatarUploadEffect = (context: {
       undefined,
       "AvatarUpload",
     );
+
+    const decodedBody = yield* Schema.decodeUnknown(AvatarUploadBody)(
+      context.body,
+    ).pipe(
+      Effect.mapError(
+        // FIX: Call the function directly
+        (e) => new FileError({ message: formatErrorSync(e) }),
+      ),
+    );
+    const { avatar } = decodedBody;
 
     const cookieHeader = context.request.headers.get("Cookie") ?? "";
     const sessionIdOption = Option.fromNullable(
@@ -93,15 +137,6 @@ const avatarUploadEffect = (context: {
       user.id,
       "AvatarUpload",
     );
-
-    const { avatar } = context.body;
-    if (!avatar || !(avatar instanceof Blob)) {
-      return yield* Effect.fail(
-        new FileError({
-          message: "Bad Request: 'avatar' field is missing or not a file.",
-        }),
-      );
-    }
 
     const bucketName = process.env.BUCKET_NAME!;
     const fileExtension = avatar.type.split("/")[1] || "jpg";
@@ -194,46 +229,36 @@ const setupApp = Effect.gen(function* () {
   app.get("/trpc/*", handleTrpc);
   app.post("/trpc/*", handleTrpc);
 
-  app.post(
-    "/api/user/avatar",
-    (context) =>
-      runServerPromise(
-        avatarUploadEffect(context).pipe(
-          Effect.catchTags({
-            AuthError: (e) =>
-              Effect.succeed(new Response(e.message, { status: 401 })),
-            FileError: (e) =>
-              Effect.succeed(new Response(e.message, { status: 400 })),
-            S3UploadError: () =>
-              Effect.succeed(
-                new Response("S3 upload failed.", { status: 500 }),
-              ),
-            DbUpdateError: () =>
-              Effect.succeed(
-                new Response("Database update failed.", { status: 500 }),
-              ),
-          }),
-        ),
-      ),
-    {
-      body: t.Object({
-        avatar: t.File({
-          maxSize: "5m",
-          type: ["image/jpeg", "image/png", "image/webp"],
+  // Removed Elysia's validation object. Validation is now inside the effect.
+  app.post("/api/user/avatar", (context) =>
+    runServerPromise(
+      avatarUploadEffect(context).pipe(
+        Effect.catchTags({
+          AuthError: (e) =>
+            Effect.succeed(new Response(e.message, { status: 401 })),
+          FileError: (e) =>
+            Effect.succeed(new Response(e.message, { status: 400 })),
+          S3UploadError: () =>
+            Effect.succeed(new Response("S3 upload failed.", { status: 500 })),
+          DbUpdateError: () =>
+            Effect.succeed(
+              new Response("Database update failed.", { status: 500 }),
+            ),
         }),
-      }),
-    },
+      ),
+    ),
   );
 
-  app.post(
-    "/log/client",
-    ({ body }) => runServerPromise(logClientMessageEffect(body)),
-    {
-      body: t.Object({
-        level: t.String(),
-        args: t.Array(t.Any()),
-      }),
-    },
+  // Removed Elysia's validation object. Validation is now inside the effect.
+  app.post("/log/client", ({ body }) =>
+    runServerPromise(
+      logClientMessageEffect(body).pipe(
+        Effect.catchTags({
+          FileError: (e) =>
+            Effect.succeed(new Response(e.message, { status: 400 })),
+        }),
+      ),
+    ),
   );
 
   if (isProduction) {

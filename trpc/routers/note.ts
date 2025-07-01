@@ -1,7 +1,5 @@
 // FILE: trpc/routers/note.ts
 import { router, createPermissionProtectedProcedure } from "../trpc";
-import { t } from "elysia";
-import { compile } from "@elysiajs/trpc";
 import { createNote } from "../../features/notes/createNote";
 import { getNotes } from "../../features/notes/getNotes";
 import { getNote } from "../../features/notes/getNote";
@@ -14,21 +12,30 @@ import { TRPCError } from "@trpc/server";
 import { NoteIdSchema } from "../../lib/shared/schemas";
 import { Db } from "../../db/DbTag";
 
-const CreateNoteInput = t.Object({
-  title: t.String({ minLength: 1 }),
-  content: t.String(),
+// --- Schema Imports ---
+import { Schema } from "@effect/schema";
+import { s } from "../validator";
+
+// --- Input Schemas defined with Effect Schema ---
+const CreateNoteInput = Schema.Struct({
+  title: Schema.String.pipe(
+    // FIX: The message is now a function that returns a string.
+    Schema.minLength(1, { message: () => "Title cannot be empty." }),
+  ),
+  content: Schema.String,
 });
 
-// Use the imported schema here
-const GetByIdInput = t.Object({
+const GetByIdInput = Schema.Struct({
   id: NoteIdSchema,
 });
 
-// And here
-const UpdateNoteInput = t.Object({
+const UpdateNoteInput = Schema.Struct({
   id: NoteIdSchema,
-  title: t.String({ minLength: 1 }),
-  content: t.String(),
+  title: Schema.String.pipe(
+    // FIX: The message is now a function that returns a string.
+    Schema.minLength(1, { message: () => "Title cannot be empty." }),
+  ),
+  content: Schema.String,
 });
 
 /**
@@ -36,9 +43,7 @@ const UpdateNoteInput = t.Object({
  * Error in the failure channel into a TRPCError with a 'BAD_REQUEST' code,
  * which is suitable for validation failures.
  */
-const runEffectAsTrpc = <A,>(
-  eff: Effect.Effect<A, Error, Db>, // FIX: The context is now correctly typed as Db
-): Promise<A> => {
+const runEffectAsTrpc = <A,>(eff: Effect.Effect<A, Error, Db>): Promise<A> => {
   const program = Effect.catchAll(eff, (e) =>
     Effect.fail(new TRPCError({ code: "BAD_REQUEST", message: e.message })),
   );
@@ -51,29 +56,25 @@ export const noteRouter = router({
   ),
 
   getById: createPermissionProtectedProcedure(perms.note.read)
-    .input(compile(GetByIdInput))
+    .input(s(GetByIdInput))
     .query(({ input, ctx }) => {
-      const { id } = input as typeof GetByIdInput.static;
-      return runEffectAsTrpc(getNote(id, ctx.user.id));
+      return runEffectAsTrpc(getNote(input.id, ctx.user.id));
     }),
 
   create: createPermissionProtectedProcedure(perms.note.write)
-    .input(compile(CreateNoteInput))
+    .input(s(CreateNoteInput))
     .mutation(({ input, ctx }) => {
-      const { title, content } = input as typeof CreateNoteInput.static;
       const noteData: NewNote = {
-        title,
-        content,
+        ...input,
         user_id: ctx.user.id,
       };
       return runEffectAsTrpc(createNote(noteData));
     }),
 
   update: createPermissionProtectedProcedure(perms.note.write)
-    .input(compile(UpdateNoteInput))
+    .input(s(UpdateNoteInput))
     .mutation(({ input, ctx }) => {
-      const { id, ...noteUpdateData } = input as typeof UpdateNoteInput.static;
-      // FIX: Removed the unnecessary and incorrect `as NoteId` cast
+      const { id, ...noteUpdateData } = input;
       return runEffectAsTrpc(updateNote(id, ctx.user.id, noteUpdateData));
     }),
 });

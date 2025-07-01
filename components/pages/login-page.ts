@@ -77,7 +77,12 @@ const react = async (action: Action) => {
     const exit = await runClientPromise(Effect.exit(loginEffect));
 
     if (Exit.isSuccess(exit)) {
-      propose({ type: "LOGIN_SUCCESS", payload: exit.value });
+      propose({
+        type: "LOGIN_SUCCESS",
+        /*  we know what the router returns; assert it
+            (or add a type parameter to loginEffect)   */
+        payload: exit.value as LoginSuccessPayload,
+      });
     } else {
       const error = Cause.squash(exit.cause);
       // --- FIX START ---

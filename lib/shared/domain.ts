@@ -1,40 +1,28 @@
 // lib/shared/domain.ts
 import { Effect } from "effect";
-import { TypeCompiler } from "@sinclair/typebox/compiler";
-import { type TString } from "@sinclair/typebox";
+import { Schema } from "@effect/schema";
+// FIX: Import the `formatErrorSync` function directly.
+import { formatErrorSync } from "@effect/schema/TreeFormatter";
 import { NoteIdSchema, UserIdSchema } from "./schemas";
 import type { NoteId } from "../../types/generated/public/Note";
 import type { UserId } from "../../types/generated/public/User";
 
-// --- Compiled Checkers for performance ---
-const NoteIdChecker = TypeCompiler.Compile(NoteIdSchema);
-const UserIdChecker = TypeCompiler.Compile(UserIdSchema);
-
-// --- Validation Functions ---
-
-/**
- * Helper to create a generic validation effect from a TypeBox checker.
- */
-const makeValidator = <T extends string>( // <-- FIX: The generic constraint is relaxed from `Brand.Brand<any>` to just `string`.
-  checker: ReturnType<typeof TypeCompiler.Compile<TString>>,
-) => {
-  return (value: unknown): Effect.Effect<T, Error> => {
-    if (checker.Check(value)) {
-      // The cast to `T` is safe because we've successfully validated the shape.
-      return Effect.succeed(value as T);
-    }
-    // Extract a more specific error message if available
-    const error = checker.Errors(value).First();
-    return Effect.fail(new Error(error?.message ?? "Validation failed"));
-  };
-};
-
 /**
  * Validates a string to ensure it's a UUID, returning the Kanel-generated `NoteId` branded type.
+ * The function returns an Effect, which will succeed with the branded type or fail with a validation Error.
  */
-export const validateNoteId = makeValidator<NoteId>(NoteIdChecker);
+export const validateNoteId = (value: unknown): Effect.Effect<NoteId, Error> =>
+  Schema.decodeUnknown(NoteIdSchema)(value).pipe(
+    // FIX: Call the function directly, not as a method on an object.
+    Effect.mapError((e) => new Error(formatErrorSync(e))),
+  );
 
 /**
  * Validates a string to ensure it's a UUID, returning the Kanel-generated `UserId` branded type.
+ * The function returns an Effect, which will succeed with the branded type or fail with a validation Error.
  */
-export const validateUserId = makeValidator<UserId>(UserIdChecker);
+export const validateUserId = (value: unknown): Effect.Effect<UserId, Error> =>
+  Schema.decodeUnknown(UserIdSchema)(value).pipe(
+    // FIX: Call the function directly, not as a method on an object.
+    Effect.mapError((e) => new Error(formatErrorSync(e))),
+  );
