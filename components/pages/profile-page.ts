@@ -10,7 +10,7 @@ import styles from "./ProfileView.module.css";
 import { NotionButton } from "../ui/notion-button";
 import { runClientUnscoped, runClientPromise } from "../../lib/client/runtime";
 import { clientLog } from "../../lib/client/logger.client";
-import { pipe, Effect, Exit, Cause } from "effect";
+import { pipe, Effect, Exit, Cause, Data } from "effect";
 import { trpc } from "../../lib/client/trpc";
 import { NotionInput } from "../ui/notion-input";
 
@@ -31,12 +31,17 @@ interface Model {
   confirmPassword: string;
 }
 
+// --- Custom Error Types ---
+class AvatarUploadError extends Data.TaggedError("AvatarUploadError")<{
+  readonly message: string;
+}> {}
+
 // --- Actions ---
 type Action =
   | { type: "AUTH_STATE_CHANGED"; payload: AuthModel }
   | { type: "UPLOAD_START"; payload: File }
   | { type: "UPLOAD_SUCCESS"; payload: string }
-  | { type: "UPLOAD_ERROR"; payload: string }
+  | { type: "UPLOAD_ERROR"; payload: AvatarUploadError }
   | { type: "TOGGLE_CHANGE_PASSWORD_FORM" }
   | { type: "UPDATE_OLD_PASSWORD"; payload: string }
   | { type: "UPDATE_NEW_PASSWORD"; payload: string }
@@ -89,7 +94,7 @@ const update = (action: Action) => {
         ...currentModel,
         status: "error",
         loadingAction: null,
-        message: action.payload,
+        message: action.payload.message,
       };
       break;
     case "TOGGLE_CHANGE_PASSWORD_FORM":
@@ -158,22 +163,40 @@ const update = (action: Action) => {
 // --- React ---
 const react = async (action: Action) => {
   if (action.type === "UPLOAD_START") {
+    // --- REFACTORED: Converted the fetch logic to a declarative Effect pipeline ---
     const formData = new FormData();
     formData.append("avatar", action.payload);
-    try {
-      const response = await fetch("/api/user/avatar", {
-        method: "POST",
-        body: formData,
-      });
-      if (!response.ok) throw new Error(await response.text());
-      const { avatarUrl } = (await response.json()) as { avatarUrl: string };
-      propose({ type: "UPLOAD_SUCCESS", payload: avatarUrl });
-    } catch (e) {
-      propose({
-        type: "UPLOAD_ERROR",
-        payload: e instanceof Error ? e.message : "Upload failed",
-      });
-    }
+
+    const uploadEffect = pipe(
+      Effect.tryPromise({
+        try: () =>
+          fetch("/api/user/avatar", { method: "POST", body: formData }),
+        catch: (cause) => new AvatarUploadError({ message: String(cause) }),
+      }),
+      Effect.flatMap((response) =>
+        response.ok
+          ? Effect.tryPromise({
+              try: () => response.json() as Promise<{ avatarUrl: string }>,
+              catch: (cause) =>
+                new AvatarUploadError({ message: String(cause) }),
+            })
+          : Effect.promise(async () => response.text()).pipe(
+              Effect.flatMap((text) =>
+                Effect.fail(
+                  new AvatarUploadError({ message: text || "Upload failed" }),
+                ),
+              ),
+            ),
+      ),
+      Effect.match({
+        onSuccess: (json) =>
+          propose({ type: "UPLOAD_SUCCESS", payload: json.avatarUrl }),
+        onFailure: (error) => propose({ type: "UPLOAD_ERROR", payload: error }),
+      }),
+    );
+
+    await runClientPromise(uploadEffect);
+    // --- END REFACTOR ---
   } else if (action.type === "CHANGE_PASSWORD_START") {
     const { oldPassword, newPassword, confirmPassword } = model.value;
     if (newPassword !== confirmPassword) {

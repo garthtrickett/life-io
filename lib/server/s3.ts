@@ -1,6 +1,6 @@
 // FILE: lib/server/s3.ts
 import { S3Client } from "@aws-sdk/client-s3";
-import { Context, Effect, Layer, Secret } from "effect";
+import { Context, Effect, Layer, Redacted } from "effect"; // Import Redacted instead of Secret
 import { Config } from "./Config";
 
 /**
@@ -25,8 +25,9 @@ export const S3Live = Layer.effect(
       region,
       endpoint: endpointUrl,
       credentials: {
-        accessKeyId: Secret.value(accessKeyId),
-        secretAccessKey: Secret.value(secretAccessKey),
+        // FIX: Use Redacted.value to get the string from the Redacted config
+        accessKeyId: Redacted.value(accessKeyId),
+        secretAccessKey: Redacted.value(secretAccessKey),
       },
     });
   }),
