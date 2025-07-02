@@ -1,14 +1,33 @@
-// features/notes/getNote.ts
-import { Effect, Option, pipe } from "effect";
+// FILE: features/notes/getNote.ts
+import { Effect, pipe } from "effect";
 import { Db } from "../../db/DbTag";
 import { serverLog } from "../../lib/server/logger.server";
 import { validateNoteId, validateUserId } from "../../lib/shared/domain";
-import { NoteDatabaseError, NoteNotFoundError } from "./Errors"; // <-- Import specific errors
+import {
+  NoteDatabaseError,
+  NoteNotFoundError,
+  NoteValidationError,
+} from "./Errors";
+import { Schema } from "@effect/schema";
+import { NoteSchema } from "../../lib/shared/schemas";
+import type { Note } from "../../types/generated/public/Note";
 
-export const getNote = (noteId: string, userId: string) =>
+// --- FIX: Map validation errors and adjust function return type ---
+export const getNote = (
+  noteId: string,
+  userId: string,
+): Effect.Effect<
+  Note,
+  NoteDatabaseError | NoteNotFoundError | NoteValidationError,
+  Db
+> =>
   Effect.gen(function* () {
-    const validatedNoteId = yield* validateNoteId(noteId);
-    const validatedUserId = yield* validateUserId(userId);
+    const validatedNoteId = yield* validateNoteId(noteId).pipe(
+      Effect.mapError((cause) => new NoteValidationError({ cause })),
+    );
+    const validatedUserId = yield* validateUserId(userId).pipe(
+      Effect.mapError((cause) => new NoteValidationError({ cause })),
+    );
     const db = yield* Db;
 
     yield* Effect.forkDaemon(
@@ -29,13 +48,16 @@ export const getNote = (noteId: string, userId: string) =>
             .where("id", "=", validatedNoteId)
             .where("user_id", "=", validatedUserId)
             .executeTakeFirst(),
-        // --- REFACTORED: Catch and wrap in a specific error ---
         catch: (error) => new NoteDatabaseError({ cause: error }),
       }),
-      // --- REFACTORED: Check if the note was found ---
-      Effect.flatMap(Option.fromNullable),
-      Effect.catchTag("NoSuchElementException", () =>
-        Effect.fail(new NoteNotFoundError({ noteId, userId })),
+      Effect.flatMap((maybeNote) =>
+        Effect.if(maybeNote === undefined, {
+          onTrue: () => Effect.fail(new NoteNotFoundError({ noteId, userId })),
+          onFalse: () =>
+            Schema.decodeUnknown(NoteSchema)(maybeNote!).pipe(
+              Effect.mapError((cause) => new NoteValidationError({ cause })),
+            ),
+        }),
       ),
       Effect.tap((note) =>
         Effect.forkDaemon(
@@ -47,7 +69,6 @@ export const getNote = (noteId: string, userId: string) =>
           ),
         ),
       ),
-      // --- REFACTORED: Log the specific error ---
       Effect.catchAll((error) =>
         pipe(
           Effect.forkDaemon(
@@ -62,6 +83,5 @@ export const getNote = (noteId: string, userId: string) =>
         ),
       ),
     );
-
     return result;
   });

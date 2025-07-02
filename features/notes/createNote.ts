@@ -1,14 +1,21 @@
-// features/notes/createNote.ts
+// FILE: features/notes/createNote.ts
 import { Effect, pipe } from "effect";
 import { Db } from "../../db/DbTag";
-import type { NewNote } from "../../types/generated/public/Note";
+import type { NewNote, Note } from "../../types/generated/public/Note";
 import { serverLog } from "../../lib/server/logger.server";
 import { validateUserId } from "../../lib/shared/domain";
-import { NoteDatabaseError } from "./Errors"; // <-- Import specific error
+import { NoteDatabaseError, NoteValidationError } from "./Errors";
+import { Schema } from "@effect/schema";
+import { NoteSchema } from "../../lib/shared/schemas";
 
-export const createNote = (note: NewNote) =>
+// --- FIX: Map validation errors and adjust function return type ---
+export const createNote = (
+  note: NewNote,
+): Effect.Effect<Note, NoteDatabaseError | NoteValidationError, Db> =>
   Effect.gen(function* () {
-    const validatedUserId = yield* validateUserId(note.user_id);
+    const validatedUserId = yield* validateUserId(note.user_id).pipe(
+      Effect.mapError((cause) => new NoteValidationError({ cause })),
+    );
     const db = yield* Db;
 
     yield* Effect.forkDaemon(
@@ -24,14 +31,27 @@ export const createNote = (note: NewNote) =>
       Effect.tryPromise({
         try: () =>
           db.insertInto("note").values(note).returningAll().executeTakeFirst(),
-        // --- REFACTORED: Catch and wrap in a specific error ---
         catch: (error) => new NoteDatabaseError({ cause: error }),
       }),
+      Effect.flatMap((maybeNote) =>
+        Effect.if(maybeNote === undefined, {
+          onTrue: () =>
+            Effect.fail(
+              new NoteDatabaseError({
+                cause: "DB did not return created note",
+              }),
+            ),
+          onFalse: () =>
+            Schema.decodeUnknown(NoteSchema)(maybeNote!).pipe(
+              Effect.mapError((cause) => new NoteValidationError({ cause })),
+            ),
+        }),
+      ),
       Effect.tap((createdNote) =>
         Effect.forkDaemon(
           serverLog(
             "info",
-            `Successfully created note with ID: ${createdNote?.id}`,
+            `Successfully created note with ID: ${createdNote.id}`,
             validatedUserId,
             "CreateNote",
           ),
@@ -42,7 +62,6 @@ export const createNote = (note: NewNote) =>
           Effect.forkDaemon(
             serverLog(
               "error",
-              // --- UPDATED: Log the specific error tag for better context ---
               `Failed to create note: ${error._tag}`,
               validatedUserId,
               "CreateNote",
@@ -52,6 +71,5 @@ export const createNote = (note: NewNote) =>
         ),
       ),
     );
-
     return result;
   });

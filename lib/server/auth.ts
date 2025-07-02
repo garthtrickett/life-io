@@ -1,17 +1,16 @@
-// lib/server/auth.ts
+// FILE: lib/server/auth.ts
 import { TimeSpan, createDate } from "oslo";
 import { alphabet, generateRandomString } from "oslo/crypto";
 import { Argon2id } from "oslo/password";
-// --- REMOVED ---
-// import { db } from "../../db/kysely";
 import type { User } from "../../types/generated/public/User";
 import type { SessionId } from "../../types/generated/public/Session";
 import type { UserId } from "../../types/generated/public/User";
-import { runServerPromise } from "./runtime";
 import { serverLog } from "./logger.server";
 import { Effect, Option } from "effect";
-// --- ADDED ---
 import { Db } from "../../db/DbTag";
+import { Schema } from "@effect/schema";
+import { UserSchema } from "../shared/schemas";
+import { formatErrorSync } from "@effect/schema/TreeFormatter";
 
 export const argon2id = new Argon2id();
 
@@ -111,6 +110,7 @@ export const validateSessionEffect = (
       return { user: null, session: null };
     }
 
+    // --- REFACTORED: Validate the user object against the schema ---
     const userOption = yield* Effect.tryPromise({
       try: () =>
         db
@@ -119,7 +119,26 @@ export const validateSessionEffect = (
           .where("id", "=", session.user_id)
           .executeTakeFirst(),
       catch: (e) => new Error(String(e)),
-    }).pipe(Effect.map(Option.fromNullable));
+    }).pipe(
+      Effect.flatMap((maybeUser) =>
+        maybeUser === undefined
+          ? Effect.succeed(Option.none<User>())
+          : Schema.decodeUnknown(UserSchema)(maybeUser).pipe(
+              Effect.map(Option.some),
+              // If validation fails, log it but treat it as "user not found" for security.
+              Effect.catchAll((parseError) =>
+                serverLog(
+                  "warn",
+                  `User object validation failed for user ID ${
+                    session.user_id
+                  }: ${formatErrorSync(parseError)}`,
+                  session.user_id,
+                  "Auth:validate",
+                ).pipe(Effect.andThen(Effect.succeed(Option.none<User>()))),
+              ),
+            ),
+      ),
+    );
 
     if (Option.isNone(userOption)) {
       yield* Effect.forkDaemon(
@@ -142,11 +161,5 @@ export const validateSessionEffect = (
         "Auth",
       ),
     );
-
     return { user, session: { id: session.id } };
   });
-
-// The async version is kept for compatibility if needed, but new code should use the Effect version.
-// This function doesn't need to change, as `runServerPromise` provides the required `Db` context.
-export const validateSession = (sessionId: string) =>
-  runServerPromise(validateSessionEffect(sessionId));

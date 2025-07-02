@@ -1,5 +1,6 @@
-// features/auth/Errors.ts
+// FILE: features/auth/Errors.ts
 import { Data } from "effect";
+import type { ParseError } from "@effect/schema/ParseResult";
 
 /**
  * A generic database error for authentication operations.
@@ -56,4 +57,13 @@ export class TokenInvalidError extends Data.TaggedError("TokenInvalidError") {}
  */
 export class EmailSendError extends Data.TaggedError("EmailSendError")<{
   readonly cause: unknown;
+}> {}
+
+/**
+ * Error for when auth-related data from the DB fails schema validation.
+ */
+export class AuthValidationError extends Data.TaggedError(
+  "AuthValidationError",
+)<{
+  readonly cause: ParseError;
 }> {}

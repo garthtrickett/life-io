@@ -13,7 +13,7 @@ import {
   Duration,
 } from "effect";
 // Import Schedule and Duration
-import { Elysia } from "elysia";
+import { Elysia, type Context } from "elysia";
 
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { validateSessionEffect } from "./lib/server/auth";
@@ -100,8 +100,12 @@ const logClientMessageEffect = (body: unknown) =>
       );
     }
     return new Response(null, { status: 204 });
-  });
-
+  }).pipe(
+    Effect.catchTags({
+      FileError: (e) =>
+        Effect.succeed(new Response(e.message, { status: 400 })),
+    }),
+  );
 // --- Refactored Effect for handling avatar uploads with typed errors ---
 const avatarUploadEffect = (context: { request: Request; body: unknown }) =>
   Effect.gen(function* () {
@@ -229,7 +233,33 @@ const avatarUploadEffect = (context: { request: Request; body: unknown }) =>
       ),
     );
     return { avatarUrl };
-  });
+  }).pipe(
+    Effect.map((body) => new Response(JSON.stringify(body), { status: 200 })),
+    Effect.catchTags({
+      AuthError: (e) =>
+        Effect.succeed(new Response(e.message, { status: 401 })),
+      FileError: (e) =>
+        Effect.succeed(new Response(e.message, { status: 400 })),
+      S3UploadError: () =>
+        Effect.succeed(new Response("S3 upload failed.", { status: 500 })),
+      DbUpdateError: () =>
+        Effect.succeed(
+          new Response("Database update failed.", { status: 500 }),
+        ),
+    }),
+  );
+
+// --- Define ServerContext and toHandler Helper ---
+type ServerContext =
+  | import("./db/DbTag").Db
+  | import("./lib/server/s3").S3
+  | import("./lib/server/crypto").Crypto;
+const toHandler =
+  <E,>(
+    effect: (context: Context) => Effect.Effect<Response, E, ServerContext>,
+  ) =>
+  (context: Context) =>
+    runServerPromise(effect(context));
 
 // --- Main application setup Effect ---
 const setupApp = Effect.gen(function* () {
@@ -247,34 +277,10 @@ const setupApp = Effect.gen(function* () {
   app.get("/trpc/*", handleTrpc);
   app.post("/trpc/*", handleTrpc);
 
-  app.post("/api/user/avatar", (context) =>
-    runServerPromise(
-      avatarUploadEffect(context).pipe(
-        Effect.catchTags({
-          AuthError: (e) =>
-            Effect.succeed(new Response(e.message, { status: 401 })),
-          FileError: (e) =>
-            Effect.succeed(new Response(e.message, { status: 400 })),
-          S3UploadError: () =>
-            Effect.succeed(new Response("S3 upload failed.", { status: 500 })),
-
-          DbUpdateError: () =>
-            Effect.succeed(
-              new Response("Database update failed.", { status: 500 }),
-            ),
-        }),
-      ),
-    ),
-  );
-  app.post("/log/client", ({ body }) =>
-    runServerPromise(
-      logClientMessageEffect(body).pipe(
-        Effect.catchTags({
-          FileError: (e) =>
-            Effect.succeed(new Response(e.message, { status: 400 })),
-        }),
-      ),
-    ),
+  app.post("/api/user/avatar", toHandler(avatarUploadEffect));
+  app.post(
+    "/log/client",
+    toHandler(({ body }) => logClientMessageEffect(body)),
   );
   if (isProduction) {
     yield* Effect.forkDaemon(

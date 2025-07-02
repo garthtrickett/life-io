@@ -1,4 +1,4 @@
-// File: ./components/pages/notes-list-page.ts
+// FILE: components/pages/notes-list-page.ts
 import { render, html, type TemplateResult } from "lit-html";
 import { repeat } from "lit-html/directives/repeat.js";
 import { pipe, Effect, Queue, Ref, Fiber } from "effect";
@@ -9,7 +9,6 @@ import { navigate } from "../../lib/client/router";
 import { clientLog } from "../../lib/client/logger.client";
 import { trpc } from "../../lib/client/trpc";
 import { animate, stagger } from "motion";
-
 // --- Types ---
 
 interface ViewResult {
@@ -37,7 +36,6 @@ type Action =
 
 export const NotesView = (): ViewResult => {
   const container = document.createElement("div");
-
   const componentProgram = Effect.gen(function* () {
     // --- State and Action Queue ---
     const model = yield* Ref.make<Model>({
@@ -159,7 +157,8 @@ export const NotesView = (): ViewResult => {
                 onSuccess: (notes) =>
                   propose({
                     type: "FETCH_NOTES_SUCCESS",
-                    payload: notes as NoteDto[],
+                    // --- FIX: Create a mutable copy to fix readonly error ---
+                    payload: [...notes],
                   }),
                 onFailure: (e) =>
                   propose({
@@ -213,22 +212,25 @@ export const NotesView = (): ViewResult => {
               error: null,
             });
             const createEffect = pipe(
-              Effect.tryPromise(() =>
-                trpc.note.create.mutate({
-                  title: "Untitled Note",
-                  content: "",
-                }),
-              ),
+              Effect.tryPromise({
+                try: () =>
+                  trpc.note.create.mutate({
+                    title: "Untitled Note",
+                    content: "",
+                  }),
+                catch: (e) => e as Error,
+              }),
               Effect.flatMap((note) =>
-                note?.id
-                  ? Effect.succeed(note)
+                // --- FIX: Cast the unknown result and check for id ---
+                note && typeof note === "object" && "id" in note
+                  ? Effect.succeed(note as NoteDto)
                   : Effect.fail(new Error("Server did not return a note.")),
               ),
               Effect.match({
                 onSuccess: (note) =>
                   propose({
                     type: "CREATE_NOTE_SUCCESS",
-                    payload: note as NoteDto,
+                    payload: note,
                   }),
                 onFailure: (e) =>
                   propose({ type: "CREATE_NOTE_ERROR", payload: e.message }),
@@ -268,7 +270,6 @@ export const NotesView = (): ViewResult => {
           }
         }
       });
-
     // --- Render Effect ---
     const renderEffect = Ref.get(model).pipe(
       Effect.tap(renderView),
@@ -281,7 +282,6 @@ export const NotesView = (): ViewResult => {
         ),
       ),
     );
-
     // --- Main Loop ---
     propose({ type: "FETCH_NOTES_START" }); // Initial action
     yield* Queue.take(actionQueue).pipe(
@@ -293,7 +293,6 @@ export const NotesView = (): ViewResult => {
 
   // --- Fork Lifecycle ---
   const fiber = runClientUnscoped(componentProgram);
-
   return {
     template: html`${container}`,
     cleanup: () => {

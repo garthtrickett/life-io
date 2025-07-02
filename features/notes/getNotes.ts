@@ -3,7 +3,9 @@ import { Effect, pipe } from "effect";
 import { Db } from "../../db/DbTag";
 import { serverLog } from "../../lib/server/logger.server";
 import { validateUserId } from "../../lib/shared/domain";
-import { NoteDatabaseError } from "./Errors"; // <-- Import specific error
+import { NoteDatabaseError, NoteValidationError } from "./Errors";
+import { Schema } from "@effect/schema";
+import { NotesSchema } from "../../lib/shared/schemas";
 
 export const getNotes = (userId: string) =>
   Effect.gen(function* () {
@@ -31,6 +33,9 @@ export const getNotes = (userId: string) =>
         // --- REFACTORED: Catch and wrap in a specific error ---
         catch: (error) => new NoteDatabaseError({ cause: error }),
       }),
+      // --- REFACTORED: Validate the array of notes against the schema ---
+      Schema.decodeUnknown(NotesSchema),
+      Effect.mapError((cause) => new NoteValidationError({ cause })),
       Effect.tap((notes) =>
         Effect.forkDaemon(
           serverLog(
