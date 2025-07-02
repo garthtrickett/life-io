@@ -2,33 +2,29 @@
 const { makeKyselyHook } = require("kanel-kysely");
 const { config } = require("dotenv");
 
-// Load environment variables from .env file first
 config({ path: ".env" });
 
-// Determine the correct connection string
-let connectionString;
-
-if (process.env.USE_LOCAL_NEON_PROXY === "true") {
-  console.log("Kanel: Connecting to LOCAL database via proxy.");
-  connectionString = process.env.DATABASE_URL_LOCAL;
-} else {
-  console.log("Kanel: Connecting to REMOTE database.");
-  connectionString = process.env.DATABASE_URL;
-}
+// If USE_LOCAL_NEON_PROXY is explicitly 'true', use the local URL.
+// Otherwise, fall back to the primary DATABASE_URL for production or other setups.
+const connectionString =
+  process.env.USE_LOCAL_NEON_PROXY === "true"
+    ? process.env.DATABASE_URL_LOCAL
+    : process.env.DATABASE_URL;
 
 if (!connectionString) {
   throw new Error(
-    "Database connection string could not be determined for Kanel.",
+    "Kanel could not determine a database connection string. Ensure DATABASE_URL is set.",
   );
 }
 
-module.exports = {
-  // Use the dynamically determined connection string
-  connection: { connectionString },
+console.log(
+  `Kanel: Using connection string for ${process.env.USE_LOCAL_NEON_PROXY === "true" ? "LOCAL" : "REMOTE"} environment.`,
+);
 
+module.exports = {
+  connection: { connectionString },
   outputPath: "./types/generated",
   schemas: ["public"],
-
   preRenderHooks: [
     makeKyselyHook({
       useTypeImports: true,
