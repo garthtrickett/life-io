@@ -1,12 +1,12 @@
 // File: ./components/pages/note-detail-page.ts
-import { render, html, type TemplateResult, nothing } from "lit-html";
+import { render, html, type TemplateResult } from "lit-html";
 import { pipe, Effect, Data, Queue, Ref, Fiber } from "effect";
 import { runClientUnscoped } from "../../lib/client/runtime";
 import type { Note } from "../../types/generated/public/Note";
 import styles from "./NoteDetailView.module.css";
 import { trpc } from "../../lib/client/trpc";
 import { clientLog } from "../../lib/client/logger.client";
-import { EditorView } from "../ui/editor-element";
+import "../../components/ui/editor-element";
 
 // --- Custom Error Types ---
 class NoteFetchError extends Data.TaggedError("NoteFetchError")<{
@@ -30,7 +30,6 @@ interface Model {
   error: string | null;
   originalContent: string;
   saveFiber: Fiber.Fiber<void, void> | null;
-  editorTemplate: TemplateResult | null;
 }
 
 // --- Action ---
@@ -54,7 +53,6 @@ export const NoteDetailView = (id: string): ViewResult => {
       error: null,
       originalContent: "",
       saveFiber: null,
-      editorTemplate: null,
     });
     const actionQueue = yield* Queue.unbounded<Action>();
 
@@ -123,9 +121,11 @@ export const NoteDetailView = (id: string): ViewResult => {
                       class=${styles.titleInput}
                       ?disabled=${currentModel.status === "saving"}
                     />
-                    <div @editor-update=${handleEditorUpdate}>
-                      ${currentModel.editorTemplate || nothing}
-                    </div>
+                    <editor-element
+                      class=${styles.contentInput}
+                      .content=${currentModel.note.content}
+                      @editor-update=${handleEditorUpdate}
+                    ></editor-element>
                   </div>
                 `
               : html`
@@ -180,14 +180,6 @@ export const NoteDetailView = (id: string): ViewResult => {
 
             case "FETCH_SUCCESS": {
               const note = action.payload;
-              const editorComponent = EditorView({
-                initialContent: note.content,
-              });
-              if (editorComponent.cleanup) {
-                yield* Effect.addFinalizer(() =>
-                  Effect.sync(editorComponent.cleanup!),
-                );
-              }
 
               yield* Ref.update(
                 model,
@@ -200,7 +192,6 @@ export const NoteDetailView = (id: string): ViewResult => {
                     title: note.title,
                     content: note.content,
                   }),
-                  editorTemplate: editorComponent.template,
                 }),
               );
               break;
@@ -241,7 +232,6 @@ export const NoteDetailView = (id: string): ViewResult => {
 
             case "SAVE_START": {
               if (!currentModel.note) return;
-
               if (!currentModel.note.title.trim()) {
                 yield* propose({
                   type: "SAVE_ERROR",
@@ -346,14 +336,10 @@ export const NoteDetailView = (id: string): ViewResult => {
           }
         }),
       );
-
     // --- Render Effect ---
     const renderEffect = Ref.get(model).pipe(
       Effect.tap(renderView),
       Effect.tap((m) => {
-        // *** THIS IS THE FIX ***
-        // Create a safe, serializable object for logging.
-        // We avoid logging the complex `editorTemplate` and `saveFiber`.
         const loggableState = {
           status: m.status,
           noteId: m.note?.id,
@@ -361,16 +347,16 @@ export const NoteDetailView = (id: string): ViewResult => {
         };
         return clientLog(
           "debug",
-          `Rendering NoteDetailView with state: ${JSON.stringify(loggableState)}`,
+          `Rendering NoteDetailView with state: ${JSON.stringify(
+            loggableState,
+          )}`,
           undefined,
           "NoteDetail:render",
         );
       }),
     );
-
     // --- Main Loop ---
     yield* propose({ type: "FETCH_START" });
-
     const mainLoop = Queue.take(actionQueue).pipe(
       Effect.flatMap(handleAction),
       Effect.andThen(renderEffect),
@@ -382,7 +368,6 @@ export const NoteDetailView = (id: string): ViewResult => {
       ),
       Effect.forever,
     );
-
     yield* mainLoop;
   });
 

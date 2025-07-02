@@ -1,148 +1,74 @@
 // File: ./components/ui/editor-element.ts
-import { html, render, type TemplateResult } from "lit-html";
-import { pipe, Effect, Queue, Ref, Fiber } from "effect";
 import { Editor } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
-
-import { runClientUnscoped } from "../../lib/client/runtime";
-import { clientLog } from "../../lib/client/logger.client";
 import styles from "./EditorElement.module.css";
+import { clientLog } from "../../lib/client/logger.client";
+import { runClientUnscoped } from "../../lib/client/runtime";
 
-// --- Types ---
+export class EditorElement extends HTMLElement {
+  private editor: Editor | null = null;
+  private _content: string = "";
 
-export interface EditorProps {
-  initialContent: string;
-}
+  set content(value: string) {
+    this._content = value;
+    if (this.editor) {
+      if (this.editor.getHTML() !== value) {
+        this.editor.commands.setContent(value, false);
+      }
+    }
+  }
 
-interface ViewResult {
-  template: TemplateResult;
-  cleanup?: () => void;
-}
+  connectedCallback() {
+    this.innerHTML = `<div class="${styles.editorContent}"></div>`;
+    const editorElement = this.querySelector<HTMLElement>(
+      `.${styles.editorContent}`,
+    );
 
-interface Model {
-  editor: Editor | null;
-}
-
-type Action =
-  | { type: "INIT_EDITOR"; payload: { element: HTMLElement; content: string } }
-  | { type: "DESTROY_EDITOR" };
-
-// --- View ---
-
-export const EditorView = (props: EditorProps): ViewResult => {
-  const container = document.createElement("div");
-  container.classList.add(styles.editorWrapper);
-
-  const componentProgram = Effect.gen(function* () {
-    // --- State and Action Queue ---
-    const model = yield* Ref.make<Model>({ editor: null });
-    const actionQueue = yield* Queue.unbounded<Action>();
-
-    // --- Propose Action ---
-    const propose = (action: Action) =>
-      Effect.runFork(
-        pipe(
-          clientLog(
-            "debug",
-            `EditorView: Proposing action ${action.type}`,
-            undefined,
-            "EditorView:propose",
-          ),
-          Effect.andThen(Queue.offer(actionQueue, action)),
-        ),
-      );
-
-    // --- Action Handler (Update + React) ---
-    const handleAction = (action: Action): Effect.Effect<void> =>
-      Effect.gen(function* () {
-        const currentModel = yield* Ref.get(model);
-        switch (action.type) {
-          case "INIT_EDITOR": {
-            if (currentModel.editor) return;
-
-            const editor = new Editor({
-              element: action.payload.element,
-              extensions: [StarterKit],
-              content: action.payload.content,
-              editorProps: {
-                attributes: {
-                  class: styles.proseMirror,
-                },
-              },
-              onUpdate: ({ editor }) => {
-                const updatedContent = editor.getHTML();
-                const event = new CustomEvent("editor-update", {
-                  detail: { content: updatedContent },
-                  bubbles: true,
-                  composed: true,
-                });
-                container.dispatchEvent(event);
-              },
-            });
-
-            yield* Ref.set(model, { editor });
-            yield* clientLog(
-              "info",
-              "TipTap editor initialized.",
-              undefined,
-              "EditorView",
-            );
-            break;
-          }
-          case "DESTROY_EDITOR": {
-            if (currentModel.editor) {
-              yield* clientLog(
-                "info",
-                "Destroying TipTap editor instance.",
-                undefined,
-                "EditorView",
-              );
-              yield* Effect.sync(() => currentModel.editor?.destroy());
-              yield* Ref.set(model, { editor: null });
-            }
-            break;
-          }
-        }
+    if (editorElement) {
+      this.editor = new Editor({
+        element: editorElement,
+        extensions: [StarterKit],
+        content: this._content,
+        editorProps: {
+          attributes: {
+            class: styles.proseMirror,
+          },
+        },
+        onUpdate: ({ editor }) => {
+          const event = new CustomEvent("editor-update", {
+            detail: { content: editor.getHTML() },
+            bubbles: true,
+            composed: true,
+          });
+          this.dispatchEvent(event);
+        },
       });
 
-    // --- Main Loop ---
-    yield* Effect.sync(() => {
-      render(html`<div class=${styles.editorContent}></div>`, container);
-      const editorElement = container.querySelector<HTMLElement>(
-        `.${styles.editorContent}`,
-      );
-      if (editorElement) {
-        propose({
-          type: "INIT_EDITOR",
-          payload: {
-            element: editorElement,
-            content: props.initialContent,
-          },
-        });
-      }
-    });
-
-    yield* Queue.take(actionQueue).pipe(
-      Effect.flatMap(handleAction),
-      Effect.forever,
-    );
-  });
-
-  // --- Fork Lifecycle ---
-  const fiber = runClientUnscoped(componentProgram);
-
-  return {
-    template: html`${container}`,
-    cleanup: () => {
       runClientUnscoped(
         clientLog(
-          "debug",
-          "EditorView cleanup running, interrupting fiber.",
+          "info",
+          "TipTap editor initialized.",
           undefined,
-          "EditorView:cleanup",
+          "EditorElement",
         ),
       );
-      runClientUnscoped(Fiber.interrupt(fiber));
-    },
-  };
-};
+    }
+  }
+
+  disconnectedCallback() {
+    if (this.editor) {
+      this.editor.destroy();
+      this.editor = null;
+      runClientUnscoped(
+        clientLog(
+          "info",
+          "TipTap editor destroyed.",
+          undefined,
+          "EditorElement",
+        ),
+      );
+    }
+  }
+}
+
+customElements.define("editor-element", EditorElement);

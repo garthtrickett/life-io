@@ -14,6 +14,7 @@ import { CheckEmailView } from "../../components/pages/check-email-page";
 import { ForgotPasswordView } from "../../components/pages/forgot-password-page";
 import { ResetPasswordView } from "../../components/pages/reset-password-page";
 import { VerifyEmailView } from "../../components/pages/verify-email-page";
+
 /* ------------------------------------------------------------------ */
 /* Types                                                              */
 /* ------------------------------------------------------------------ */
@@ -23,7 +24,7 @@ export interface ViewResult {
 }
 export interface Route {
   pattern: RegExp;
-  view: (...args: string[]) => ViewResult;
+  view: (...args: string[]) => ViewResult | HTMLElement;
   meta: {
     requiresAuth?: boolean;
     requiresPerms?: string[];
@@ -71,6 +72,7 @@ const routes: Route[] = [
   { pattern: /^\/profile$/, view: ProfileView, meta: { requiresAuth: true } },
   { pattern: /^\/unauthorized$/, view: UnauthorizedView, meta: {} },
 ];
+
 /* ------------------------------------------------------------------ */
 /* Pure Functions                                                     */
 /* ------------------------------------------------------------------ */
@@ -103,6 +105,7 @@ export const matchRoute = (path: string): MatchedRoute => {
   );
   return { pattern: /^\/404$/, view: NotFoundView, meta: {}, params: [] };
 };
+
 export const navigate = (path: string) => {
   runClientUnscoped(
     clientLog("info", `Navigating to ${path}`, undefined, "router"),

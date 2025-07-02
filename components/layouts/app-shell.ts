@@ -12,10 +12,12 @@ import { AppLayout } from "./AppLayout";
 import { clientLog } from "../../lib/client/logger.client";
 import { runClientPromise, runClientUnscoped } from "../../lib/client/runtime";
 import { type AuthModel } from "../../lib/client/stores/authStore";
+
 const hasAllPerms = (
   needed: string[],
   user: { permissions?: readonly string[] | null } | null,
 ) => needed.every((p) => user?.permissions?.includes(p));
+
 // The core logic remains the same, but it will now render into the component instance.
 const processStateChange = (
   appRoot: HTMLElement,
@@ -57,7 +59,6 @@ const processStateChange = (
     }
 
     const route = matchRoute(path);
-
     if (route.meta.requiresAuth && auth.status === "unauthenticated") {
       yield* clientLog(
         "info",
@@ -99,9 +100,15 @@ const processStateChange = (
     );
     yield* viewManager.cleanup();
 
-    const { template: pageTemplate, cleanup: pageCleanup } = route.view(
-      ...route.params,
-    );
+    const viewResult = route.view(...route.params);
+
+    const pageTemplate =
+      viewResult instanceof HTMLElement
+        ? html`${viewResult}`
+        : viewResult.template;
+    const pageCleanup =
+      viewResult instanceof HTMLElement ? undefined : viewResult.cleanup;
+
     yield* viewManager.set(pageCleanup);
 
     yield* Effect.sync(() => {
@@ -118,6 +125,7 @@ const processStateChange = (
 // --- REFACTORED COMPONENT ---
 export class AppShell extends HTMLElement {
   private mainFiber: Fiber.RuntimeFiber<void, unknown> | undefined;
+
   connectedCallback() {
     runClientUnscoped(
       clientLog(
@@ -134,8 +142,7 @@ export class AppShell extends HTMLElement {
       ),
       Stream.provideLayer(ViewManagerLive),
     );
-    // Fork the stream to run in the background, and store the fiber
-    // so we can interrupt it on disconnection.
+
     this.mainFiber = Effect.runFork(Stream.runDrain(mainAppStream));
   }
 
@@ -148,13 +155,10 @@ export class AppShell extends HTMLElement {
         "AppShell",
       ),
     );
-    // Interrupt the fiber to ensure all resources and streams are cleaned up
-    // when the component is removed from the DOM.
     if (this.mainFiber) {
       void runClientPromise(Fiber.interrupt(this.mainFiber));
     }
   }
 }
 
-// Use the standard browser API to define the custom element
 customElements.define("app-shell", AppShell);
