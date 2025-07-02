@@ -1,19 +1,25 @@
-// lib/server/Config.ts
-import { Config as EffectConfig, Context, Layer, pipe } from "effect";
+import { Config as EffectConfig, Context, Layer, Option, pipe } from "effect";
 
 // --- Sub-configs for modularity ---
 
-const NeonConfig = EffectConfig.all({
-  url: EffectConfig.string("DATABASE_URL"),
-  localUrl: EffectConfig.string("DATABASE_URL_LOCAL"),
-  useLocalProxy: pipe(
-    EffectConfig.boolean("USE_LOCAL_NEON_PROXY"),
-    EffectConfig.withDefault(false),
-  ),
-}).pipe(
+const NeonConfig = pipe(
+  EffectConfig.all({
+    url: EffectConfig.string("DATABASE_URL"),
+    // Make localUrl optional
+    localUrl: EffectConfig.option(EffectConfig.string("DATABASE_URL_LOCAL")),
+    useLocalProxy: pipe(
+      EffectConfig.boolean("USE_LOCAL_NEON_PROXY"),
+      EffectConfig.withDefault(false),
+    ),
+  }),
   EffectConfig.map(({ url, localUrl, useLocalProxy }) => ({
-    // Derive the final connection string based on the proxy setting
-    connectionString: useLocalProxy ? localUrl : url,
+    // Derive the final connection string based on the proxy setting and
+    // whether localUrl is present.
+    connectionString: pipe(
+      localUrl,
+      Option.filter(() => useLocalProxy), // Use localUrl only if useLocalProxy is true
+      Option.getOrElse(() => url), // Fallback to the primary URL
+    ),
     useLocalProxy,
   })),
 );
