@@ -1,0 +1,126 @@
+// features/auth/procedures/signup.ts
+import { Effect } from "effect";
+import { publicProcedure } from "../../../trpc/trpc";
+import { sSignupInput } from "../schemas";
+import { argon2id } from "../../../lib/server/auth";
+import {
+  PasswordHashingError,
+  EmailInUseError,
+  TokenCreationError,
+  EmailSendError,
+} from "../Errors";
+import { Db } from "../../../db/DbTag";
+import { serverLog } from "../../../lib/server/logger.server";
+import { generateId } from "../../../lib/server/utils";
+import type { NewUser } from "../../../types/generated/public/User";
+import { perms } from "../../../lib/shared/permissions";
+import type { EmailVerificationTokenId } from "../../../types/generated/public/EmailVerificationToken";
+import { createDate, TimeSpan } from "oslo";
+import { sendEmail } from "../../../lib/server/email";
+import { runServerPromise } from "../../../lib/server/runtime";
+import { TRPCError } from "@trpc/server";
+
+export const signupProcedure = publicProcedure
+  .input(sSignupInput)
+  .mutation(({ input }) => {
+    const { email, password } = input;
+
+    const program = Effect.gen(function* () {
+      const db = yield* Db;
+      yield* serverLog(
+        "info",
+        `Attempting to sign up user: ${email}`,
+        undefined,
+        "auth:signup",
+      );
+
+      const passwordHash = yield* Effect.tryPromise({
+        try: () => argon2id.hash(password),
+        catch: (cause) => new PasswordHashingError({ cause }),
+      });
+
+      const user = yield* Effect.tryPromise({
+        try: () =>
+          db
+            .insertInto("user")
+            .values({
+              email: email.toLowerCase(),
+              password_hash: passwordHash,
+              permissions: [perms.note.read, perms.note.write],
+              email_verified: false,
+            } as NewUser)
+            .returningAll()
+            .executeTakeFirstOrThrow(),
+        catch: (cause) => new EmailInUseError({ email, cause }),
+      });
+      yield* serverLog(
+        "info",
+        `User created successfully: ${user.id}`,
+        user.id,
+        "auth:signup",
+      );
+      const verificationToken = yield* generateId(40);
+      yield* Effect.tryPromise({
+        try: () =>
+          db
+            .insertInto("email_verification_token")
+            .values({
+              id: verificationToken as EmailVerificationTokenId,
+              user_id: user.id,
+              email: user.email,
+              expires_at: createDate(new TimeSpan(2, "h")),
+            })
+            .execute(),
+        catch: (cause) => new TokenCreationError({ cause }),
+      });
+      const verificationLink = `http://localhost:5173/verify-email/${verificationToken}`;
+      yield* sendEmail(
+        user.email,
+        "Verify Your Email Address",
+        `<h1>Welcome!</h1><p>Click the link to verify your email: <a href="${verificationLink}">${verificationLink}</a></p>`,
+      ).pipe(Effect.mapError((cause) => new EmailSendError({ cause })));
+      yield* serverLog(
+        "info",
+        `Verification email sent for ${user.email}`,
+        user.id,
+        "auth:signup",
+      );
+      return { success: true, email: user.email };
+    }).pipe(
+      Effect.catchTags({
+        PasswordHashingError: (e) =>
+          Effect.fail(
+            new TRPCError({
+              code: "INTERNAL_SERVER_ERROR",
+              message: "Could not hash password",
+              cause: e.cause,
+            }),
+          ),
+        EmailInUseError: (e) =>
+          Effect.fail(
+            new TRPCError({
+              code: "CONFLICT",
+              message: "An account with this email already exists.",
+              cause: e.cause,
+            }),
+          ),
+        TokenCreationError: (e) =>
+          Effect.fail(
+            new TRPCError({
+              code: "INTERNAL_SERVER_ERROR",
+              message: "Could not create verification token.",
+              cause: e.cause,
+            }),
+          ),
+        EmailSendError: (e) =>
+          Effect.fail(
+            new TRPCError({
+              code: "INTERNAL_SERVER_ERROR",
+              message: "Could not send verification email.",
+              cause: e.cause,
+            }),
+          ),
+      }),
+    );
+    return runServerPromise(program);
+  });
