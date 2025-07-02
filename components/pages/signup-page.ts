@@ -36,7 +36,6 @@ type Action =
 // --- View ---
 export const SignupView = (): ViewResult => {
   const container = document.createElement("div");
-
   const componentProgram = Effect.gen(function* () {
     // --- State and Action Queue ---
     const model = yield* Ref.make<Model>({
@@ -223,7 +222,6 @@ export const SignupView = (): ViewResult => {
           }
         }
       });
-
     // --- Render Effect ---
     const renderEffect = Ref.get(model).pipe(
       Effect.tap(renderView),
@@ -236,19 +234,26 @@ export const SignupView = (): ViewResult => {
         ),
       ),
     );
-
     // --- Main Loop ---
     yield* renderEffect; // Initial render
-    yield* Queue.take(actionQueue).pipe(
+
+    const mainLoop = Queue.take(actionQueue).pipe(
       Effect.flatMap(handleAction),
       Effect.andThen(renderEffect),
+      Effect.catchAllDefect((defect) =>
+        clientLog(
+          "error",
+          `[FATAL] Uncaught defect in SignupView main loop: ${String(defect)}`,
+        ),
+      ),
       Effect.forever,
     );
+
+    yield* mainLoop;
   });
 
   // --- Fork Lifecycle ---
   const fiber = runClientUnscoped(componentProgram);
-
   return {
     template: html`${container}`,
     cleanup: () => {

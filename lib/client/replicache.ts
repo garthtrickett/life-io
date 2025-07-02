@@ -1,4 +1,9 @@
-import { Replicache, type WriteTransaction, type JSONValue } from "replicache";
+import {
+  Replicache,
+  type WriteTransaction,
+  type JSONValue,
+  type ReadonlyJSONValue,
+} from "replicache";
 import { Either } from "effect";
 import { Schema } from "@effect/schema";
 import { formatErrorSync } from "@effect/schema/TreeFormatter";
@@ -55,12 +60,14 @@ export const rep = new Replicache<Mutators>({
       const block = decodedResult.right;
 
       // Create a fully JSON-serializable object before setting.
-      const updatedBlockForJSON = {
+      const updatedBlockForJSON: ReadonlyJSONValue = {
         ...block,
         ...update,
         version: block.version + 1,
         created_at: block.created_at.toISOString(),
         updated_at: new Date().toISOString(),
+        // If you know `fields` is JSON-serialisable, cast just that property:
+        fields: block.fields as JSONValue,
       };
 
       await tx.set(key, updatedBlockForJSON);

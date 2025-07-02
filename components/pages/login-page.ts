@@ -45,7 +45,6 @@ export const LoginView = (): ViewResult => {
       "LoginView",
     ),
   );
-
   const componentProgram = Effect.gen(function* () {
     yield* clientLog(
       "debug",
@@ -203,7 +202,6 @@ export const LoginView = (): ViewResult => {
               isLoading: true,
               error: null,
             });
-
             const loginEffect = pipe(
               Effect.tryPromise({
                 try: () =>
@@ -280,16 +278,23 @@ export const LoginView = (): ViewResult => {
     yield* renderEffect;
 
     // The main loop that drives the component
-    yield* Queue.take(actionQueue).pipe(
+    const mainLoop = Queue.take(actionQueue).pipe(
       Effect.flatMap(handleAction), // Update state based on action
       Effect.andThen(renderEffect), // Re-render the UI with new state
+      Effect.catchAllDefect((defect) =>
+        clientLog(
+          "error",
+          `[FATAL] Uncaught defect in LoginView main loop: ${String(defect)}`,
+        ),
+      ),
       Effect.forever,
     );
+
+    yield* mainLoop;
   });
 
   // Fork the component's main program and get the fiber
   const fiber = runClientUnscoped(componentProgram);
-
   return {
     template: html`${container}`,
     // The cleanup function interrupts the fiber, ensuring all resources are released.

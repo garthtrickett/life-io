@@ -9,6 +9,7 @@ import { navigate } from "../../lib/client/router";
 import { clientLog } from "../../lib/client/logger.client";
 import { trpc } from "../../lib/client/trpc";
 import { animate, stagger } from "motion";
+
 // --- Types ---
 
 interface ViewResult {
@@ -157,7 +158,6 @@ export const NotesView = (): ViewResult => {
                 onSuccess: (notes) =>
                   propose({
                     type: "FETCH_NOTES_SUCCESS",
-                    // --- FIX: Create a mutable copy to fix readonly error ---
                     payload: [...notes],
                   }),
                 onFailure: (e) =>
@@ -178,7 +178,6 @@ export const NotesView = (): ViewResult => {
               isLoading: false,
               notes: action.payload,
             });
-            // Animate after the next render
             yield* Effect.promise(
               () => new Promise((resolve) => requestAnimationFrame(resolve)),
             );
@@ -221,7 +220,6 @@ export const NotesView = (): ViewResult => {
                 catch: (e) => e as Error,
               }),
               Effect.flatMap((note) =>
-                // --- FIX: Cast the unknown result and check for id ---
                 note && typeof note === "object" && "id" in note
                   ? Effect.succeed(note)
                   : Effect.fail(new Error("Server did not return a note.")),
@@ -284,11 +282,20 @@ export const NotesView = (): ViewResult => {
     );
     // --- Main Loop ---
     propose({ type: "FETCH_NOTES_START" }); // Initial action
-    yield* Queue.take(actionQueue).pipe(
+
+    const mainLoop = Queue.take(actionQueue).pipe(
       Effect.flatMap(handleAction),
       Effect.andThen(renderEffect),
+      Effect.catchAllDefect((defect) =>
+        clientLog(
+          "error",
+          `[FATAL] Uncaught defect in NotesView main loop: ${String(defect)}`,
+        ),
+      ),
       Effect.forever,
     );
+
+    yield* mainLoop;
   });
 
   // --- Fork Lifecycle ---

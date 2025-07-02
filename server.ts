@@ -18,7 +18,6 @@ import {
 import { Elysia } from "elysia";
 import type { PushRequest } from "replicache";
 import { handlePull, handlePush } from "./replicache/server";
-
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { validateSessionEffect } from "./lib/server/auth";
 import { serverLog } from "./lib/server/logger.server";
@@ -323,7 +322,6 @@ const setupApp = Effect.gen(function* () {
       ),
     ),
   );
-
   // --- Static File Serving & SPA Fallback (Production) ---
   if (isProduction) {
     yield* Effect.forkDaemon(

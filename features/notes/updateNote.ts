@@ -11,7 +11,6 @@ import {
 } from "./Errors";
 import { Schema } from "@effect/schema";
 import { NoteSchema } from "../../lib/shared/schemas";
-
 // --- FIX: Map validation errors and adjust function return type ---
 export const updateNote = (
   noteId: string,
@@ -31,10 +30,11 @@ export const updateNote = (
     );
     const db = yield* Db;
 
+    // *** LOGGING ADDED ***
     yield* Effect.forkDaemon(
       serverLog(
         "info",
-        `Attempting to update note with ID: "${validatedNoteId}"`,
+        `[updateNote] Attempting to update note. ID: "${validatedNoteId}", UserID: "${validatedUserId}", Payload: ${JSON.stringify(note)}`,
         validatedUserId,
         "UpdateNote",
       ),
@@ -52,6 +52,15 @@ export const updateNote = (
             .executeTakeFirst(),
         catch: (error) => new NoteDatabaseError({ cause: error }),
       }),
+      Effect.tap((maybeNote) =>
+        // *** LOGGING ADDED ***
+        serverLog(
+          "debug",
+          `[updateNote] Database returned: ${JSON.stringify(maybeNote)}`,
+          validatedUserId,
+          "UpdateNote:DBResult",
+        ),
+      ),
       Effect.flatMap((maybeNote) =>
         Effect.if(maybeNote === undefined, {
           onTrue: () => Effect.fail(new NoteNotFoundError({ noteId, userId })),
@@ -65,7 +74,7 @@ export const updateNote = (
         Effect.forkDaemon(
           serverLog(
             "info",
-            `Successfully updated note with ID: ${updatedNote.id}`,
+            `[updateNote] Successfully updated note with ID: ${updatedNote.id}`,
             validatedUserId,
             "UpdateNote",
           ),
@@ -76,7 +85,7 @@ export const updateNote = (
           Effect.forkDaemon(
             serverLog(
               "error",
-              `Failed to update note: ${error._tag}`,
+              `[updateNote] Failed to update note: ${error._tag}`,
               validatedUserId,
               "UpdateNote",
             ),

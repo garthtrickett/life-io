@@ -29,7 +29,6 @@ type Action =
 
 export const ForgotPasswordView = (): ViewResult => {
   const container = document.createElement("div");
-
   const componentProgram = Effect.gen(function* () {
     // --- State and Action Queue ---
     const model = yield* Ref.make<Model>({
@@ -128,7 +127,6 @@ export const ForgotPasswordView = (): ViewResult => {
         if (currentModel.status === "loading") return;
         propose({ type: "REQUEST_START" });
       };
-
       const template = html`
         <div class="flex min-h-screen items-center justify-center bg-gray-100">
           <div class="w-full max-w-md rounded-lg bg-white p-8 shadow-md">
@@ -202,7 +200,6 @@ export const ForgotPasswordView = (): ViewResult => {
       `;
       render(template, container);
     };
-
     const renderEffect = Ref.get(model).pipe(
       Effect.tap(renderView),
       Effect.tap((m) =>
@@ -214,19 +211,26 @@ export const ForgotPasswordView = (): ViewResult => {
         ),
       ),
     );
-
     // --- Main Loop ---
     yield* renderEffect; // Initial render
-    yield* Queue.take(actionQueue).pipe(
+
+    const mainLoop = Queue.take(actionQueue).pipe(
       Effect.flatMap(handleAction),
       Effect.andThen(renderEffect),
+      Effect.catchAllDefect((defect) =>
+        clientLog(
+          "error",
+          `[FATAL] Uncaught defect in ForgotPasswordView main loop: ${String(defect)}`,
+        ),
+      ),
       Effect.forever,
     );
+
+    yield* mainLoop;
   });
 
   // --- Fork Lifecycle ---
   const fiber = runClientUnscoped(componentProgram);
-
   return {
     template: html`${container}`,
     cleanup: () => {

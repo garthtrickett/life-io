@@ -30,12 +30,14 @@ export const getNotes = (userId: string) =>
             .where("user_id", "=", validatedUserId)
             .orderBy("updated_at", "desc")
             .execute(),
-        // --- REFACTORED: Catch and wrap in a specific error ---
         catch: (error) => new NoteDatabaseError({ cause: error }),
       }),
-      // --- REFACTORED: Validate the array of notes against the schema ---
-      Schema.decodeUnknown(NotesSchema),
-      Effect.mapError((cause) => new NoteValidationError({ cause })),
+      // --- FIX: Wrap the schema validation in flatMap ---
+      Effect.flatMap((notes) =>
+        Schema.decodeUnknown(NotesSchema)(notes).pipe(
+          Effect.mapError((cause) => new NoteValidationError({ cause })),
+        ),
+      ),
       Effect.tap((notes) =>
         Effect.forkDaemon(
           serverLog(
@@ -51,7 +53,6 @@ export const getNotes = (userId: string) =>
           Effect.forkDaemon(
             serverLog(
               "error",
-              // --- UPDATED: Log the specific error tag for better context ---
               `Failed to fetch notes: ${error._tag}`,
               validatedUserId,
               "GetNotes",
@@ -61,6 +62,5 @@ export const getNotes = (userId: string) =>
         ),
       ),
     );
-
     return result;
   });

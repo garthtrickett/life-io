@@ -39,7 +39,6 @@ type Action =
 
 export const VerifyEmailView = (token: string): ViewResult => {
   const container = document.createElement("div");
-
   const componentProgram = Effect.gen(function* () {
     // --- State and Action Queue ---
     const model = yield* Ref.make<Model>({
@@ -142,7 +141,6 @@ export const VerifyEmailView = (token: string): ViewResult => {
           }
         }
       });
-
     // --- Render ---
     const renderView = (currentModel: Model) => {
       const renderContent = () => {
@@ -194,19 +192,26 @@ export const VerifyEmailView = (token: string): ViewResult => {
         ),
       ),
     );
-
     // --- Main Loop ---
     propose({ type: "VERIFY_START" }); // Initial action
-    yield* Queue.take(actionQueue).pipe(
+
+    const mainLoop = Queue.take(actionQueue).pipe(
       Effect.flatMap(handleAction),
       Effect.andThen(renderEffect),
+      Effect.catchAllDefect((defect) =>
+        clientLog(
+          "error",
+          `[FATAL] Uncaught defect in VerifyEmailView main loop: ${String(defect)}`,
+        ),
+      ),
       Effect.forever,
     );
+
+    yield* mainLoop;
   });
 
   // --- Fork Lifecycle ---
   const fiber = runClientUnscoped(componentProgram);
-
   return {
     template: html`${container}`,
     cleanup: () => {

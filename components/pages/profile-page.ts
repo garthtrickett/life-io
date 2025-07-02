@@ -52,7 +52,6 @@ type Action =
 // --- View ---
 export const ProfileView = (): ViewResult => {
   const container = document.createElement("div");
-
   const componentProgram = Effect.gen(function* () {
     // --- State & Action Queue ---
     const model = yield* Ref.make<Model>({
@@ -442,7 +441,6 @@ export const ProfileView = (): ViewResult => {
       ),
       Effect.tap(renderView),
     );
-
     // --- Main Loop ---
     const authStreamEffect = Stream.async<never>(() => {
       const unsubscribe = authState.subscribe((newAuthState) => {
@@ -456,16 +454,24 @@ export const ProfileView = (): ViewResult => {
 
     yield* authStreamEffect;
     yield* renderEffect; // Initial render
-    yield* Queue.take(actionQueue).pipe(
+
+    const mainLoop = Queue.take(actionQueue).pipe(
       Effect.flatMap(handleAction),
       Effect.andThen(renderEffect),
+      Effect.catchAllDefect((defect) =>
+        clientLog(
+          "error",
+          `[FATAL] Uncaught defect in ProfileView main loop: ${String(defect)}`,
+        ),
+      ),
       Effect.forever,
     );
+
+    yield* mainLoop;
   });
 
   // --- Fork Lifecycle ---
   const fiber = runClientUnscoped(componentProgram);
-
   return {
     template: html`${container}`,
     cleanup: () => {

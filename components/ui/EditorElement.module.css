@@ -1,0 +1,45 @@
+/* File: ./components/ui/EditorElement.module.css */
+.editorWrapper {
+  @apply relative w-full;
+}
+
+.editorContent {
+  @apply h-full w-full;
+}
+
+.proseMirror {
+  @apply prose prose-zinc max-w-none rounded-md border border-zinc-200 p-4 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500;
+  min-height: 50vh;
+}
+
+/* Basic styling for ProseMirror elements */
+.proseMirror p {
+  @apply my-2;
+}
+
+.proseMirror h1,
+.proseMirror h2,
+.proseMirror h3 {
+  @apply my-4 font-bold;
+}
+
+.proseMirror ul,
+.proseMirror ol {
+  @apply my-4 ml-6;
+}
+
+.proseMirror blockquote {
+  @apply my-4 border-l-4 border-zinc-300 pl-4 italic text-zinc-600;
+}
+
+.proseMirror pre {
+  @apply my-4 rounded-md bg-zinc-800 p-4 font-mono text-sm text-white;
+}
+
+.proseMirror code {
+  @apply rounded-sm bg-zinc-200 px-1 py-0.5 font-mono text-sm;
+}
+
+.proseMirror pre code {
+  @apply bg-transparent p-0;
+}
