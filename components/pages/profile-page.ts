@@ -1,6 +1,5 @@
 // File: ./components/pages/profile-page.ts
 import { render, html, nothing, type TemplateResult } from "lit-html";
-import { signal, effect } from "@preact/signals-core";
 import {
   authState,
   proposeAuthAction,
@@ -8,9 +7,9 @@ import {
 } from "../../lib/client/stores/authStore";
 import styles from "./ProfileView.module.css";
 import { NotionButton } from "../ui/notion-button";
-import { runClientUnscoped, runClientPromise } from "../../lib/client/runtime";
+import { runClientUnscoped } from "../../lib/client/runtime";
 import { clientLog } from "../../lib/client/logger.client";
-import { pipe, Effect, Exit, Cause, Data } from "effect";
+import { pipe, Effect, Data, Ref, Queue, Fiber, Stream } from "effect";
 import { trpc } from "../../lib/client/trpc";
 import { NotionInput } from "../ui/notion-input";
 
@@ -50,328 +49,358 @@ type Action =
   | { type: "CHANGE_PASSWORD_SUCCESS"; payload: string }
   | { type: "CHANGE_PASSWORD_ERROR"; payload: string };
 
-const model = signal<Model>({
-  auth: authState.value,
-  status: "idle",
-  message: null,
-  loadingAction: null,
-  isChangingPassword: false,
-  oldPassword: "",
-  newPassword: "",
-  confirmPassword: "",
-});
-
-// --- Update ---
-const update = (action: Action) => {
-  const currentModel = model.value;
-  switch (action.type) {
-    case "AUTH_STATE_CHANGED":
-      model.value = { ...currentModel, auth: action.payload };
-      break;
-    case "UPLOAD_START":
-      model.value = {
-        ...currentModel,
-        status: "loading",
-        loadingAction: "upload",
-        message: null,
-      };
-      break;
-    case "UPLOAD_SUCCESS": {
-      const user = currentModel.auth.user
-        ? { ...currentModel.auth.user, avatar_url: action.payload }
-        : null;
-      if (user) proposeAuthAction({ type: "SET_AUTHENTICATED", payload: user });
-      model.value = {
-        ...currentModel,
-        status: "success",
-        loadingAction: null,
-        message: "Avatar updated!",
-      };
-      break;
-    }
-    case "UPLOAD_ERROR":
-      model.value = {
-        ...currentModel,
-        status: "error",
-        loadingAction: null,
-        message: action.payload.message,
-      };
-      break;
-    case "TOGGLE_CHANGE_PASSWORD_FORM":
-      model.value = {
-        ...currentModel,
-        isChangingPassword: !currentModel.isChangingPassword,
-        message: null,
-        status: "idle",
-        oldPassword: "",
-        newPassword: "",
-        confirmPassword: "",
-      };
-      break;
-    case "UPDATE_OLD_PASSWORD":
-      model.value = {
-        ...currentModel,
-        oldPassword: action.payload,
-        message: null,
-      };
-      break;
-    case "UPDATE_NEW_PASSWORD":
-      model.value = {
-        ...currentModel,
-        newPassword: action.payload,
-        message: null,
-      };
-      break;
-    case "UPDATE_CONFIRM_PASSWORD":
-      model.value = {
-        ...currentModel,
-        confirmPassword: action.payload,
-        message: null,
-      };
-      break;
-    case "CHANGE_PASSWORD_START":
-      model.value = {
-        ...currentModel,
-        status: "loading",
-        loadingAction: "changePassword",
-        message: null,
-      };
-      break;
-    case "CHANGE_PASSWORD_SUCCESS":
-      model.value = {
-        ...currentModel,
-        status: "success",
-        loadingAction: null,
-        message: action.payload,
-        isChangingPassword: false,
-        oldPassword: "",
-        newPassword: "",
-        confirmPassword: "",
-      };
-      break;
-    case "CHANGE_PASSWORD_ERROR":
-      model.value = {
-        ...currentModel,
-        status: "error",
-        loadingAction: null,
-        message: action.payload,
-      };
-      break;
-  }
-};
-
-// --- React ---
-const react = async (action: Action) => {
-  if (action.type === "UPLOAD_START") {
-    // --- REFACTORED: Converted the fetch logic to a declarative Effect pipeline ---
-    const formData = new FormData();
-    formData.append("avatar", action.payload);
-
-    const uploadEffect = pipe(
-      Effect.tryPromise({
-        try: () =>
-          fetch("/api/user/avatar", { method: "POST", body: formData }),
-        catch: (cause) => new AvatarUploadError({ message: String(cause) }),
-      }),
-      Effect.flatMap((response) =>
-        response.ok
-          ? Effect.tryPromise({
-              try: () => response.json() as Promise<{ avatarUrl: string }>,
-              catch: (cause) =>
-                new AvatarUploadError({ message: String(cause) }),
-            })
-          : Effect.promise(async () => response.text()).pipe(
-              Effect.flatMap((text) =>
-                Effect.fail(
-                  new AvatarUploadError({ message: text || "Upload failed" }),
-                ),
-              ),
-            ),
-      ),
-      Effect.match({
-        onSuccess: (json) =>
-          propose({ type: "UPLOAD_SUCCESS", payload: json.avatarUrl }),
-        onFailure: (error) => propose({ type: "UPLOAD_ERROR", payload: error }),
-      }),
-    );
-
-    await runClientPromise(uploadEffect);
-    // --- END REFACTOR ---
-  } else if (action.type === "CHANGE_PASSWORD_START") {
-    const { oldPassword, newPassword, confirmPassword } = model.value;
-    if (newPassword !== confirmPassword) {
-      propose({
-        type: "CHANGE_PASSWORD_ERROR",
-        payload: "New passwords do not match.",
-      });
-      return;
-    }
-
-    const changePasswordEffect = pipe(
-      Effect.tryPromise({
-        try: () =>
-          trpc.auth.changePassword.mutate({
-            oldPassword,
-            newPassword,
-          }),
-        catch: (err) =>
-          new Error(
-            err instanceof Error ? err.message : "An unknown error occurred.",
-          ),
-      }),
-    );
-
-    const exit = await runClientPromise(Effect.exit(changePasswordEffect));
-
-    if (Exit.isSuccess(exit)) {
-      propose({
-        type: "CHANGE_PASSWORD_SUCCESS",
-        payload: "Password changed successfully!",
-      });
-    } else {
-      const error = Cause.squash(exit.cause);
-      const errorMessage =
-        error instanceof Error
-          ? error.message
-          : "An unknown error occurred during password change.";
-      propose({ type: "CHANGE_PASSWORD_ERROR", payload: errorMessage });
-    }
-  }
-};
-
-const propose = (action: Action) => {
-  runClientUnscoped(
-    clientLog(
-      "debug",
-      `ProfileView: Proposing action ${action.type}`,
-      model.value.auth.user?.id,
-      "ProfileView:propose",
-    ),
-  );
-  update(action);
-  void react(action);
-};
-
 // --- View ---
 export const ProfileView = (): ViewResult => {
   const container = document.createElement("div");
 
-  // Subscribe to global auth state changes
-  const authUnsubscribe = authState.subscribe((newAuthState) => {
-    propose({ type: "AUTH_STATE_CHANGED", payload: newAuthState });
-  });
+  const componentProgram = Effect.gen(function* () {
+    // --- State & Action Queue ---
+    const model = yield* Ref.make<Model>({
+      auth: authState.value,
+      status: "idle",
+      message: null,
+      loadingAction: null,
+      isChangingPassword: false,
+      oldPassword: "",
+      newPassword: "",
+      confirmPassword: "",
+    });
+    const actionQueue = yield* Queue.unbounded<Action>();
 
-  const renderView = effect(() => {
-    const m = model.value;
-    const user = m.auth.user;
+    // --- Propose Action ---
+    const propose = (action: Action) =>
+      Effect.runFork(
+        pipe(
+          clientLog(
+            "debug",
+            `ProfileView: Proposing action ${action.type}`,
+            undefined,
+            "ProfileView:propose",
+          ),
+          Effect.andThen(() => Queue.offer(actionQueue, action)),
+        ),
+      );
 
-    if (!user) {
-      render(html`<p>Loading profile...</p>`, container);
-      return;
-    }
+    // --- Action Handler ---
+    const handleAction = (action: Action): Effect.Effect<void> =>
+      Effect.gen(function* () {
+        const currentModel = yield* Ref.get(model);
+        switch (action.type) {
+          case "AUTH_STATE_CHANGED":
+            yield* Ref.update(
+              model,
+              (m): Model => ({ ...m, auth: action.payload }),
+            );
+            break;
 
-    const handleFileChange = (e: Event) => {
-      const file = (e.target as HTMLInputElement).files?.[0];
-      if (file) propose({ type: "UPLOAD_START", payload: file });
-    };
+          case "UPLOAD_START": {
+            yield* Ref.update(
+              model,
+              (m): Model => ({
+                ...m,
+                status: "loading",
+                loadingAction: "upload",
+                message: null,
+              }),
+            );
+            const formData = new FormData();
+            formData.append("avatar", action.payload);
+            const uploadEffect = pipe(
+              Effect.tryPromise({
+                try: () =>
+                  fetch("/api/user/avatar", { method: "POST", body: formData }),
+                catch: (cause) =>
+                  new AvatarUploadError({ message: String(cause) }),
+              }),
+              Effect.flatMap((response) =>
+                response.ok
+                  ? Effect.tryPromise({
+                      try: () =>
+                        response.json() as Promise<{ avatarUrl: string }>,
+                      catch: (cause) =>
+                        new AvatarUploadError({ message: String(cause) }),
+                    })
+                  : Effect.promise(async () => response.text()).pipe(
+                      Effect.flatMap((text) =>
+                        Effect.fail(
+                          new AvatarUploadError({
+                            message: text || "Upload failed",
+                          }),
+                        ),
+                      ),
+                    ),
+              ),
+              Effect.match({
+                onSuccess: (json) =>
+                  propose({ type: "UPLOAD_SUCCESS", payload: json.avatarUrl }),
+                onFailure: (error) =>
+                  propose({ type: "UPLOAD_ERROR", payload: error }),
+              }),
+            );
+            yield* Effect.fork(uploadEffect);
+            break;
+          }
 
-    const triggerFileInput = () => {
-      document.getElementById("avatar-upload")?.click();
-    };
+          case "UPLOAD_SUCCESS": {
+            const user = currentModel.auth.user
+              ? { ...currentModel.auth.user, avatar_url: action.payload }
+              : null;
+            if (user)
+              proposeAuthAction({ type: "SET_AUTHENTICATED", payload: user });
+            yield* Ref.update(
+              model,
+              (m): Model => ({
+                ...m,
+                status: "success",
+                loadingAction: null,
+                message: "Avatar updated!",
+              }),
+            );
+            break;
+          }
 
-    const onPasswordSubmit = (e: Event) => {
-      e.preventDefault();
-      propose({ type: "CHANGE_PASSWORD_START" });
-    };
+          case "UPLOAD_ERROR":
+            yield* Ref.update(
+              model,
+              (m): Model => ({
+                ...m,
+                status: "error",
+                loadingAction: null,
+                message: action.payload.message,
+              }),
+            );
+            break;
 
-    const avatarUrl =
-      user.avatar_url ||
-      `https://ui-avatars.com/api/?name=${encodeURIComponent(user.email)}`;
+          case "TOGGLE_CHANGE_PASSWORD_FORM":
+            yield* Ref.update(
+              model,
+              (m): Model => ({
+                ...m,
+                isChangingPassword: !m.isChangingPassword,
+                message: null,
+                status: "idle",
+                oldPassword: "",
+                newPassword: "",
+                confirmPassword: "",
+              }),
+            );
+            break;
 
-    const passwordChangeForm = html`
-      <form @submit=${onPasswordSubmit} class="mt-6 space-y-4 text-left">
-        ${NotionInput({
-          id: "oldPassword",
-          label: "Old Password",
-          type: "password",
-          value: m.oldPassword,
-          onInput: (e) =>
-            propose({
-              type: "UPDATE_OLD_PASSWORD",
-              payload: (e.target as HTMLInputElement).value,
-            }),
-          required: true,
-        })}
-        ${NotionInput({
-          id: "newPassword",
-          label: "New Password (min. 8 characters)",
-          type: "password",
-          value: m.newPassword,
-          onInput: (e) =>
-            propose({
-              type: "UPDATE_NEW_PASSWORD",
-              payload: (e.target as HTMLInputElement).value,
-            }),
-          required: true,
-        })}
-        ${NotionInput({
-          id: "confirmPassword",
-          label: "Confirm New Password",
-          type: "password",
-          value: m.confirmPassword,
-          onInput: (e) =>
-            propose({
-              type: "UPDATE_CONFIRM_PASSWORD",
-              payload: (e.target as HTMLInputElement).value,
-            }),
-          required: true,
-        })}
-        <div class="flex items-center gap-4 pt-2">
-          ${NotionButton({
-            children:
-              m.loadingAction === "changePassword"
-                ? "Saving..."
-                : "Save Password",
-            type: "submit",
-            loading: m.loadingAction === "changePassword",
-            disabled: m.status === "loading",
+          case "UPDATE_OLD_PASSWORD":
+            yield* Ref.update(
+              model,
+              (m): Model => ({
+                ...m,
+                oldPassword: action.payload,
+                message: null,
+              }),
+            );
+            break;
+
+          case "UPDATE_NEW_PASSWORD":
+            yield* Ref.update(
+              model,
+              (m): Model => ({
+                ...m,
+                newPassword: action.payload,
+                message: null,
+              }),
+            );
+            break;
+
+          case "UPDATE_CONFIRM_PASSWORD":
+            yield* Ref.update(
+              model,
+              (m): Model => ({
+                ...m,
+                confirmPassword: action.payload,
+                message: null,
+              }),
+            );
+            break;
+
+          case "CHANGE_PASSWORD_START": {
+            if (currentModel.newPassword !== currentModel.confirmPassword) {
+              propose({
+                type: "CHANGE_PASSWORD_ERROR",
+                payload: "New passwords do not match.",
+              });
+              return;
+            }
+            yield* Ref.update(
+              model,
+              (m): Model => ({
+                ...m,
+                status: "loading",
+                loadingAction: "changePassword",
+                message: null,
+              }),
+            );
+            const changePasswordEffect = pipe(
+              Effect.tryPromise({
+                try: () =>
+                  trpc.auth.changePassword.mutate({
+                    oldPassword: currentModel.oldPassword,
+                    newPassword: currentModel.newPassword,
+                  }),
+                catch: (err) =>
+                  new Error(
+                    err instanceof Error
+                      ? err.message
+                      : "An unknown error occurred.",
+                  ),
+              }),
+              Effect.match({
+                onSuccess: () =>
+                  propose({
+                    type: "CHANGE_PASSWORD_SUCCESS",
+                    payload: "Password changed successfully!",
+                  }),
+                onFailure: (error) =>
+                  propose({
+                    type: "CHANGE_PASSWORD_ERROR",
+                    payload: error.message,
+                  }),
+              }),
+            );
+            yield* Effect.fork(changePasswordEffect);
+            break;
+          }
+
+          case "CHANGE_PASSWORD_SUCCESS":
+            yield* Ref.update(
+              model,
+              (m): Model => ({
+                ...m,
+                status: "success",
+                loadingAction: null,
+                message: action.payload,
+                isChangingPassword: false,
+                oldPassword: "",
+                newPassword: "",
+                confirmPassword: "",
+              }),
+            );
+            break;
+
+          case "CHANGE_PASSWORD_ERROR":
+            yield* Ref.update(
+              model,
+              (m): Model => ({
+                ...m,
+                status: "error",
+                loadingAction: null,
+                message: action.payload,
+              }),
+            );
+            break;
+        }
+      });
+
+    // --- Render ---
+    const renderView = (m: Model) => {
+      const user = m.auth.user;
+      if (!user) {
+        render(html`<p>Loading profile...</p>`, container);
+        return;
+      }
+      const handleFileChange = (e: Event) => {
+        const file = (e.target as HTMLInputElement).files?.[0];
+        if (file) propose({ type: "UPLOAD_START", payload: file });
+      };
+      const triggerFileInput = () => {
+        document.getElementById("avatar-upload")?.click();
+      };
+      const onPasswordSubmit = (e: Event) => {
+        e.preventDefault();
+        propose({ type: "CHANGE_PASSWORD_START" });
+      };
+      const avatarUrl =
+        user.avatar_url ||
+        `https://ui-avatars.com/api/?name=${encodeURIComponent(user.email)}`;
+      const passwordChangeForm = html`
+        <form @submit=${onPasswordSubmit} class="mt-6 space-y-4 text-left">
+          ${NotionInput({
+            id: "oldPassword",
+            label: "Old Password",
+            type: "password",
+            value: m.oldPassword,
+            onInput: (e) =>
+              propose({
+                type: "UPDATE_OLD_PASSWORD",
+                payload: (e.target as HTMLInputElement).value,
+              }),
+            required: true,
           })}
-          <button
-            type="button"
-            @click=${() => propose({ type: "TOGGLE_CHANGE_PASSWORD_FORM" })}
-            class="text-sm font-medium text-zinc-600 hover:text-zinc-500"
-          >
-            Cancel
-          </button>
-        </div>
-      </form>
-    `;
-
-    const template = html`
-      <div class=${styles.container}>
-        <div class=${styles.profileCard}>
-          <h2 class=${styles.title}>Your Profile</h2>
-
-          ${m.message
-            ? html`<div
-                class="${m.status === "success"
-                  ? "bg-green-100 text-green-700"
-                  : "bg-red-100 text-red-700"} mt-4 rounded-md p-4 text-center text-sm"
-              >
-                <p>${m.message}</p>
-              </div>`
-            : nothing}
-
-          <div class=${styles.avatarContainer}>
-            <img src=${avatarUrl} alt="Profile avatar" class=${styles.avatar} />
-            <p class=${styles.email}>${user.email}</p>
+          ${NotionInput({
+            id: "newPassword",
+            label: "New Password (min. 8 characters)",
+            type: "password",
+            value: m.newPassword,
+            onInput: (e) =>
+              propose({
+                type: "UPDATE_NEW_PASSWORD",
+                payload: (e.target as HTMLInputElement).value,
+              }),
+            required: true,
+          })}
+          ${NotionInput({
+            id: "confirmPassword",
+            label: "Confirm New Password",
+            type: "password",
+            value: m.confirmPassword,
+            onInput: (e) =>
+              propose({
+                type: "UPDATE_CONFIRM_PASSWORD",
+                payload: (e.target as HTMLInputElement).value,
+              }),
+            required: true,
+          })}
+          <div class="flex items-center gap-4 pt-2">
+            ${NotionButton({
+              children:
+                m.loadingAction === "changePassword"
+                  ? "Saving..."
+                  : "Save Password",
+              type: "submit",
+              loading: m.loadingAction === "changePassword",
+              disabled: m.status === "loading",
+            })}
+            <button
+              type="button"
+              @click=${() => propose({ type: "TOGGLE_CHANGE_PASSWORD_FORM" })}
+              class="text-sm font-medium text-zinc-600 hover:text-zinc-500"
+            >
+              Cancel
+            </button>
           </div>
-
-          <div class=${styles.uploadSection}>
-            ${m.isChangingPassword
-              ? passwordChangeForm
-              : html`
-                  <div class="mt-4 flex flex-col items-center gap-4">
+        </form>
+      `;
+      const template = html`
+        <div class=${styles.container}>
+          <div class=${styles.profileCard}>
+            <h2 class=${styles.title}>Your Profile</h2>
+            ${m.message
+              ? html`<div
+                  class="${m.status === "success"
+                    ? "bg-green-100 text-green-700"
+                    : "bg-red-100 text-red-700"} mt-4 rounded-md p-4 text-center text-sm"
+                >
+                  <p>${m.message}</p>
+                </div>`
+              : nothing}
+            <div class=${styles.avatarContainer}>
+              <img
+                src=${avatarUrl}
+                alt="Profile avatar"
+                class=${styles.avatar}
+              />
+              <p class=${styles.email}>${user.email}</p>
+            </div>
+            <div class=${styles.uploadSection}>
+              ${m.isChangingPassword
+                ? passwordChangeForm
+                : html`<div class="mt-4 flex flex-col items-center gap-4">
                     ${NotionButton({
                       children:
                         m.loadingAction === "upload"
@@ -387,37 +416,68 @@ export const ProfileView = (): ViewResult => {
                         propose({ type: "TOGGLE_CHANGE_PASSWORD_FORM" }),
                       disabled: m.status === "loading",
                     })}
-                  </div>
-                `}
-            <input
-              id="avatar-upload"
-              type="file"
-              class="hidden"
-              @change=${handleFileChange}
-              accept="image/*"
-            />
+                  </div>`}
+              <input
+                id="avatar-upload"
+                type="file"
+                class="hidden"
+                @change=${handleFileChange}
+                accept="image/*"
+              />
+            </div>
           </div>
         </div>
-      </div>
-    `;
-    render(template, container);
+      `;
+      render(template, container);
+    };
+
+    const renderEffect = Ref.get(model).pipe(
+      Effect.tap((m) =>
+        clientLog(
+          "debug",
+          `Rendering ProfileView with state: ${JSON.stringify(m)}`,
+          m.auth.user?.id,
+          "ProfileView:render",
+        ),
+      ),
+      Effect.tap(renderView),
+    );
+
+    // --- Main Loop ---
+    const authStreamEffect = Stream.async<never>(() => {
+      const unsubscribe = authState.subscribe((newAuthState) => {
+        runClientUnscoped(
+          propose({ type: "AUTH_STATE_CHANGED", payload: newAuthState }),
+        );
+      });
+      // The effect returned here is the cleanup logic for the stream
+      return Effect.sync(unsubscribe);
+    }).pipe(Stream.runDrain, Effect.fork);
+
+    yield* authStreamEffect;
+    yield* renderEffect; // Initial render
+    yield* Queue.take(actionQueue).pipe(
+      Effect.flatMap(handleAction),
+      Effect.andThen(renderEffect),
+      Effect.forever,
+    );
   });
+
+  // --- Fork Lifecycle ---
+  const fiber = runClientUnscoped(componentProgram);
 
   return {
     template: html`${container}`,
     cleanup: () => {
-      renderView();
-      authUnsubscribe();
-      model.value = {
-        auth: authState.value,
-        status: "idle",
-        message: null,
-        loadingAction: null,
-        isChangingPassword: false,
-        oldPassword: "",
-        newPassword: "",
-        confirmPassword: "",
-      };
+      runClientUnscoped(
+        clientLog(
+          "debug",
+          "ProfileView cleanup running, interrupting fiber.",
+          undefined,
+          "ProfileView:cleanup",
+        ),
+      );
+      runClientUnscoped(Fiber.interrupt(fiber));
     },
   };
 };

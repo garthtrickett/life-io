@@ -14,7 +14,6 @@ import { CheckEmailView } from "../../components/pages/check-email-page";
 import { ForgotPasswordView } from "../../components/pages/forgot-password-page";
 import { ResetPasswordView } from "../../components/pages/reset-password-page";
 import { VerifyEmailView } from "../../components/pages/verify-email-page";
-
 /* ------------------------------------------------------------------ */
 /* Types                                                              */
 /* ------------------------------------------------------------------ */
@@ -72,7 +71,6 @@ const routes: Route[] = [
   { pattern: /^\/profile$/, view: ProfileView, meta: { requiresAuth: true } },
   { pattern: /^\/unauthorized$/, view: UnauthorizedView, meta: {} },
 ];
-
 /* ------------------------------------------------------------------ */
 /* Pure Functions                                                     */
 /* ------------------------------------------------------------------ */
@@ -105,8 +103,10 @@ export const matchRoute = (path: string): MatchedRoute => {
   );
   return { pattern: /^\/404$/, view: NotFoundView, meta: {}, params: [] };
 };
-
 export const navigate = (path: string) => {
+  runClientUnscoped(
+    clientLog("info", `Navigating to ${path}`, undefined, "router"),
+  );
   if (window.location.pathname === path) {
     return;
   }
@@ -114,7 +114,6 @@ export const navigate = (path: string) => {
   const navigateTo = () => {
     window.dispatchEvent(new CustomEvent("navigate-to", { detail: { path } }));
   };
-
   if (document.startViewTransition) {
     document.startViewTransition(navigateTo);
   } else {

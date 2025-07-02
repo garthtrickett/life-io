@@ -1,9 +1,8 @@
 // File: ./components/pages/verify-email-page.ts
 import { render, html, type TemplateResult } from "lit-html";
-import { signal, effect } from "@preact/signals-core";
-import { pipe, Effect, Data } from "effect";
+import { pipe, Effect, Data, Ref, Queue, Fiber } from "effect";
 import { trpc } from "../../lib/client/trpc";
-import { runClientPromise, runClientUnscoped } from "../../lib/client/runtime";
+import { runClientUnscoped } from "../../lib/client/runtime";
 import { proposeAuthAction } from "../../lib/client/stores/authStore";
 import { navigate } from "../../lib/client/router";
 import type { User } from "../../types/generated/public/User";
@@ -38,135 +37,188 @@ type Action =
       payload: InvalidTokenError | UnknownVerificationError;
     };
 
-const model = signal<Model>({ status: "verifying", message: null });
-
-const update = (action: Action) => {
-  switch (action.type) {
-    case "VERIFY_START":
-      model.value = { status: "verifying", message: "Verifying your email..." };
-      break;
-    case "VERIFY_SUCCESS":
-      model.value = {
-        status: "success",
-        message: "Email verified successfully! Redirecting you...",
-      };
-      break;
-    case "VERIFY_ERROR": {
-      let errorMessage = "An unknown error occurred during verification.";
-      if (action.payload._tag === "InvalidTokenError") {
-        errorMessage = "This verification link is invalid or has expired.";
-      }
-      model.value = { status: "error", message: errorMessage };
-      break;
-    }
-  }
-};
-
-const react = async (action: Action, token: string) => {
-  if (action.type === "VERIFY_START") {
-    const verifyEffect = pipe(
-      Effect.tryPromise({
-        try: () => trpc.auth.verifyEmail.mutate({ token }),
-        catch: (err) => {
-          if (
-            typeof err === "object" &&
-            err !== null &&
-            "data" in err &&
-            (err.data as { code?: string }).code === "BAD_REQUEST"
-          ) {
-            return new InvalidTokenError();
-          }
-          return new UnknownVerificationError({ cause: err });
-        },
-      }),
-      Effect.match({
-        onSuccess: (result) => {
-          propose(token)({
-            type: "VERIFY_SUCCESS",
-            payload: result as VerifySuccessPayload,
-          });
-        },
-        onFailure: (error) => {
-          propose(token)({ type: "VERIFY_ERROR", payload: error });
-        },
-      }),
-    );
-    await runClientPromise(verifyEffect);
-  }
-  if (action.type === "VERIFY_SUCCESS") {
-    const { user, sessionId } = action.payload;
-    const expires = new Date();
-    expires.setDate(expires.getDate() + 30);
-    document.cookie = `session_id=${sessionId}; path=/; expires=${expires.toUTCString()}; SameSite=Lax`;
-    proposeAuthAction({ type: "SET_AUTHENTICATED", payload: user });
-    runClientUnscoped(
-      clientLog(
-        "info",
-        "Email verified and user logged in. Navigating to home.",
-      ),
-    );
-    navigate("/");
-  }
-};
-
-const propose = (token: string) => (action: Action) => {
-  update(action);
-  void react(action, token);
-};
-
 export const VerifyEmailView = (token: string): ViewResult => {
   const container = document.createElement("div");
 
-  // Trigger verification only once when the component mounts
-  if (model.value.status === "verifying" && model.value.message === null) {
-    propose(token)({ type: "VERIFY_START" });
-  }
+  const componentProgram = Effect.gen(function* () {
+    // --- State and Action Queue ---
+    const model = yield* Ref.make<Model>({
+      status: "verifying",
+      message: "Verifying your email...",
+    });
+    const actionQueue = yield* Queue.unbounded<Action>();
 
-  const renderView = effect(() => {
-    const renderContent = () => {
-      switch (model.value.status) {
-        case "verifying":
-          return html`<div
-              class="h-12 w-12 animate-spin rounded-full border-4 border-zinc-300 border-t-zinc-600"
-            ></div>
-            <p class="mt-4 text-zinc-600">
-              ${model.value.message || "Verifying..."}
-            </p>`;
-        case "success":
-          return html`<h2 class="text-2xl font-bold text-green-600">
-              Success!
-            </h2>
-            <p class="mt-4 text-zinc-600">${model.value.message}</p>`;
-        case "error":
-          return html`<h2 class="text-2xl font-bold text-red-600">Error</h2>
-            <p class="mt-4 text-zinc-600">${model.value.message}</p>
-            <div class="mt-6">
-              <a
-                href="/login"
-                class="font-medium text-zinc-600 hover:text-zinc-500"
-                >Back to Login</a
-              >
-            </div>`;
-      }
+    // --- Propose Action ---
+    const propose = (action: Action) =>
+      Effect.runFork(
+        pipe(
+          clientLog(
+            "debug",
+            `VerifyEmailView: Proposing action ${action.type}`,
+            undefined,
+            "VerifyEmailView:propose",
+          ),
+          Effect.andThen(() => Queue.offer(actionQueue, action)),
+        ),
+      );
+
+    // --- Action Handler ---
+    const handleAction = (action: Action): Effect.Effect<void> =>
+      Effect.gen(function* () {
+        switch (action.type) {
+          case "VERIFY_START": {
+            yield* Ref.update(
+              model,
+              (m): Model => ({
+                ...m,
+                status: "verifying",
+                message: "Verifying your email...",
+              }),
+            );
+            const verifyEffect = pipe(
+              Effect.tryPromise({
+                try: () => trpc.auth.verifyEmail.mutate({ token }),
+                catch: (err) => {
+                  if (
+                    typeof err === "object" &&
+                    err !== null &&
+                    "data" in err &&
+                    (err.data as { code?: string }).code === "BAD_REQUEST"
+                  ) {
+                    return new InvalidTokenError();
+                  }
+                  return new UnknownVerificationError({ cause: err });
+                },
+              }),
+              Effect.match({
+                onSuccess: (result) => {
+                  propose({
+                    type: "VERIFY_SUCCESS",
+                    payload: result as VerifySuccessPayload,
+                  });
+                },
+                onFailure: (error) => {
+                  propose({ type: "VERIFY_ERROR", payload: error });
+                },
+              }),
+            );
+            yield* Effect.fork(verifyEffect);
+            break;
+          }
+          case "VERIFY_SUCCESS": {
+            yield* Ref.update(
+              model,
+              (m): Model => ({
+                ...m,
+                status: "success",
+                message: "Email verified successfully! Redirecting you...",
+              }),
+            );
+            const { user, sessionId } = action.payload;
+            const expires = new Date();
+            expires.setDate(expires.getDate() + 30);
+            document.cookie = `session_id=${sessionId}; path=/; expires=${expires.toUTCString()}; SameSite=Lax`;
+            proposeAuthAction({ type: "SET_AUTHENTICATED", payload: user });
+            runClientUnscoped(
+              clientLog(
+                "info",
+                "Email verified and user logged in. Navigating to home.",
+              ),
+            );
+            navigate("/");
+            break;
+          }
+          case "VERIFY_ERROR": {
+            let errorMessage = "An unknown error occurred during verification.";
+            if (action.payload._tag === "InvalidTokenError") {
+              errorMessage =
+                "This verification link is invalid or has expired.";
+            }
+            yield* Ref.update(
+              model,
+              (m): Model => ({ ...m, status: "error", message: errorMessage }),
+            );
+            break;
+          }
+        }
+      });
+
+    // --- Render ---
+    const renderView = (currentModel: Model) => {
+      const renderContent = () => {
+        switch (currentModel.status) {
+          case "verifying":
+            return html`<div
+                class="h-12 w-12 animate-spin rounded-full border-4 border-zinc-300 border-t-zinc-600"
+              ></div>
+              <p class="mt-4 text-zinc-600">
+                ${currentModel.message || "Verifying..."}
+              </p>`;
+          case "success":
+            return html`<h2 class="text-2xl font-bold text-green-600">
+                Success!
+              </h2>
+              <p class="mt-4 text-zinc-600">${currentModel.message}</p>`;
+          case "error":
+            return html`<h2 class="text-2xl font-bold text-red-600">Error</h2>
+              <p class="mt-4 text-zinc-600">${currentModel.message}</p>
+              <div class="mt-6">
+                <a
+                  href="/login"
+                  class="font-medium text-zinc-600 hover:text-zinc-500"
+                  >Back to Login</a
+                >
+              </div>`;
+        }
+      };
+      const template = html`
+        <div class="flex min-h-screen items-center justify-center bg-gray-100">
+          <div
+            class="flex w-full max-w-md flex-col items-center rounded-lg bg-white p-8 text-center shadow-md"
+          >
+            ${renderContent()}
+          </div>
+        </div>
+      `;
+      render(template, container);
     };
 
-    const template = html`
-      <div class="flex min-h-screen items-center justify-center bg-gray-100">
-        <div
-          class="flex w-full max-w-md flex-col items-center rounded-lg bg-white p-8 text-center shadow-md"
-        >
-          ${renderContent()}
-        </div>
-      </div>
-    `;
-    render(template, container);
+    const renderEffect = Ref.get(model).pipe(
+      Effect.tap(renderView),
+      Effect.tap((m) =>
+        clientLog(
+          "debug",
+          `Rendering VerifyEmailView with state: ${JSON.stringify(m)}`,
+          undefined,
+          "VerifyEmailView:render",
+        ),
+      ),
+    );
+
+    // --- Main Loop ---
+    propose({ type: "VERIFY_START" }); // Initial action
+    yield* Queue.take(actionQueue).pipe(
+      Effect.flatMap(handleAction),
+      Effect.andThen(renderEffect),
+      Effect.forever,
+    );
   });
+
+  // --- Fork Lifecycle ---
+  const fiber = runClientUnscoped(componentProgram);
 
   return {
     template: html`${container}`,
     cleanup: () => {
-      renderView();
-      model.value = { status: "verifying", message: null };
+      runClientUnscoped(
+        clientLog(
+          "debug",
+          "VerifyEmailView cleanup running, interrupting fiber.",
+          undefined,
+          "VerifyEmailView:cleanup",
+        ),
+      );
+      runClientUnscoped(Fiber.interrupt(fiber));
     },
   };
 };

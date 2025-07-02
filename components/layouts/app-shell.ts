@@ -10,14 +10,12 @@ import {
 import { matchRoute, navigate } from "../../lib/client/router";
 import { AppLayout } from "./AppLayout";
 import { clientLog } from "../../lib/client/logger.client";
-import { runClientPromise } from "../../lib/client/runtime";
+import { runClientPromise, runClientUnscoped } from "../../lib/client/runtime";
 import { type AuthModel } from "../../lib/client/stores/authStore";
-
 const hasAllPerms = (
   needed: string[],
   user: { permissions?: readonly string[] | null } | null,
 ) => needed.every((p) => user?.permissions?.includes(p));
-
 // The core logic remains the same, but it will now render into the component instance.
 const processStateChange = (
   appRoot: HTMLElement,
@@ -39,6 +37,12 @@ const processStateChange = (
     );
 
     if (auth.status === "initializing" || auth.status === "authenticating") {
+      yield* clientLog(
+        "info",
+        "Auth status is initializing/authenticating. Rendering loading screen.",
+        auth.user?.id,
+        "AppShell:process",
+      );
       const loadingTemplate = html`<div
         class="flex h-32 items-center justify-center p-8 text-center text-zinc-500"
       >
@@ -103,13 +107,26 @@ const processStateChange = (
     yield* Effect.sync(() => {
       render(AppLayout({ children: pageTemplate }).template, appRoot);
     });
+    yield* clientLog(
+      "info",
+      `Successfully rendered view for ${path}`,
+      auth.user?.id,
+      "AppShell:render",
+    );
   });
 
 // --- REFACTORED COMPONENT ---
 export class AppShell extends HTMLElement {
   private mainFiber: Fiber.RuntimeFiber<void, unknown> | undefined;
-
   connectedCallback() {
+    runClientUnscoped(
+      clientLog(
+        "info",
+        "<app-shell> connected to DOM. Starting main app stream.",
+        undefined,
+        "AppShell",
+      ),
+    );
     const mainAppStream = appStateStream.pipe(
       Stream.flatMap(
         (state) => Stream.fromEffect(processStateChange(this, state)),
@@ -117,13 +134,20 @@ export class AppShell extends HTMLElement {
       ),
       Stream.provideLayer(ViewManagerLive),
     );
-
     // Fork the stream to run in the background, and store the fiber
     // so we can interrupt it on disconnection.
     this.mainFiber = Effect.runFork(Stream.runDrain(mainAppStream));
   }
 
   disconnectedCallback() {
+    runClientUnscoped(
+      clientLog(
+        "warn",
+        "<app-shell> disconnected from DOM. Interrupting main fiber.",
+        undefined,
+        "AppShell",
+      ),
+    );
     // Interrupt the fiber to ensure all resources and streams are cleaned up
     // when the component is removed from the DOM.
     if (this.mainFiber) {
