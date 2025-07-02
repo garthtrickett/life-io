@@ -37,9 +37,8 @@ import {
   cleanupExpiredTokensEffect,
   retryFailedEmailsEffect,
 } from "./lib/server/jobs";
-import type { UserId } from "./types/generated/public/User";
 
-// --- Custom Error Types for Avatar Upload ---
+// --- Custom Error Types ---
 class AuthError extends Data.TaggedError("AuthError")<{ message: string }> {}
 class FileError extends Data.TaggedError("FileError")<{ message: string }> {}
 class S3UploadError extends Data.TaggedError("S3UploadError")<{
@@ -48,6 +47,38 @@ class S3UploadError extends Data.TaggedError("S3UploadError")<{
 class DbUpdateError extends Data.TaggedError("DbUpdateError")<{
   cause: unknown;
 }> {}
+
+// --- Reusable Authentication Effect ---
+const authenticateRequestEffect = (request: Request) =>
+  Effect.gen(function* () {
+    const cookieHeader = request.headers.get("Cookie") ?? "";
+    const sessionIdOption = Option.fromNullable(
+      cookieHeader
+        .split(";")
+        .find((c) => c.trim().startsWith("session_id="))
+        ?.split("=")[1],
+    );
+
+    if (Option.isNone(sessionIdOption)) {
+      return yield* Effect.fail(
+        new AuthError({ message: "Unauthorized: No session ID found." }),
+      );
+    }
+
+    const { user } = yield* validateSessionEffect(sessionIdOption.value).pipe(
+      Effect.mapError(
+        () => new AuthError({ message: "Session validation failed." }),
+      ),
+    );
+
+    if (!user) {
+      return yield* Effect.fail(
+        new AuthError({ message: "Unauthorized: Invalid session." }),
+      );
+    }
+
+    return user;
+  });
 
 // --- Body Schemas with Effect Schema ---
 const AvatarUploadBody = Schema.Struct({
@@ -68,7 +99,6 @@ const ClientLogBody = Schema.Struct({
   level: Schema.String,
   args: Schema.Array(Schema.Any),
 });
-
 type ServerLoggableLevel = "info" | "error" | "warn" | "debug";
 const isLoggableLevel = (level: string): level is ServerLoggableLevel => {
   return ["info", "error", "warn", "debug"].includes(level);
@@ -82,7 +112,6 @@ const logClientMessageEffect = (body: unknown) =>
     );
 
     if (isLoggableLevel(levelFromClient)) {
-      // FIX: Safely convert any[] to a string for logging.
       const message = Array.isArray(args)
         ? args.map(String).join(" ")
         : String(args);
@@ -111,30 +140,7 @@ const avatarUploadEffect = (context: { request: Request; body: unknown }) =>
     );
     const { avatar } = decodedBody;
 
-    const cookieHeader = context.request.headers.get("Cookie") ?? "";
-    const sessionIdOption = Option.fromNullable(
-      cookieHeader
-        .split(";")
-        .find((c) => c.trim().startsWith("session_id="))
-        ?.split("=")[1],
-    );
-
-    if (Option.isNone(sessionIdOption)) {
-      return yield* Effect.fail(
-        new AuthError({ message: "Unauthorized: No session ID found." }),
-      );
-    }
-
-    const { user } = yield* validateSessionEffect(sessionIdOption.value).pipe(
-      Effect.mapError(
-        () => new AuthError({ message: "Session validation failed." }),
-      ),
-    );
-    if (!user) {
-      return yield* Effect.fail(
-        new AuthError({ message: "Unauthorized: Invalid session." }),
-      );
-    }
+    const user = yield* authenticateRequestEffect(context.request);
 
     yield* serverLog(
       "info",
@@ -236,25 +242,53 @@ const setupApp = Effect.gen(function* () {
   app.post("/trpc/*", handleTrpc);
 
   // --- Replicache Endpoints ---
-  app.post("/replicache/pull", async () => {
-    // NOTE: Auth logic to get userId from the request would be needed here.
-    // For now, it's hardcoded as in the previous example.
-    const userId = "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11";
-    return runServerPromise(handlePull(userId as UserId));
-  });
+  app.post("/replicache/pull", async ({ request }) => {
+    const effect = Effect.gen(function* () {
+      const user = yield* authenticateRequestEffect(request);
+      return yield* handlePull(user.id);
+    });
 
-  app.post("/replicache/push", async ({ body }) => {
-    // NOTE: Auth logic to get userId would also be here.
-    const userId = "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11";
-    await runServerPromise(handlePush(body as PushRequest, userId as UserId));
-    // After a successful push, "poke" all connected clients.
-    await Effect.runPromise(PubSub.publish(replicachePokes, "poke"));
-    return { success: true };
+    return runServerPromise(
+      effect.pipe(
+        Effect.catchAll((e) => {
+          if (e instanceof AuthError) {
+            return Effect.succeed(new Response(e.message, { status: 401 }));
+          }
+          const message =
+            e instanceof Error
+              ? e.message
+              : "An internal server error occurred.";
+          return Effect.succeed(new Response(message, { status: 500 }));
+        }),
+      ),
+    );
+  });
+  app.post("/replicache/push", async ({ request, body }) => {
+    const effect = Effect.gen(function* () {
+      const user = yield* authenticateRequestEffect(request);
+      yield* handlePush(body as PushRequest, user.id);
+      yield* PubSub.publish(replicachePokes, "poke");
+      return { success: true };
+    });
+
+    return runServerPromise(
+      effect.pipe(
+        Effect.catchAll((e) => {
+          if (e instanceof AuthError) {
+            return Effect.succeed(new Response(e.message, { status: 401 }));
+          }
+          const message =
+            e instanceof Error
+              ? e.message
+              : "An internal server error occurred.";
+          return Effect.succeed(new Response(message, { status: 500 }));
+        }),
+      ),
+    );
   });
 
   // --- WebSocket for Replicache Pokes ---
   app.ws("/ws", {
-    // FIX: Provide an explicit, minimal type for the `ws` parameter.
     open(ws: WsSender) {
       const streamFiber = Effect.runFork(
         Effect.scoped(
@@ -275,7 +309,6 @@ const setupApp = Effect.gen(function* () {
         ),
       );
     },
-    // FIX: Provide an explicit, minimal type for the `ws` parameter.
     close(ws: WsSender) {
       const streamFiber = wsConnections.get(ws.id);
       if (streamFiber) {
