@@ -2,7 +2,7 @@
 import { render, html, type TemplateResult } from "lit-html";
 import { pipe, Effect, Data, Queue, Ref, Fiber } from "effect";
 import { runClientUnscoped } from "../../lib/client/runtime";
-import type { NoteDto } from "../../types/generated/Note";
+import type { Note } from "../../types/generated/public/Note";
 import styles from "./NoteDetailView.module.css";
 import { trpc } from "../../lib/client/trpc";
 import { clientLog } from "../../lib/client/logger.client";
@@ -25,7 +25,7 @@ interface ViewResult {
 }
 interface Model {
   status: "loading" | "idle" | "saving" | "saved" | "error";
-  note: NoteDto | null;
+  note: Note | null;
   error: string | null;
   originalContent: string;
   saveFiber: Fiber.Fiber<void, void> | null;
@@ -34,11 +34,11 @@ interface Model {
 // --- Action ---
 type Action =
   | { type: "FETCH_START" }
-  | { type: "FETCH_SUCCESS"; payload: NoteDto }
+  | { type: "FETCH_SUCCESS"; payload: Note }
   | { type: "FETCH_ERROR"; payload: NoteFetchError }
   | { type: "UPDATE_FIELD"; payload: { title?: string; content?: string } }
   | { type: "SAVE_START" }
-  | { type: "SAVE_SUCCESS"; payload: NoteDto }
+  | { type: "SAVE_SUCCESS"; payload: Note }
   | { type: "SAVE_ERROR"; payload: NoteSaveError | NoteValidationError }
   | { type: "RESET_SAVE_STATUS" };
 
@@ -163,7 +163,7 @@ export const NoteDetailView = (id: string): ViewResult => {
                 onSuccess: (note) =>
                   propose({
                     type: "FETCH_SUCCESS",
-                    payload: note as NoteDto,
+                    payload: note,
                   }),
                 onFailure: (err) =>
                   propose({ type: "FETCH_ERROR", payload: err }),
@@ -263,7 +263,7 @@ export const NoteDetailView = (id: string): ViewResult => {
               }),
               Effect.flatMap((note) =>
                 note
-                  ? Effect.succeed(note as NoteDto)
+                  ? Effect.succeed(note)
                   : Effect.fail(
                       new NoteSaveError({
                         cause: "Server did not return updated note.",

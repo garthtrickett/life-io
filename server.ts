@@ -1,4 +1,4 @@
-// File: ./server.ts (Refactored for strictness and scheduled jobs)
+// File: ./server.ts
 import { existsSync, readFileSync } from "node:fs";
 import { staticPlugin } from "@elysiajs/static";
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
@@ -11,16 +11,17 @@ import {
   Schedule,
   pipe,
   Duration,
+  Fiber,
+  Stream,
+  PubSub,
 } from "effect";
-// Import Schedule and Duration
-import { Elysia, type Context } from "elysia";
+import { Elysia } from "elysia";
+import type { PushRequest } from "replicache";
+import { handlePull, handlePush } from "./replicache/server";
 
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { validateSessionEffect } from "./lib/server/auth";
-
 import { serverLog } from "./lib/server/logger.server";
-// --- MODIFIED ---
-// Import ServerLive to provide all services at the application root
 import {
   runServerPromise,
   runServerUnscoped,
@@ -28,14 +29,16 @@ import {
 } from "./lib/server/runtime";
 import { createContext } from "./trpc/context";
 import { appRouter } from "./trpc/router";
-// --- Service Imports ---
 import { S3 } from "./lib/server/s3";
 import { generateId } from "./lib/server/utils";
-// --- Effect Schema imports ---
 import { Schema } from "@effect/schema";
-// --- FIX: Import the function directly for stricter type compliance ---
 import { formatErrorSync } from "@effect/schema/TreeFormatter";
 import { Db } from "./db/DbTag";
+import {
+  cleanupExpiredTokensEffect,
+  retryFailedEmailsEffect,
+} from "./lib/server/jobs";
+import type { UserId } from "./types/generated/public/User";
 
 // --- Custom Error Types for Avatar Upload ---
 class AuthError extends Data.TaggedError("AuthError")<{ message: string }> {}
@@ -46,13 +49,6 @@ class S3UploadError extends Data.TaggedError("S3UploadError")<{
 class DbUpdateError extends Data.TaggedError("DbUpdateError")<{
   cause: unknown;
 }> {}
-
-// --- NEW: Import scheduled jobs ---
-import {
-  cleanupExpiredTokensEffect,
-  retryFailedEmailsEffect,
-} from "./lib/server/jobs";
-//
 
 // --- Body Schemas with Effect Schema ---
 const AvatarUploadBody = Schema.Struct({
@@ -83,30 +79,21 @@ const logClientMessageEffect = (body: unknown) =>
     const { level: levelFromClient, args } = yield* Schema.decodeUnknown(
       ClientLogBody,
     )(body).pipe(
-      Effect.mapError(
-        // --- FIX: Call the function directly ---
-        (e) => new FileError({ message: formatErrorSync(e) }),
-      ),
+      Effect.mapError((e) => new FileError({ message: formatErrorSync(e) })),
     );
 
     if (isLoggableLevel(levelFromClient)) {
+      // FIX: Safely convert any[] to a string for logging.
+      const message = Array.isArray(args)
+        ? args.map(String).join(" ")
+        : String(args);
+
       yield* Effect.forkDaemon(
-        serverLog(
-          levelFromClient,
-          `[CLIENT] ${args.join(" ")}`,
-          undefined,
-          "Client",
-        ),
+        serverLog(levelFromClient, `[CLIENT] ${message}`, undefined, "Client"),
       );
     }
     return new Response(null, { status: 204 });
-  }).pipe(
-    Effect.catchTags({
-      FileError: (e) =>
-        Effect.succeed(new Response(e.message, { status: 400 })),
-    }),
-  );
-// --- Refactored Effect for handling avatar uploads with typed errors ---
+  });
 const avatarUploadEffect = (context: { request: Request; body: unknown }) =>
   Effect.gen(function* () {
     yield* serverLog(
@@ -115,17 +102,13 @@ const avatarUploadEffect = (context: { request: Request; body: unknown }) =>
       undefined,
       "AvatarUpload",
     );
-
     const s3 = yield* S3;
-    const db = yield* Db; // Get DB from context
+    const db = yield* Db;
 
     const decodedBody = yield* Schema.decodeUnknown(AvatarUploadBody)(
       context.body,
     ).pipe(
-      Effect.mapError(
-        // --- FIX: Call the function directly ---
-        (e) => new FileError({ message: formatErrorSync(e) }),
-      ),
+      Effect.mapError((e) => new FileError({ message: formatErrorSync(e) })),
     );
     const { avatar } = decodedBody;
 
@@ -148,7 +131,6 @@ const avatarUploadEffect = (context: { request: Request; body: unknown }) =>
         () => new AuthError({ message: "Session validation failed." }),
       ),
     );
-    // --- FIX: strictNullChecks requires an explicit check for the 'user' object ---
     if (!user) {
       return yield* Effect.fail(
         new AuthError({ message: "Unauthorized: Invalid session." }),
@@ -182,7 +164,6 @@ const avatarUploadEffect = (context: { request: Request; body: unknown }) =>
             ContentType: avatar.type,
           }),
         ),
-
       catch: (cause) => new S3UploadError({ cause }),
     }).pipe(
       Effect.tap(() =>
@@ -226,46 +207,25 @@ const avatarUploadEffect = (context: { request: Request; body: unknown }) =>
         serverLog(
           "error",
           `DB update failed: ${String(e.cause)}`,
-
           user.id,
           "AvatarUpload:DB",
         ),
       ),
     );
     return { avatarUrl };
-  }).pipe(
-    Effect.map((body) => new Response(JSON.stringify(body), { status: 200 })),
-    Effect.catchTags({
-      AuthError: (e) =>
-        Effect.succeed(new Response(e.message, { status: 401 })),
-      FileError: (e) =>
-        Effect.succeed(new Response(e.message, { status: 400 })),
-      S3UploadError: () =>
-        Effect.succeed(new Response("S3 upload failed.", { status: 500 })),
-      DbUpdateError: () =>
-        Effect.succeed(
-          new Response("Database update failed.", { status: 500 }),
-        ),
-    }),
-  );
+  });
 
-// --- Define ServerContext and toHandler Helper ---
-type ServerContext =
-  | import("./db/DbTag").Db
-  | import("./lib/server/s3").S3
-  | import("./lib/server/crypto").Crypto;
-const toHandler =
-  <E,>(
-    effect: (context: Context) => Effect.Effect<Response, E, ServerContext>,
-  ) =>
-  (context: Context) =>
-    runServerPromise(effect(context));
+// --- Minimal WebSocket Sender Type to satisfy the linter ---
+type WsSender = { id: string; send: (message: string) => void };
 
 // --- Main application setup Effect ---
 const setupApp = Effect.gen(function* () {
   const app = new Elysia();
   const isProduction = process.env.NODE_ENV === "production";
+  const replicachePokes = yield* PubSub.unbounded<string>();
+  const wsConnections = new Map<string, Fiber.RuntimeFiber<void, unknown>>();
 
+  // --- tRPC Endpoints ---
   const handleTrpc = (context: { request: Request }) =>
     fetchRequestHandler({
       endpoint: "/trpc",
@@ -273,30 +233,107 @@ const setupApp = Effect.gen(function* () {
       req: context.request,
       createContext,
     });
-
   app.get("/trpc/*", handleTrpc);
   app.post("/trpc/*", handleTrpc);
 
-  app.post("/api/user/avatar", toHandler(avatarUploadEffect));
-  app.post(
-    "/log/client",
-    toHandler(({ body }) => logClientMessageEffect(body)),
+  // --- Replicache Endpoints ---
+  app.post("/replicache/pull", async () => {
+    // NOTE: Auth logic to get userId from the request would be needed here.
+    // For now, it's hardcoded as in the previous example.
+    const userId = "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11";
+    return runServerPromise(handlePull(userId as UserId));
+  });
+
+  app.post("/replicache/push", async ({ body }) => {
+    // NOTE: Auth logic to get userId would also be here.
+    const userId = "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11";
+    await runServerPromise(handlePush(body as PushRequest, userId as UserId));
+    // After a successful push, "poke" all connected clients.
+    await Effect.runPromise(PubSub.publish(replicachePokes, "poke"));
+    return { success: true };
+  });
+
+  // --- WebSocket for Replicache Pokes ---
+  app.ws("/ws", {
+    // FIX: Provide an explicit, minimal type for the `ws` parameter.
+    open(ws: WsSender) {
+      const streamFiber = Effect.runFork(
+        Effect.scoped(
+          Stream.fromPubSub(replicachePokes).pipe(
+            Stream.runForEach((message: string) =>
+              Effect.sync(() => ws.send(message)),
+            ),
+          ),
+        ),
+      );
+      wsConnections.set(ws.id, streamFiber);
+      runServerUnscoped(
+        serverLog(
+          "info",
+          `WebSocket client connected: ${ws.id}`,
+          undefined, // Use undefined for non-user-specific logs
+          "WS",
+        ),
+      );
+    },
+    // FIX: Provide an explicit, minimal type for the `ws` parameter.
+    close(ws: WsSender) {
+      const streamFiber = wsConnections.get(ws.id);
+      if (streamFiber) {
+        Effect.runFork(Fiber.interrupt(streamFiber));
+        wsConnections.delete(ws.id);
+      }
+      runServerUnscoped(
+        serverLog(
+          "info",
+          `WebSocket client disconnected: ${ws.id}`,
+          undefined, // Use undefined for non-user-specific logs
+          "WS",
+        ),
+      );
+    },
+  });
+
+  // --- Other API Endpoints ---
+  app.post("/api/user/avatar", (context) =>
+    runServerPromise(
+      avatarUploadEffect(context).pipe(
+        Effect.catchTags({
+          AuthError: (e) =>
+            Effect.succeed(new Response(e.message, { status: 401 })),
+          FileError: (e) =>
+            Effect.succeed(new Response(e.message, { status: 400 })),
+          S3UploadError: () =>
+            Effect.succeed(new Response("S3 upload failed.", { status: 500 })),
+          DbUpdateError: () =>
+            Effect.succeed(
+              new Response("Database update failed.", { status: 500 }),
+            ),
+        }),
+      ),
+    ),
   );
+  app.post("/log/client", ({ body }) =>
+    runServerPromise(
+      logClientMessageEffect(body).pipe(
+        Effect.catchTags({
+          FileError: (e) =>
+            Effect.succeed(new Response(e.message, { status: 400 })),
+        }),
+      ),
+    ),
+  );
+
+  // --- Static File Serving & SPA Fallback (Production) ---
   if (isProduction) {
     yield* Effect.forkDaemon(
-      serverLog(
-        "info",
-        "Production mode detected. Setting up static file serving and SPA fallback.",
-      ),
+      serverLog("info", "Production mode: Setting up static file serving."),
     );
     const publicDir = "dist/public";
     const indexHtmlPath = `${publicDir}/index.html`;
 
-    const buildExists = yield* Effect.sync(() => existsSync(indexHtmlPath));
-    if (buildExists) {
-      const indexHtml = yield* Effect.sync(() =>
-        readFileSync(indexHtmlPath, "utf-8"),
-      );
+    if (existsSync(indexHtmlPath)) {
+      const indexHtml = readFileSync(indexHtmlPath, "utf-8");
       yield* Effect.forkDaemon(
         serverLog("info", `Serving static files from ${publicDir}`),
       );
@@ -307,39 +344,33 @@ const setupApp = Effect.gen(function* () {
           new Response(indexHtml, { headers: { "Content-Type": "text/html" } }),
       );
     } else {
-      const errorMessage = `[Production Mode Error] Frontend build not found!
-Looked for 'index.html' at: ${indexHtmlPath}. Please run 'bun run build' before starting the production server.`;
+      const errorMessage = `[Production Error] Frontend build not found at: ${indexHtmlPath}.`;
       return yield* Effect.fail(new Error(errorMessage));
     }
   } else {
     yield* Effect.forkDaemon(
-      serverLog(
-        "info",
-        "Development mode. API routes are set up; Vite will handle static file serving.",
-      ),
+      serverLog("info", "Development mode. Vite will serve static files."),
     );
   }
 
-  // --- NEW: Schedule background jobs ---
+  // --- Scheduled Jobs ---
   yield* Effect.forkDaemon(
-    //
     pipe(
-      cleanupExpiredTokensEffect, //
-      Effect.repeat(Schedule.spaced(Duration.hours(24))), // FIX: Use Duration.hours(24)
+      cleanupExpiredTokensEffect,
+      Effect.repeat(Schedule.spaced(Duration.hours(24))),
       Effect.tapError((e) =>
         serverLog(
           "error",
-          `Expired token cleanup job failed: ${e.message}`,
+          `Token cleanup job failed: ${e.message}`,
           undefined,
           "Job:TokenCleanup",
         ),
-      ), //
+      ),
     ),
   );
   yield* Effect.forkDaemon(
-    //
     pipe(
-      retryFailedEmailsEffect, //
+      retryFailedEmailsEffect,
       Effect.repeat(
         Schedule.intersect(
           Schedule.exponential(Duration.minutes(1)),
@@ -353,19 +384,14 @@ Looked for 'index.html' at: ${indexHtmlPath}. Please run 'bun run build' before 
           undefined,
           "Job:EmailRetry",
         ),
-      ), //
+      ),
     ),
   );
-  // --- END NEW ---
-
   return app;
 });
 
-// --- MODIFIED: App execution now provides all services to `setupApp` ---
-// By providing the ServerLive layer, we satisfy all service dependencies
-// for the entire application, including the scheduled jobs.
+// --- Application Entry Point ---
 const program = Effect.provide(setupApp, ServerLive);
-
 void Effect.runPromiseExit(program).then((exit) => {
   if (Exit.isSuccess(exit)) {
     const app = exit.value;
@@ -386,8 +412,6 @@ void Effect.runPromiseExit(program).then((exit) => {
       await runServerPromise(
         serverLog("info", "Graceful shutdown complete. Exiting."),
       );
-      // The manual db.destroy() is no longer necessary as the runtime
-      // manages the lifecycle of the DbLayer.
       process.exit(0);
     };
 

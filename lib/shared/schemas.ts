@@ -2,6 +2,7 @@
 import { Schema } from "@effect/schema";
 import type { NoteId, Note } from "../../types/generated/public/Note";
 import type { UserId, User } from "../../types/generated/public/User";
+import type { BlockId } from "../../types/generated/public/Block";
 
 /**
  * A central place for defining reusable Effect Schemas.
@@ -37,6 +38,13 @@ export const NoteIdSchema: Schema.Schema<NoteId, string, never> = (
 export const UserIdSchema: Schema.Schema<UserId, string, never> = (
   UUIDSchemaBase as unknown as Schema.Schema<UserId, string, never>
 ).pipe(Schema.annotations({ message: () => "Invalid User ID format." }));
+
+/**
+ * A schema for BlockId, using the base UUID validation.
+ */
+export const BlockIdSchema: Schema.Schema<BlockId, string, never> = (
+  UUIDSchemaBase as unknown as Schema.Schema<BlockId, string, never>
+).pipe(Schema.annotations({ message: () => "Invalid Block ID format." }));
 
 // --- NEW SCHEMAS ---
 
@@ -87,3 +95,31 @@ export const UserSchema: Schema.Schema<User, any> = Schema.Struct({
   avatar_url: Schema.Union(Schema.String, Schema.Null),
   email_verified: Schema.Boolean,
 });
+
+/**
+ * A schema for validating a single block object.
+ */
+ 
+export const BlockSchema = Schema.Struct({
+  id: Schema.String.pipe(Schema.brand("BlockId")),
+  user_id: Schema.String.pipe(Schema.brand("UserId")),
+  type: Schema.String,
+  content: Schema.String,
+  fields: Schema.Any, // <--- FIX #1: Use Schema.Any
+  tags: Schema.Array(Schema.String),
+  links: Schema.Array(Schema.String),
+  file_path: Schema.String,
+  parent_id: Schema.Union(
+    Schema.String.pipe(Schema.brand("BlockId")),
+    Schema.Null,
+  ),
+  depth: Schema.Number,
+  order: Schema.Number,
+  transclusions: Schema.Array(Schema.String),
+  version: Schema.Number,
+  created_at: Schema.DateFromString,
+  updated_at: Schema.DateFromString,
+});
+
+// 2. Derive the Block type from the schema itself for type safety
+export type Block = Schema.Schema.Type<typeof BlockSchema>;

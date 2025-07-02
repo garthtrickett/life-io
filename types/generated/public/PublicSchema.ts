@@ -10,6 +10,7 @@ import type { default as SessionTable } from './Session';
 import type { default as NoteTable } from './Note';
 import type { default as KyselyMigrationTable } from './KyselyMigration';
 import type { default as NoteTagTable } from './NoteTag';
+import type { default as BlockTable } from './Block';
 
 export default interface PublicSchema {
   password_reset_token: PasswordResetTokenTable;
@@ -29,4 +30,6 @@ export default interface PublicSchema {
   kysely_migration: KyselyMigrationTable;
 
   note_tag: NoteTagTable;
+
+  block: BlockTable;
 }

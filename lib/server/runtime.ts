@@ -7,7 +7,6 @@ import type { S3 } from "./s3";
 import { S3Live } from "./s3";
 import { CryptoLive, type Crypto } from "./crypto";
 import { ConfigLive } from "./Config";
-import { serverLog } from "./logger.server";
 
 // 1. Combine the core service layers.
 const ServerServices = Layer.mergeAll(DbLayer, S3Live, CryptoLive);
@@ -16,12 +15,14 @@ const ServerServices = Layer.mergeAll(DbLayer, S3Live, CryptoLive);
 //    It now includes robust error handling for configuration issues.
 export const ServerLive = ServerServices.pipe(
   Layer.provide(ConfigLive),
-  // **FIX:** Catch any ConfigError during layer creation, log it, and treat it as a
+  // FIX: Catch any ConfigError during layer creation, log it, and treat it as a
   // fatal defect. The application cannot run without valid config.
   Layer.catchAll((error: ConfigError) => {
-    Effect.gen(function* () {
-      yield* serverLog("info", "no user", "EmailService");
-    });
+    // The logger isn't available if config fails, so we use console.error.
+    console.error(
+      "FATAL: Configuration layer failed to build. Check .env variables.",
+      error,
+    );
     // End the process by returning a fatal defect.
     return Layer.die(error);
   }),

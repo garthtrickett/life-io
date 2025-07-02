@@ -3,7 +3,7 @@ import { render, html, type TemplateResult } from "lit-html";
 import { repeat } from "lit-html/directives/repeat.js";
 import { pipe, Effect, Queue, Ref, Fiber } from "effect";
 import { runClientUnscoped } from "../../lib/client/runtime";
-import type { NoteDto } from "../../types/generated/Note";
+import type { Note } from "../../types/generated/public/Note";
 import styles from "./NotesView.module.css";
 import { navigate } from "../../lib/client/router";
 import { clientLog } from "../../lib/client/logger.client";
@@ -17,7 +17,7 @@ interface ViewResult {
 }
 
 interface Model {
-  notes: NoteDto[];
+  notes: Note[];
   isLoading: boolean;
   isCreating: boolean;
   error: string | null;
@@ -25,10 +25,10 @@ interface Model {
 
 type Action =
   | { type: "FETCH_NOTES_START" }
-  | { type: "FETCH_NOTES_SUCCESS"; payload: NoteDto[] }
+  | { type: "FETCH_NOTES_SUCCESS"; payload: Note[] }
   | { type: "FETCH_NOTES_ERROR"; payload: string }
   | { type: "CREATE_NOTE_START" }
-  | { type: "CREATE_NOTE_SUCCESS"; payload: NoteDto }
+  | { type: "CREATE_NOTE_SUCCESS"; payload: Note }
   | { type: "CREATE_NOTE_ERROR"; payload: string }
   | { type: "SORT_NOTES_AZ" };
 
@@ -223,7 +223,7 @@ export const NotesView = (): ViewResult => {
               Effect.flatMap((note) =>
                 // --- FIX: Cast the unknown result and check for id ---
                 note && typeof note === "object" && "id" in note
-                  ? Effect.succeed(note as NoteDto)
+                  ? Effect.succeed(note)
                   : Effect.fail(new Error("Server did not return a note.")),
               ),
               Effect.match({
