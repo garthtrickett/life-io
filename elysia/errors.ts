@@ -18,3 +18,12 @@ export class InvalidPullRequestError extends Data.TaggedError(
 )<{
   readonly message: string;
 }> {}
+
+/**
+ * A general-purpose tagged error for API issues that don't have a specific type.
+ * This ensures all errors passed to the effectHandler are tagged.
+ */
+export class ApiError extends Data.TaggedError("ApiError")<{
+  readonly message: string;
+  readonly cause?: unknown;
+}> {}

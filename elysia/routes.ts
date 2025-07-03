@@ -1,6 +1,6 @@
 // File: ./elysia/routes.ts
 import { Elysia } from "elysia";
-import { Effect, Fiber, Stream, pipe } from "effect";
+import { Data, Effect, Fiber, Stream } from "effect";
 import { staticPlugin } from "@elysiajs/static";
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import type { PushRequest } from "replicache";
@@ -16,9 +16,10 @@ import {
 } from "../replicache/server";
 import { handleAvatarUpload, handleClientLog } from "./handlers";
 import { authenticateRequestEffect } from "./auth";
-import { AuthError, InvalidPullRequestError } from "./errors";
-import { runServerPromise, runServerUnscoped } from "../lib/server/runtime";
+import { ApiError, InvalidPullRequestError } from "./errors";
+import { runServerUnscoped } from "../lib/server/runtime";
 import { serverLog } from "../lib/server/logger.server";
+import { effectHandler } from "./effectHandler";
 
 type WsSender = { id: string; send: (message: string) => void };
 
@@ -31,6 +32,20 @@ export const makeApp = Effect.gen(function* () {
   const pokeService = yield* PokeService;
   const wsConnections = new Map<string, Fiber.RuntimeFiber<void, unknown>>();
 
+  // A helper function to map any non-tagged error to our new ApiError
+  const mapToApiError = (error: unknown) => {
+    if (error instanceof Data.TaggedError) {
+      return error; // It's already tagged, pass it through.
+    }
+    if (error instanceof Error) {
+      return new ApiError({ message: error.message, cause: error });
+    }
+    return new ApiError({
+      message: "An unknown error occurred",
+      cause: error,
+    });
+  };
+
   // --- tRPC Endpoints ---
   const handleTrpc = (context: { request: Request }) =>
     fetchRequestHandler({
@@ -41,10 +56,9 @@ export const makeApp = Effect.gen(function* () {
     });
   app.get("/trpc/*", handleTrpc).post("/trpc/*", handleTrpc);
 
-  // --- Replicache Endpoints ---
   app.group("/replicache", (group) =>
     group
-      .post("/pull", async ({ request, body }) => {
+      .post("/pull", ({ request, body }) => {
         const pullProgram = Effect.gen(function* () {
           const user = yield* authenticateRequestEffect(request);
           const pull = body as ReplicachePullRequest;
@@ -56,72 +70,27 @@ export const makeApp = Effect.gen(function* () {
               }),
             );
           }
+          // All errors from this point forward are handled by the pipe below
           return yield* handlePull(user.id, pull);
-        });
+        }).pipe(
+          // A single `mapError` catches all errors from the chain and ensures they are tagged.
+          Effect.mapError(mapToApiError),
+        );
 
-        const handledProgram = Effect.matchEffect(pullProgram, {
-          onFailure: (error) => {
-            if (error instanceof AuthError) {
-              return Effect.succeed(
-                new Response(error.message, { status: 401 }),
-              );
-            }
-            if (error instanceof InvalidPullRequestError) {
-              return Effect.succeed(
-                new Response(error.message, { status: 400 }),
-              );
-            }
-            return pipe(
-              serverLog(
-                "error",
-                `Unhandled error in /replicache/pull: ${
-                  error instanceof Error ? error.message : String(error)
-                }`,
-              ),
-              Effect.andThen(
-                Effect.succeed(
-                  new Response("Internal Server Error", { status: 500 }),
-                ),
-              ),
-            );
-          },
-          onSuccess: (pullResponse) => Effect.succeed(pullResponse),
-        });
-
-        return runServerPromise(handledProgram);
+        return effectHandler(pullProgram);
       })
       .post("/push", ({ request, body }) => {
         const pushProgram = Effect.gen(function* () {
           const user = yield* authenticateRequestEffect(request);
+          // All errors from this point forward are handled by the pipe below
           yield* handlePush(body as PushRequest, user.id);
           return { success: true };
-        });
+        }).pipe(
+          // A single `mapError` catches all errors from the chain and ensures they are tagged.
+          Effect.mapError(mapToApiError),
+        );
 
-        const handledProgram = Effect.matchEffect(pushProgram, {
-          onFailure: (error) => {
-            if (error instanceof AuthError) {
-              return Effect.succeed(
-                new Response(error.message, { status: 401 }),
-              );
-            }
-            return pipe(
-              serverLog(
-                "error",
-                `Unhandled error in /replicache/push: ${
-                  error instanceof Error ? error.message : String(error)
-                }`,
-              ),
-              Effect.andThen(
-                Effect.succeed(
-                  new Response("Internal Server Error", { status: 500 }),
-                ),
-              ),
-            );
-          },
-          onSuccess: (result) => Effect.succeed(result),
-        });
-
-        return runServerPromise(handledProgram);
+        return effectHandler(pushProgram);
       }),
   );
 
@@ -155,15 +124,13 @@ export const makeApp = Effect.gen(function* () {
       );
     },
   });
-
   // --- Other API Endpoints ---
   app
     .post("/api/user/avatar", (context) =>
-      runServerPromise(
+      effectHandler(
         handleAvatarUpload(context).pipe(
           Effect.catchTags({
-            AuthError: (e) =>
-              Effect.succeed(new Response(e.message, { status: 401 })),
+            // Errors from this specific handler are mapped to a failure in the effect handler's context
             FileError: (e) =>
               Effect.succeed(new Response(e.message, { status: 400 })),
             S3UploadError: () =>
@@ -179,16 +146,14 @@ export const makeApp = Effect.gen(function* () {
       ),
     )
     .post("/log/client", ({ body }) =>
-      runServerPromise(
+      effectHandler(
         handleClientLog(body).pipe(
-          Effect.catchTags({
-            FileError: (e) =>
-              Effect.succeed(new Response(e.message, { status: 400 })),
-          }),
+          Effect.catchTag("FileError", (e) =>
+            Effect.succeed(new Response(e.message, { status: 400 })),
+          ),
         ),
       ),
     );
-
   // --- Static File Serving & SPA Fallback (Production) ---
   if (isProduction) {
     yield* Effect.forkDaemon(

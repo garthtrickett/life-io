@@ -31,7 +31,7 @@ export const ServerLive = ServerServices.pipe(
 );
 
 // Define the context type that our server effects will require.
-type ServerContext = Db | S3 | Crypto | PokeService;
+export type ServerContext = Db | S3 | Crypto | PokeService;
 
 /**
  * Executes a server-side Effect and returns a Promise of its result.
