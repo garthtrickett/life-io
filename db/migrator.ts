@@ -1,19 +1,23 @@
 // File: ./db/migrator.ts
-import { Effect, Exit, Cause } from "effect";
-import { Kysely } from "kysely";
+import { Cause, Effect, Exit } from "effect";
+import type { Kysely } from "kysely";
 // --- REMOVED ---
 // import { db } from "./kysely";
 // --- ADDED ---
-import { makeDbLive } from "./kysely"; // Import the effect that creates the DB
-import { Database } from "../types";
+import { makeDbLive } from "./kysely";
+// Import the effect that creates the DB
+import type { Database } from "../types";
 
 import { serverLog } from "../lib/server/logger.server";
 import { Migrator } from "kysely";
-import { EmbeddedCentralMigrationProvider } from "../lib/server/migrations/EmbeddedCentralMigrationProvider";
+import { CentralMigrationProvider } from "../lib/server/migrations/MigrationProviderTag";
+import { CentralMigrationProviderLive } from "../lib/server/migrations/EmbeddedCentralMigrationProvider";
 
-// --- MODIFIED: The function now accepts the db instance ---
+// --- MODIFIED: The function now accepts the db instance and requires a provider ---
 const runMigrations = (direction: "up" | "down", db: Kysely<Database>) =>
   Effect.gen(function* () {
+    const providerService = yield* CentralMigrationProvider;
+
     yield* serverLog(
       "info",
       `Running migrations via migrator.ts: ${direction}`,
@@ -23,7 +27,10 @@ const runMigrations = (direction: "up" | "down", db: Kysely<Database>) =>
 
     const migrator = new Migrator({
       db, // Use the passed-in instance
-      provider: new EmbeddedCentralMigrationProvider(),
+      // --- MODIFIED: Bridge our Effect-based service to Kysely's Promise-based API ---
+      provider: {
+        getMigrations: () => Effect.runPromise(providerService.getMigrations),
+      },
     });
 
     const { error, results } = yield* Effect.tryPromise({
@@ -72,17 +79,21 @@ const getDirection = () => {
 
 const direction = getDirection();
 
-// Create a main program that first builds the DB connection, then runs migrations
+// --- MODIFIED: The main program now provides all necessary layers ---
 const program = Effect.gen(function* () {
   // 1. Create the db instance from our live effect
   const db = yield* makeDbLive;
 
   // 2. Ensure the connection is destroyed after the main logic runs
   yield* Effect.ensuring(
+    // The migrator effect now requires the CentralMigrationProvider
     runMigrations(direction, db),
     Effect.promise(() => db.destroy()),
   );
-});
+}).pipe(
+  // 3. Provide the live layer for the migration provider
+  Effect.provide(CentralMigrationProviderLive),
+);
 
 void Effect.runPromiseExit(program).then((exit) => {
   if (Exit.isFailure(exit)) {
@@ -96,7 +107,3 @@ void Effect.runPromiseExit(program).then((exit) => {
     process.exit(0);
   }
 });
-// --- REMOVED: db.destroy() is now handled within the main `program` effect ---
-// .finally(() => {
-//   void db.destroy();
-// });
