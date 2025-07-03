@@ -1,11 +1,11 @@
 {
   "type": "module",
   "scripts": {
-    "dev": "concurrently \"bun --watch server.ts\" \"vite\"",
+    "dev": "concurrently \"bun --watch elysia.ts\" \"vite\"",
     "lint": "eslint . --ext .ts,.js --cache --fix",
     "format": "prettier --write .",
     "build": "vite build && bun type-check",
-    "start": "NODE_ENV=production bun run server.ts",
+    "start": "NODE_ENV=production bun run elysia.ts",
     "db:generate": "bun run scripts/generate-types.ts",
     "db:migrate": "bun run db/migrator.ts up",
     "db:seed": "bun run scripts/seed.ts",

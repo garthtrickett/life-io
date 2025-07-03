@@ -1,4 +1,5 @@
-// components/pages/notes/detail/view.ts
+// FILE: components/pages/notes/detail/view.ts
+
 import { html, render, nothing } from "lit-html";
 import { repeat } from "lit-html/directives/repeat.js";
 import styles from "../../NoteDetailView.module.css";
@@ -12,8 +13,6 @@ export const renderView = (
 ) => {
   const renderStatus = () => {
     switch (currentModel.status) {
-      case "saving":
-        return html`Saving...`;
       case "error":
         return html`<span class="text-red-500">${currentModel.error}</span>`;
       default:
@@ -50,7 +49,6 @@ export const renderView = (
                       },
                     })}
                   class=${styles.titleInput}
-                  ?disabled=${currentModel.status === "saving"}
                 />
                 <textarea
                   class=${styles.contentInput}
@@ -62,7 +60,6 @@ export const renderView = (
                         content: (e.target as HTMLTextAreaElement).value,
                       },
                     })}
-                  ?disabled=${currentModel.status === "saving"}
                   placeholder="Type your markdown here..."
                 ></textarea>
                 <div class="mt-8">

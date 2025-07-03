@@ -14,7 +14,7 @@ export interface ViewResult {
 }
 
 export interface Model {
-  status: "loading" | "idle" | "saving" | "error";
+  status: "loading" | "idle" | "error";
   note: Note | null;
   blocks: Block[];
   error: string | null;
@@ -28,6 +28,4 @@ export type Action =
       type: "UPDATE_NOTE_CONTENT";
       payload: { title?: string; content?: string };
     }
-  | { type: "SAVE_START" }
-  | { type: "SAVE_SUCCESS" }
-  | { type: "SAVE_ERROR"; payload: NoteSaveError };
+  | { type: "SAVE_NOTE_TO_REPLICACHE" };

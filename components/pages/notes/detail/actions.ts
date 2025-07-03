@@ -1,7 +1,7 @@
 // components/pages/notes/detail/actions.ts
 import { Effect, pipe, Ref, Fiber } from "effect";
-import { trpc } from "../../../../lib/client/trpc";
-import { NoteSaveError, type Action, type Model } from "./types";
+import { rep } from "../../../../lib/client/replicache";
+import type { Action, Model } from "./types";
 
 export const handleAction = (
   action: Action,
@@ -55,7 +55,7 @@ export const handleAction = (
           }
           const saveFiber = yield* pipe(
             Effect.sleep("500 millis"),
-            Effect.andThen(() => propose({ type: "SAVE_START" })),
+            Effect.andThen(() => propose({ type: "SAVE_NOTE_TO_REPLICACHE" })),
             Effect.asVoid,
             Effect.fork,
           );
@@ -63,53 +63,24 @@ export const handleAction = (
         }
         break;
 
-      case "SAVE_START": {
+      case "SAVE_NOTE_TO_REPLICACHE": {
         if (!currentModel.note) return;
-        yield* Ref.update(modelRef, (m): Model => ({ ...m, status: "saving" }));
-
-        const saveEffect = pipe(
-          Effect.tryPromise({
-            try: () =>
-              trpc.note.update.mutate({
-                id: currentModel.note!.id,
-                title: currentModel.note!.title,
-                content: currentModel.note!.content,
-              }),
-            catch: (err) =>
-              new NoteSaveError({
-                message:
-                  err instanceof Error
-                    ? err.message
-                    : "An unknown error occurred.",
-              }),
-          }),
-          Effect.matchEffect({
-            onSuccess: () =>
-              Effect.sync(() => propose({ type: "SAVE_SUCCESS" })),
-            onFailure: (error) =>
-              Effect.sync(() =>
-                propose({ type: "SAVE_ERROR", payload: error }),
-              ),
-          }),
-        );
-
+        const saveEffect = Effect.tryPromise({
+          try: () =>
+            rep.mutate.updateNote({
+              id: currentModel.note!.id,
+              title: currentModel.note!.title,
+              content: currentModel.note!.content,
+            }),
+          catch: (err) =>
+            new Error(
+              `Replicache mutator failed: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            ),
+        });
         yield* Effect.fork(saveEffect);
         break;
       }
-
-      case "SAVE_SUCCESS":
-        yield* Ref.update(modelRef, (m): Model => ({ ...m, status: "idle" }));
-        break;
-
-      case "SAVE_ERROR":
-        yield* Ref.update(
-          modelRef,
-          (m): Model => ({
-            ...m,
-            status: "error",
-            error: action.payload.message,
-          }),
-        );
-        break;
     }
   });
