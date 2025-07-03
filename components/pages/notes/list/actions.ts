@@ -5,6 +5,7 @@ import { navigate } from "../../../../lib/client/router";
 import { clientLog } from "../../../../lib/client/logger.client";
 import { authState } from "../../../../lib/client/stores/authStore";
 import type { Action, Model } from "./types";
+import { NoteId } from "../../../../types/generated/public/Note";
 
 export const handleAction = (
   action: Action,
@@ -66,7 +67,7 @@ export const handleAction = (
             // Call the Replicache mutator. This is an optimistic update.
             yield* Effect.promise(() =>
               rep.mutate.createNote({
-                id: newNoteId,
+                id: newNoteId as NoteId,
                 title: "Untitled Note",
                 content: "",
                 user_id: userId,

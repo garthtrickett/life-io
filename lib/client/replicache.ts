@@ -6,19 +6,18 @@ import {
   type WriteTransaction,
   type JSONValue,
 } from "replicache";
-import { Either } from "effect";
+import { Effect } from "effect"; // Added Effect and pipe
 import { Schema } from "@effect/schema";
 import { formatErrorSync } from "@effect/schema/TreeFormatter";
 import { BlockSchema, NoteSchema } from "../shared/schemas";
 import type { BlockUpdate } from "../../types/generated/public/Block";
 import { clientLog } from "./logger.client";
-
+import { runClientPromise, runClientUnscoped } from "./runtime";
+// Added runtime runners
+import type { NewNote } from "../../types/generated/public/Note";
 // Define the shape of our client-side mutators
 type Mutators = {
-  createNote: (
-    tx: WriteTransaction,
-    note: { id: string; title: string; content: string; user_id: string },
-  ) => Promise<void>;
+  createNote: (tx: WriteTransaction, note: NewNote) => Promise<void>;
   updateNote: (
     tx: WriteTransaction,
     update: { id: string; title: string; content: string },
@@ -30,121 +29,177 @@ type Mutators = {
 };
 
 export const rep = new Replicache<Mutators>({
-  name: "life-io-user-id", // Should be unique per user/device
+  name: "life-io-user-id",
   licenseKey: "l10f93d37bcd041beba8d111a72da0031",
   pushURL: "/replicache/push",
   pullURL: "/replicache/pull",
   mutators: {
-    async createNote(tx, { id, title, content, user_id }) {
-      clientLog(
-        "info",
-        `Executing mutator: createNote for id ${id}`,
-        user_id,
-        "Replicache:createNote",
-      );
-      const key = `note/${id}`;
-      const now = new Date().toISOString();
-      // Create a JSON-safe object for Replicache.
-      const noteForJSON: ReadonlyJSONValue = {
-        id,
-        title,
-        content,
-        user_id,
-        created_at: now,
-        updated_at: now,
-      };
-      await tx.set(key, noteForJSON);
+    /**
+     * Creates a new note. The logic is defined as an Effect and then executed
+     * as a promise to conform to Replicache's API.
+     */
+    async createNote(tx: WriteTransaction, args: NewNote) {
+      const createNoteEffect = Effect.gen(function* () {
+        yield* clientLog(
+          "info",
+          `Executing mutator: createNote for id ${args.id}`,
+          args.user_id,
+          "Replicache:createNote",
+        );
+
+        const key = `note/${args.id}`;
+        const now = new Date();
+
+        // Validate the note object against the schema before setting it
+        const note = yield* Schema.decodeUnknown(NoteSchema)({
+          ...args,
+          created_at: now,
+          updated_at: now,
+        }).pipe(
+          Effect.mapError(
+            (e) => new Error(`Note validation failed: ${formatErrorSync(e)}`),
+          ),
+        );
+        // Convert dates to ISO strings for JSON safety before setting
+        const noteForJSON: ReadonlyJSONValue = {
+          ...note,
+          created_at: note.created_at.toISOString(),
+          updated_at: note.updated_at.toISOString(),
+        };
+        yield* Effect.promise(() => tx.set(key, noteForJSON));
+      });
+
+      // Run the effect, catching and logging any errors without re-throwing.
+      return runClientPromise(createNoteEffect).catch((err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        runClientUnscoped(
+          clientLog("error", `Error in createNote mutator: ${message}`),
+        );
+      });
     },
+
+    /**
+     * Updates an existing note.
+     * The logic is defined as an Effect.
+     */
     async updateNote(tx, { id, title, content }) {
-      clientLog(
-        "info",
-        `Executing mutator: updateNote for id ${id}`,
-        undefined,
-        "Replicache:updateNote",
-      );
-      const key = `note/${id}`;
-      const noteJSON = await tx.get(key);
-
-      if (noteJSON === undefined) {
-        void clientLog(
-          "warn",
-          `Note with id ${id} not found for update`,
+      const updateNoteEffect = Effect.gen(function* () {
+        yield* clientLog(
+          "info",
+          `Executing mutator: updateNote for id ${id}`,
           undefined,
           "Replicache:updateNote",
         );
-        return;
-      }
 
-      const decodedResult = Schema.decodeUnknownEither(NoteSchema)(noteJSON);
+        const key = `note/${id}`;
+        const noteJSON = yield* Effect.promise(() => tx.get(key));
 
-      if (Either.isLeft(decodedResult)) {
-        const errorMessage = formatErrorSync(decodedResult.left);
-        void clientLog(
-          "error",
-          `Validation failed for note ${id}: ${errorMessage}`,
-          undefined,
-          "Replicache:updateNote",
+        if (noteJSON === undefined) {
+          return yield* Effect.fail(
+            new Error(`Note with id ${id} not found for update.`),
+          );
+        }
+
+        // Decode and validate the existing note
+        const note = yield* Schema.decodeUnknown(NoteSchema)(noteJSON).pipe(
+          Effect.mapError((e) => new Error(formatErrorSync(e))),
         );
-        return;
-      }
 
-      const note = decodedResult.right;
+        // Create the updated note object
+        const updatedNoteData = {
+          ...note,
+          title,
+          content,
+          updated_at: new Date(),
+        };
 
-      const updatedNoteForJSON: ReadonlyJSONValue = {
-        ...note,
-        title,
-        content,
-        created_at: note.created_at.toISOString(),
-        updated_at: new Date().toISOString(),
-      };
+        // Re-validate the final object to ensure consistency
+        const validatedUpdate = yield* Schema.decodeUnknown(NoteSchema)(
+          updatedNoteData,
+        ).pipe(
+          Effect.mapError(
+            (e) =>
+              new Error(
+                `Updated note validation failed: ${formatErrorSync(e)}`,
+              ),
+          ),
+        );
+        // Convert dates to ISO strings for JSON safety
+        const updatedNoteForJSON: ReadonlyJSONValue = {
+          ...validatedUpdate,
+          created_at: validatedUpdate.created_at.toISOString(),
+          updated_at: validatedUpdate.updated_at.toISOString(),
+        };
+        yield* Effect.promise(() => tx.set(key, updatedNoteForJSON));
+      });
 
-      await tx.set(key, updatedNoteForJSON);
+      return runClientPromise(updateNoteEffect).catch((err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        runClientUnscoped(
+          clientLog("error", `Error in updateNote mutator: ${message}`),
+        );
+      });
     },
+
+    /**
+     * Updates an existing block.
+     * The logic is defined as an Effect.
+     */
     async updateBlock(tx, { id, ...update }) {
-      clientLog(
-        "info",
-        `Executing mutator: updateBlock for id ${id}`,
-        undefined,
-        "Replicache:updateBlock",
-      );
-      const key = `block/${id}`;
-      const blockJSON = (await tx.get(key)) as JSONValue | undefined;
-
-      if (blockJSON === undefined) {
-        void clientLog(
-          "warn",
-          `Block with id ${id} not found for update`,
+      const updateBlockEffect = Effect.gen(function* () {
+        yield* clientLog(
+          "info",
+          `Executing mutator: updateBlock for id ${id}`,
           undefined,
           "Replicache:updateBlock",
         );
-        return;
-      }
+        const key = `block/${id}`;
+        const blockJSON = (yield* Effect.promise(() => tx.get(key))) as
+          | JSONValue
+          | undefined;
 
-      const decodedResult = Schema.decodeUnknownEither(BlockSchema)(blockJSON);
+        if (blockJSON === undefined) {
+          return yield* Effect.fail(
+            new Error(`Block with id ${id} not found for update`),
+          );
+        }
 
-      if (Either.isLeft(decodedResult)) {
-        const errorMessage = formatErrorSync(decodedResult.left);
-        void clientLog(
-          "error",
-          `Validation failed for block ${id}: ${errorMessage}`,
-          undefined,
-          "Replicache:updateBlock",
+        const block = yield* Schema.decodeUnknown(BlockSchema)(blockJSON).pipe(
+          Effect.mapError((e) => new Error(formatErrorSync(e))),
         );
-        return;
-      }
 
-      const block = decodedResult.right;
+        const updatedBlockData = {
+          ...block,
+          ...update,
+          version: block.version + 1,
+          updated_at: new Date(),
+        };
 
-      const updatedBlockForJSON: ReadonlyJSONValue = {
-        ...block,
-        ...update,
-        version: block.version + 1,
-        created_at: block.created_at.toISOString(),
-        updated_at: new Date().toISOString(),
-        fields: block.fields as JSONValue,
-      };
+        const validatedUpdate = yield* Schema.decodeUnknown(BlockSchema)(
+          updatedBlockData,
+        ).pipe(
+          Effect.mapError(
+            (e) =>
+              new Error(
+                `Updated block validation failed: ${formatErrorSync(e)}`,
+              ),
+          ),
+        );
+        const updatedBlockForJSON: ReadonlyJSONValue = {
+          ...validatedUpdate,
+          created_at: validatedUpdate.created_at.toISOString(),
+          updated_at: validatedUpdate.updated_at.toISOString(),
+          fields: validatedUpdate.fields as JSONValue,
+        };
+        yield* Effect.promise(() => tx.set(key, updatedBlockForJSON));
+      });
 
-      await tx.set(key, updatedBlockForJSON);
+      return runClientPromise(updateBlockEffect).catch((err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        runClientUnscoped(
+          clientLog("error", `Error in updateBlock mutator: ${message}`),
+        );
+      });
     },
   },
 });
