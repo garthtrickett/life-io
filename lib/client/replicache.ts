@@ -9,7 +9,7 @@ import {
 import { Either } from "effect";
 import { Schema } from "@effect/schema";
 import { formatErrorSync } from "@effect/schema/TreeFormatter";
-import { BlockSchema, NoteSchema } from "../shared/schemas"; // FIX: Import NoteSchema
+import { BlockSchema, NoteSchema } from "../shared/schemas";
 import type { BlockUpdate } from "../../types/generated/public/Block";
 import { clientLog } from "./logger.client";
 
@@ -36,6 +36,12 @@ export const rep = new Replicache<Mutators>({
   pullURL: "/replicache/pull",
   mutators: {
     async createNote(tx, { id, title, content, user_id }) {
+      clientLog(
+        "info",
+        `Executing mutator: createNote for id ${id}`,
+        user_id,
+        "Replicache:createNote",
+      );
       const key = `note/${id}`;
       const now = new Date().toISOString();
       // Create a JSON-safe object for Replicache.
@@ -49,11 +55,15 @@ export const rep = new Replicache<Mutators>({
       };
       await tx.set(key, noteForJSON);
     },
-    // --- FIX: Refactored updateNote mutator for type safety ---
     async updateNote(tx, { id, title, content }) {
+      clientLog(
+        "info",
+        `Executing mutator: updateNote for id ${id}`,
+        undefined,
+        "Replicache:updateNote",
+      );
       const key = `note/${id}`;
-      // 1. Get the raw JSON value from Replicache
-      const noteJSON = (await tx.get(key));
+      const noteJSON = await tx.get(key);
 
       if (noteJSON === undefined) {
         void clientLog(
@@ -65,7 +75,6 @@ export const rep = new Replicache<Mutators>({
         return;
       }
 
-      // 2. Decode the raw value using the schema for validation and type coercion.
       const decodedResult = Schema.decodeUnknownEither(NoteSchema)(noteJSON);
 
       if (Either.isLeft(decodedResult)) {
@@ -79,11 +88,8 @@ export const rep = new Replicache<Mutators>({
         return;
       }
 
-      // 3. We now have a type-safe `note` object.
       const note = decodedResult.right;
 
-      // 4. Create the updated object for storage. The spread is now safe.
-      //    Convert dates back to ISO strings to ensure JSON-compatibility.
       const updatedNoteForJSON: ReadonlyJSONValue = {
         ...note,
         title,
@@ -95,6 +101,12 @@ export const rep = new Replicache<Mutators>({
       await tx.set(key, updatedNoteForJSON);
     },
     async updateBlock(tx, { id, ...update }) {
+      clientLog(
+        "info",
+        `Executing mutator: updateBlock for id ${id}`,
+        undefined,
+        "Replicache:updateBlock",
+      );
       const key = `block/${id}`;
       const blockJSON = (await tx.get(key)) as JSONValue | undefined;
 

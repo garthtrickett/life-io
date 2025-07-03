@@ -1,4 +1,4 @@
-// File: ./components/pages/note-detail-page.ts
+// FILE: components/pages/note-detail-page.ts
 import { html } from "lit-html";
 import { pipe, Effect, Queue, Ref, Fiber, Stream } from "effect";
 import { Schema } from "@effect/schema";
@@ -6,7 +6,8 @@ import { Schema } from "@effect/schema";
 import { runClientUnscoped } from "../../lib/client/runtime";
 import { rep } from "../../lib/client/replicache";
 import { clientLog } from "../../lib/client/logger.client";
-import { BlockSchema } from "../../lib/shared/schemas";
+import { BlockSchema, NoteSchema } from "../../lib/shared/schemas";
+
 import type { Note } from "../../types/generated/public/Note";
 import type { Block } from "../../types/generated/public/Block";
 
@@ -40,6 +41,17 @@ export const NoteDetailView = (id: string): ViewResult => {
 
     const renderEffect = Ref.get(model).pipe(
       Effect.tap((m) => renderView(container, m, propose)),
+      Effect.tap((m) =>
+        clientLog(
+          "debug",
+          `Rendering NoteDetailView with state: ${JSON.stringify({
+            ...m,
+            saveFiber: m.saveFiber ? "FIBER_EXISTS" : null,
+          })}`,
+          undefined,
+          `NoteDetailView(${id}):render`,
+        ),
+      ),
     );
 
     // --- Data Subscription Stream from Replicache ---
@@ -50,8 +62,11 @@ export const NoteDetailView = (id: string): ViewResult => {
       let isInitialLoad = true;
       const unsubscribe = rep.subscribe(
         async (tx) => {
-          const note = (await tx.get(`note/${id}`)) as Note | null;
-          if (!note) return { note: null, blocks: [] };
+          const noteJSON = await tx.get(`note/${id}`);
+          if (!noteJSON) return { note: null, blocks: [] };
+          const note = Schema.decodeUnknownSync(NoteSchema)(noteJSON, {
+            onExcessProperty: "ignore",
+          });
 
           const blockJSONs = await tx
             .scan({ prefix: "block/" })
@@ -65,7 +80,14 @@ export const NoteDetailView = (id: string): ViewResult => {
                   onExcessProperty: "ignore",
                 }),
               ];
-            } catch {
+            } catch (e) {
+              // FIX: Log decoding errors for blocks
+              void clientLog(
+                "error",
+                `Failed to decode block from Replicache: ${String(e)}`,
+                undefined,
+                "NoteDetailView:ReplicacheDecoder",
+              );
               return [];
             }
           });

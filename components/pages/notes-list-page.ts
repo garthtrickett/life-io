@@ -89,6 +89,15 @@ export const NotesView = (): ViewResult => {
             if (Either.isRight(decoded)) {
               return [decoded.right];
             }
+            // FIX: Log decoding errors for debugging
+            void clientLog(
+              "error",
+              `Failed to decode note from Replicache: ${JSON.stringify(
+                decoded.left,
+              )}`,
+              undefined,
+              "NotesView:ReplicacheDecoder",
+            );
             return [];
           });
           return notes.sort(
@@ -115,7 +124,7 @@ export const NotesView = (): ViewResult => {
     // --- Main Application Loop ---
     const mainLoop = Effect.gen(function* () {
       const actionProcessor = Queue.take(actionQueue).pipe(
-        Effect.flatMap((action) => handleAction(action, model, propose)),
+        Effect.flatMap((action) => handleAction(action, model)),
         Effect.andThen(renderEffect),
         Effect.forever,
       );

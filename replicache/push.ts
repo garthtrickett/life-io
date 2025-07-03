@@ -1,4 +1,4 @@
-// File: ./replicache/push.ts
+// FILE: replicache/push.ts
 import { Effect } from "effect";
 import type { PushRequest } from "replicache";
 import { Db } from "../db/DbTag";
@@ -155,9 +155,16 @@ export const handlePush = (
                 }
               }
             } catch (e) {
-              console.error(
-                `Error processing mutation ${mutation.id} (${mutation.name}):`,
-                e,
+              // FIX: Use structured logging instead of console.error
+              await Effect.runPromise(
+                serverLog(
+                  "error",
+                  `Error processing mutation ${mutation.id} (${mutation.name}): ${String(
+                    e,
+                  )}`,
+                  userId,
+                  "Replicache:Push:MutationError",
+                ),
               );
             }
           }
@@ -185,7 +192,25 @@ export const handlePush = (
             .execute();
         }),
       catch: (e) => new Error(String(e)),
-    });
+    }).pipe(
+      // Add logging for the success or failure of the entire transaction
+      Effect.tap(() =>
+        serverLog(
+          "info",
+          `Successfully processed push transaction for clientGroupID: ${clientGroupID}`,
+          userId,
+          "Replicache:Push:Success",
+        ),
+      ),
+      Effect.tapError((e) =>
+        serverLog(
+          "error",
+          `Push transaction failed for clientGroupID: ${clientGroupID}. Error: ${e.message}`,
+          userId,
+          "Replicache:Push:Failure",
+        ),
+      ),
+    );
 
     yield* pokeService.poke();
   });
