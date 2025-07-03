@@ -3,43 +3,47 @@ import { Console, Effect, pipe } from "effect";
 import type { DestinationStream, Logger } from "pino";
 import pino from "pino";
 import pretty from "pino-pretty";
-import { getEffectiveLogLevel } from "../../lib/shared/logConfig";
+import {
+  getEffectiveLogLevel,
+  LogConfigLive,
+} from "../../lib/shared/logConfig";
 
-const createLoggerEffect = pipe(
-  Effect.sync(() => process.env.NODE_ENV ?? "development"),
-  Effect.flatMap((env) =>
-    env === "production"
-      ? pipe(
-          Effect.tryPromise(
-            () =>
-              // --- FIX START ---
-              // The configuration is now correctly nested inside the 'options' object.
-              logtail({
-                sourceToken: process.env.LOGTAIL_SOURCE_TOKEN!,
-                options: {
-                  sendLogsToBetterStack: true,
-                  endpoint: "https://s1238029.eu-nbg-2.betterstackdata.com",
-                },
-              }),
-            // --- FIX END ---
-          ),
-          Effect.map(
-            (ltStream) =>
-              pino.multistream([
-                ltStream,
-                { stream: pretty() },
-              ]) as DestinationStream,
-          ),
-        )
-      : Effect.succeed(pretty({ colorize: true }) as DestinationStream),
-  ),
-  Effect.map((stream: DestinationStream) =>
-    pino({ level: getEffectiveLogLevel() }, stream),
-  ),
-  Effect.tap(() => Console.log("Server Logger created successfully")),
+const createLoggerEffect = Effect.gen(function* () {
+  const env = process.env.NODE_ENV ?? "development";
+  const stream: DestinationStream = yield* env === "production"
+    ? pipe(
+        Effect.tryPromise(
+          () =>
+            // --- FIX START ---
+            // The configuration is now correctly nested inside the 'options' object.
+            logtail({
+              sourceToken: process.env.LOGTAIL_SOURCE_TOKEN!,
+              options: {
+                sendLogsToBetterStack: true,
+                endpoint: "https://s1238029.eu-nbg-2.betterstackdata.com",
+              },
+            }),
+          // --- FIX END ---
+        ),
+        Effect.map(
+          (ltStream) =>
+            pino.multistream([
+              ltStream,
+              { stream: pretty() },
+            ]) as DestinationStream,
+        ),
+      )
+    : Effect.succeed(pretty({ colorize: true }) as DestinationStream);
+
+  const level = yield* getEffectiveLogLevel();
+  return pino({ level }, stream);
+}).pipe(Effect.tap(() => Console.log("Server Logger created successfully")));
+
+// The effect now has a requirement of LogConfig, so we provide the live layer
+// before running it to create the singleton logger promise.
+export const loggerPromise = Effect.runPromise(
+  Effect.provide(createLoggerEffect, LogConfigLive),
 );
-
-export const loggerPromise = Effect.runPromise(createLoggerEffect);
 
 export async function getLoggerWithUser(
   userId?: string,

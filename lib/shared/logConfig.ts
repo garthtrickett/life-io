@@ -1,36 +1,76 @@
+import { Context, Effect, Layer, Ref } from "effect";
+
 export type LogLevel = "debug" | "info" | "warn" | "error" | "silent";
 
-let globalLogLevel: LogLevel = "info";
-
-export function setGlobalLogLevel(level: LogLevel): void {
-  globalLogLevel = level;
-}
-
-export function getGlobalLogLevel(): LogLevel {
-  return globalLogLevel;
+/**
+ * The interface for our logging configuration service.
+ * It holds the current log level in a Ref, allowing for safe, concurrent updates.
+ */
+export interface ILogConfig {
+  readonly logLevel: Ref.Ref<LogLevel>;
 }
 
 /**
- * Returns the effective log level for a given user.
- * If process.env.LOG_USER matches the provided userId and a
- * process.env.LOG_LEVEL_OVERRIDE is set, that override level is returned.
+ * The service Tag for LogConfig. This is used to add and retrieve the service
+ * from the Context.
  */
-export function getEffectiveLogLevel(userId?: string): LogLevel {
-  const overrideLevel = process.env.LOG_LEVEL_OVERRIDE as LogLevel | undefined;
-  const overrideUser = process.env.LOG_USER;
+export class LogConfig extends Context.Tag("LogConfig")<
+  LogConfig,
+  ILogConfig
+>() {}
 
-  // 1. Prioritize user-specific debug sessions
-  if (userId && overrideUser === userId && overrideLevel) {
-    return overrideLevel;
-  }
+/**
+ * The live implementation of the LogConfig service. It creates a Ref
+ * with a default log level of "info".
+ */
+export const LogConfigLive = Layer.effect(
+  LogConfig,
+  Effect.map(Ref.make<LogLevel>("info"), (logLevel) => ({ logLevel })),
+);
 
-  // 2. Fall back to the global override if it's set
-  if (overrideLevel) {
-    return overrideLevel;
-  }
+/**
+ * An Effect to set the global log level. It requires the LogConfig service.
+ */
+export const setGlobalLogLevel = (
+  level: LogLevel,
+): Effect.Effect<void, never, LogConfig> =>
+  Effect.flatMap(LogConfig, (service) => Ref.set(service.logLevel, level));
 
-  // 3. Use the default global log level
-  return globalLogLevel;
+/**
+ * An Effect to get the current global log level. It requires the LogConfig service.
+ */
+export const getGlobalLogLevel = (): Effect.Effect<
+  LogLevel,
+  never,
+  LogConfig
+> => Effect.flatMap(LogConfig, (service) => Ref.get(service.logLevel));
+
+/**
+ * Returns the effective log level for a given user as an Effect.
+ * It checks for environment variable overrides before consulting the global log level from the LogConfig service.
+ */
+export function getEffectiveLogLevel(
+  userId?: string,
+): Effect.Effect<LogLevel, never, LogConfig> {
+  return Effect.gen(function* () {
+    const overrideLevel = process.env.LOG_LEVEL_OVERRIDE as
+      | LogLevel
+      | undefined;
+    const overrideUser = process.env.LOG_USER;
+
+    // 1. Prioritize user-specific debug sessions
+    if (userId && overrideUser === userId && overrideLevel) {
+      return overrideLevel;
+    }
+
+    // 2. Fall back to the global override if it's set
+    if (overrideLevel) {
+      return overrideLevel;
+    }
+
+    // 3. Use the default global log level from our service
+    return yield* getGlobalLogLevel();
+  });
 }
 
 // A numeric ranking so we can compare levels
