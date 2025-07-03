@@ -202,6 +202,12 @@ export const NotesView = (): ViewResult => {
           }
           case "CREATE_NOTE_SUCCESS":
             yield* Ref.set(model, { ...currentModel, isCreating: false });
+
+            // --- FIX: Manually trigger a Replicache pull ---
+            // This ensures the client fetches the newly created note from the server
+            // so it's available in the cache when we navigate to the detail page.
+            yield* Effect.promise(() => rep.pull());
+
             yield* clientLog(
               "info",
               `Note created. Navigating to /notes/${action.payload.id}`,

@@ -7,29 +7,31 @@ import type { S3 } from "./s3";
 import { S3Live } from "./s3";
 import { CryptoLive, type Crypto } from "./crypto";
 import { ConfigLive } from "./Config";
+import { PokeService, PokeServiceLive } from "./PokeService";
 
 // 1. Combine the core service layers.
-const ServerServices = Layer.mergeAll(DbLayer, S3Live, CryptoLive);
+const ServerServices = Layer.mergeAll(
+  DbLayer,
+  S3Live,
+  CryptoLive,
+  PokeServiceLive,
+);
 
 // 2. This is the "recipe" for building all our services.
 //    It now includes robust error handling for configuration issues.
 export const ServerLive = ServerServices.pipe(
   Layer.provide(ConfigLive),
-  // FIX: Catch any ConfigError during layer creation, log it, and treat it as a
-  // fatal defect. The application cannot run without valid config.
   Layer.catchAll((error: ConfigError) => {
-    // The logger isn't available if config fails, so we use console.error.
     console.error(
       "FATAL: Configuration layer failed to build. Check .env variables.",
       error,
     );
-    // End the process by returning a fatal defect.
     return Layer.die(error);
   }),
 );
 
 // Define the context type that our server effects will require.
-type ServerContext = Db | S3 | Crypto;
+type ServerContext = Db | S3 | Crypto | PokeService;
 
 /**
  * Executes a server-side Effect and returns a Promise of its result.
@@ -39,7 +41,6 @@ type ServerContext = Db | S3 | Crypto;
 export const runServerPromise = <A, E>(
   effect: Effect.Effect<A, E, ServerContext>,
 ) => {
-  // With the error handled in the ServerLive layer, this type is now correct.
   const providedEffect: Effect.Effect<A, E, never> = Effect.provide(
     effect,
     ServerLive,
@@ -56,7 +57,6 @@ export const runServerPromise = <A, E>(
 export const runServerUnscoped = <A, E>(
   effect: Effect.Effect<A, E, ServerContext>,
 ) => {
-  // With the error handled in the ServerLive layer, this type is now correct.
   const providedEffect: Effect.Effect<A, E, never> = Effect.provide(
     effect,
     ServerLive,

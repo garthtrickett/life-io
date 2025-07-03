@@ -303,7 +303,6 @@ export const NoteDetailView = (id: string): ViewResult => {
         },
         {
           onData: (data) => {
-            // --- Added Logging ---
             void clientLog(
               "debug",
               `Replicache onData received for note ${id}. Note found: ${!!data.note}. Blocks: ${data.blocks.length}`,
@@ -311,14 +310,20 @@ export const NoteDetailView = (id: string): ViewResult => {
               "Replicache:onData",
             );
 
+            const wasInitialLoad = isInitialLoad;
+            isInitialLoad = false; // Mark that the initial load attempt has happened.
+
             if (data.note) {
-              isInitialLoad = false;
-              // FIX: Explicitly ignore the returned promise with `void`
+              // If we have data, always emit it.
               void emit.single(data);
-            } else if (!isInitialLoad) {
-              // FIX: Explicitly ignore the returned promise with `void`
+            } else if (!wasInitialLoad) {
+              // If this is NOT the initial load and the note is now null,
+              // it means it was likely deleted. We should fail the stream.
               void emit.fail(`Note with ID ${id} not found.`);
             }
+            // If it IS the initial load and the note is null, we do nothing.
+            // This allows us to wait for the data to arrive from the network
+            // via a subsequent `rep.pull()` without killing the subscription.
           },
         },
       );

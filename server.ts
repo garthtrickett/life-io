@@ -13,7 +13,6 @@ import {
   Duration,
   Fiber,
   Stream,
-  PubSub,
 } from "effect";
 import { Elysia } from "elysia";
 import type {
@@ -40,6 +39,7 @@ import {
   cleanupExpiredTokensEffect,
   retryFailedEmailsEffect,
 } from "./lib/server/jobs";
+import { PokeService } from "./lib/server/PokeService";
 
 // --- Custom Error Types ---
 class AuthError extends Data.TaggedError("AuthError")<{ message: string }> {}
@@ -235,7 +235,7 @@ type WsSender = { id: string; send: (message: string) => void };
 const setupApp = Effect.gen(function* () {
   const app = new Elysia();
   const isProduction = process.env.NODE_ENV === "production";
-  const replicachePokes = yield* PubSub.unbounded<string>();
+  const pokeService = yield* PokeService;
   const wsConnections = new Map<string, Fiber.RuntimeFiber<void, unknown>>();
 
   // --- tRPC Endpoints ---
@@ -253,9 +253,6 @@ const setupApp = Effect.gen(function* () {
   app.group("/replicache", (group) =>
     group
       .post("/pull", async ({ request, body }) => {
-        // --- FIX START ---
-        // This is now the main program for the endpoint.
-        // It includes the logic for authentication and request validation.
         const pullProgram = Effect.gen(function* () {
           const user = yield* authenticateRequestEffect(request);
           const pull = body as ReplicachePullRequest;
@@ -273,9 +270,7 @@ const setupApp = Effect.gen(function* () {
         });
 
         try {
-          // Run the program. On success, it returns a PullResponse.
           const pullResponse = await runServerPromise(pullProgram);
-          // Log and return the successful response.
           await runServerPromise(
             serverLog(
               "debug",
@@ -288,14 +283,12 @@ const setupApp = Effect.gen(function* () {
           );
           return pullResponse;
         } catch (error) {
-          // If runServerPromise throws, the error is one of our caught failures.
           if (error instanceof AuthError) {
             return new Response(error.message, { status: 401 });
           }
           if (error instanceof InvalidPullRequestError) {
             return new Response(error.message, { status: 400 });
           }
-          // Handle any other unexpected errors.
           const message =
             error instanceof Error
               ? error.message
@@ -310,13 +303,11 @@ const setupApp = Effect.gen(function* () {
           );
           return new Response(message, { status: 500 });
         }
-        // --- FIX END ---
       })
       .post("/push", async ({ request, body }) => {
         const effect = Effect.gen(function* () {
           const user = yield* authenticateRequestEffect(request);
           yield* handlePush(body as PushRequest, user.id);
-          yield* PubSub.publish(replicachePokes, "poke");
           return { success: true };
         });
 
@@ -342,11 +333,13 @@ const setupApp = Effect.gen(function* () {
     open(ws: WsSender) {
       const streamFiber = Effect.runFork(
         Effect.scoped(
-          Stream.fromPubSub(replicachePokes).pipe(
-            Stream.runForEach((message: string) =>
-              Effect.sync(() => void ws.send(message)),
+          pokeService
+            .subscribe()
+            .pipe(
+              Stream.runForEach((message: string) =>
+                Effect.sync(() => void ws.send(message)),
+              ),
             ),
-          ),
         ),
       );
       wsConnections.set(ws.id, streamFiber);
