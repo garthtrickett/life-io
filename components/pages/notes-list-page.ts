@@ -1,7 +1,7 @@
 // FILE: components/pages/notes-list-page.ts
 import { render, html, type TemplateResult } from "lit-html";
 import { repeat } from "lit-html/directives/repeat.js";
-import { pipe, Effect, Queue, Ref, Fiber } from "effect";
+import { pipe, Effect, Queue, Ref, Fiber, Stream, Either } from "effect"; // Import Either
 import { runClientUnscoped } from "../../lib/client/runtime";
 import type { Note } from "../../types/generated/public/Note";
 import styles from "./NotesView.module.css";
@@ -9,9 +9,11 @@ import { navigate } from "../../lib/client/router";
 import { clientLog } from "../../lib/client/logger.client";
 import { trpc } from "../../lib/client/trpc";
 import { animate, stagger } from "motion";
+import { rep } from "../../lib/client/replicache";
+import { Schema } from "@effect/schema"; // Import Schema
+import { NoteSchema } from "../../lib/shared/schemas"; // Import the schema for validation
 
 // --- Types ---
-
 interface ViewResult {
   template: TemplateResult;
   cleanup?: () => void;
@@ -25,20 +27,17 @@ interface Model {
 }
 
 type Action =
-  | { type: "FETCH_NOTES_START" }
-  | { type: "FETCH_NOTES_SUCCESS"; payload: Note[] }
-  | { type: "FETCH_NOTES_ERROR"; payload: string }
+  | { type: "NOTES_UPDATED"; payload: Note[] }
+  | { type: "DATA_ERROR"; payload: string }
   | { type: "CREATE_NOTE_START" }
   | { type: "CREATE_NOTE_SUCCESS"; payload: Note }
   | { type: "CREATE_NOTE_ERROR"; payload: string }
   | { type: "SORT_NOTES_AZ" };
 
 // --- View ---
-
 export const NotesView = (): ViewResult => {
   const container = document.createElement("div");
   const componentProgram = Effect.gen(function* () {
-    // --- State and Action Queue ---
     const model = yield* Ref.make<Model>({
       notes: [],
       isLoading: true,
@@ -47,7 +46,6 @@ export const NotesView = (): ViewResult => {
     });
     const actionQueue = yield* Queue.unbounded<Action>();
 
-    // --- Propose Action ---
     const propose = (action: Action) =>
       Effect.runFork(
         pipe(
@@ -61,7 +59,6 @@ export const NotesView = (): ViewResult => {
         ),
       );
 
-    // --- Pure Render Function ---
     const renderView = (currentModel: Model) => {
       const renderNotes = () => {
         if (currentModel.isLoading) {
@@ -69,7 +66,6 @@ export const NotesView = (): ViewResult => {
             <div class=${styles.skeletonContainer}>
               ${repeat(
                 [1, 2, 3],
-                (item) => item,
                 () => html`<div class=${styles.skeletonItem}></div>`,
               )}
             </div>
@@ -107,7 +103,6 @@ export const NotesView = (): ViewResult => {
           </ul>
         `;
       };
-
       const template = html`
         <div class=${styles.container}>
           <div class=${styles.header}>
@@ -140,39 +135,11 @@ export const NotesView = (): ViewResult => {
       render(template, container);
     };
 
-    // --- Action Handler (Update + React) ---
     const handleAction = (action: Action): Effect.Effect<void> =>
       Effect.gen(function* () {
         const currentModel = yield* Ref.get(model);
-
         switch (action.type) {
-          case "FETCH_NOTES_START": {
-            yield* Ref.set(model, {
-              ...currentModel,
-              isLoading: true,
-              error: null,
-            });
-            const fetchEffect = pipe(
-              Effect.tryPromise(() => trpc.note.list.query()),
-              Effect.match({
-                onSuccess: (notes) =>
-                  propose({
-                    type: "FETCH_NOTES_SUCCESS",
-                    payload: [...notes],
-                  }),
-                onFailure: (e) =>
-                  propose({
-                    type: "FETCH_NOTES_ERROR",
-                    payload: `Failed to fetch notes: ${
-                      e instanceof Error ? e.message : String(e)
-                    }`,
-                  }),
-              }),
-            );
-            yield* Effect.fork(fetchEffect);
-            break;
-          }
-          case "FETCH_NOTES_SUCCESS": {
+          case "NOTES_UPDATED": {
             yield* Ref.set(model, {
               ...currentModel,
               isLoading: false,
@@ -196,14 +163,13 @@ export const NotesView = (): ViewResult => {
             }
             break;
           }
-          case "FETCH_NOTES_ERROR":
+          case "DATA_ERROR":
             yield* Ref.set(model, {
               ...currentModel,
               isLoading: false,
               error: action.payload,
             });
             break;
-
           case "CREATE_NOTE_START": {
             yield* Ref.set(model, {
               ...currentModel,
@@ -226,10 +192,7 @@ export const NotesView = (): ViewResult => {
               ),
               Effect.match({
                 onSuccess: (note) =>
-                  propose({
-                    type: "CREATE_NOTE_SUCCESS",
-                    payload: note,
-                  }),
+                  propose({ type: "CREATE_NOTE_SUCCESS", payload: note }),
                 onFailure: (e) =>
                   propose({ type: "CREATE_NOTE_ERROR", payload: e.message }),
               }),
@@ -238,11 +201,7 @@ export const NotesView = (): ViewResult => {
             break;
           }
           case "CREATE_NOTE_SUCCESS":
-            yield* Ref.set(model, {
-              ...currentModel,
-              isCreating: false,
-              notes: [action.payload, ...currentModel.notes],
-            });
+            yield* Ref.set(model, { ...currentModel, isCreating: false });
             yield* clientLog(
               "info",
               `Note created. Navigating to /notes/${action.payload.id}`,
@@ -258,7 +217,6 @@ export const NotesView = (): ViewResult => {
               error: action.payload,
             });
             break;
-
           case "SORT_NOTES_AZ": {
             const sortedNotes = [...currentModel.notes].sort((a, b) =>
               a.title.localeCompare(b.title),
@@ -268,7 +226,7 @@ export const NotesView = (): ViewResult => {
           }
         }
       });
-    // --- Render Effect ---
+
     const renderEffect = Ref.get(model).pipe(
       Effect.tap(renderView),
       Effect.tap((m) =>
@@ -280,25 +238,81 @@ export const NotesView = (): ViewResult => {
         ),
       ),
     );
-    // --- Main Loop ---
-    propose({ type: "FETCH_NOTES_START" }); // Initial action
 
-    const mainLoop = Queue.take(actionQueue).pipe(
-      Effect.flatMap(handleAction),
-      Effect.andThen(renderEffect),
+    // --- Data subscription stream from Replicache ---
+    const replicacheStream = Stream.async<Note[]>((emit) => {
+      const unsubscribe = rep.subscribe(
+        async (tx) => {
+          // --- FIX START ---
+          const noteJSONs = await tx
+            .scan({ prefix: "note/" })
+            .values()
+            .toArray();
+          const notes = noteJSONs.flatMap((json) => {
+            const decoded = Schema.decodeUnknownEither(NoteSchema)(json);
+            if (Either.isRight(decoded)) {
+              return [decoded.right];
+            }
+            // Silently ignore invalid data in the cache
+            return [];
+          });
+
+          return notes.sort(
+            (a, b) =>
+              new Date(b.updated_at).getTime() -
+              new Date(a.updated_at).getTime(),
+          );
+          // --- FIX END ---
+        },
+        {
+          onData: (data: Note[]) => {
+            // The data is now correctly typed
+            void clientLog(
+              "debug",
+              `Replicache onData received for notes list. Notes: ${data.length}`,
+              undefined,
+              "NotesView:onData",
+            );
+            void emit.single(data);
+          },
+        },
+      );
+      return Effect.sync(unsubscribe);
+    });
+
+    const mainLoop = Effect.gen(function* () {
+      const actionProcessor = Queue.take(actionQueue).pipe(
+        Effect.flatMap(handleAction),
+        Effect.andThen(renderEffect),
+        Effect.forever,
+      );
+      const dataSubscriber = replicacheStream.pipe(
+        Stream.flatMap((data) =>
+          Stream.fromEffect(propose({ type: "NOTES_UPDATED", payload: data })),
+        ),
+        Stream.catchAll((err) =>
+          Stream.fromEffect(
+            propose({ type: "DATA_ERROR", payload: String(err) }),
+          ),
+        ),
+        Stream.runDrain,
+      );
+      yield* renderEffect; // Initial render
+      yield* Effect.all([actionProcessor, dataSubscriber], {
+        concurrency: "unbounded",
+      });
+    }).pipe(
       Effect.catchAllDefect((defect) =>
         clientLog(
           "error",
           `[FATAL] Uncaught defect in NotesView main loop: ${String(defect)}`,
         ),
       ),
-      Effect.forever,
     );
 
     yield* mainLoop;
   });
 
-  // --- Fork Lifecycle ---
   const fiber = runClientUnscoped(componentProgram);
   return {
     template: html`${container}`,

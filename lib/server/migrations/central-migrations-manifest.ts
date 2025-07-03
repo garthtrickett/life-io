@@ -13,6 +13,9 @@ import * as m2025063001 from "../../../migrations/2025063001_create_password_res
 import * as m2025063002 from "../../../migrations/2025063002_create_email_verification_token";
 import * as m2025063003 from "../../../migrations/2025063003_add_email_verified_to_user";
 import * as m2025070201 from "../../../migrations/2025070201_create_block";
+import * as m2025070203 from "../../../migrations/2025070203_add_replicache_tables";
+// New migration
+import * as m2025070301 from "../../../migrations/2025070301_add_note_id_to_block";
 
 export const centralMigrationObjects: Record<string, Migration> = {
   "2025062601_create_user": { up: m2025062601.up, down: m2025062601.down },
@@ -47,4 +50,12 @@ export const centralMigrationObjects: Record<string, Migration> = {
     down: m2025063003.down,
   },
   "2025070201_create_block": { up: m2025070201.up, down: m2025070201.down },
+  "2025070203_add_replicache_tables": {
+    up: m2025070203.up,
+    down: m2025070203.down,
+  },
+  "2025070301_add_note_id_to_block": {
+    up: m2025070301.up,
+    down: m2025070301.down,
+  },
 };

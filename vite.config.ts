@@ -20,25 +20,32 @@ export default defineConfig(({ command }) => {
       emptyOutDir: true,
     },
     server: {
-      // This is the key part for development.
-      // It proxies API requests from the Vite dev server to your Elysia backend.
       proxy: {
         // This one is for tRPC API calls
         "/trpc": {
           target: "http://localhost:42069", // Your Elysia backend URL
           changeOrigin: true,
-        }, // FIX: Add this new entry for the client-side logging endpoint
+        },
         "/log/client": {
           target: "http://localhost:42069",
           changeOrigin: true,
         },
-        // --- ADD THIS BLOCK ---
-        // This proxies any request starting with /api to your backend
         "/api": {
           target: "http://localhost:42069",
           changeOrigin: true,
         },
-        // --- END OF ADDITION ---
+        "/replicache": {
+          target: "http://localhost:42069",
+          changeOrigin: true,
+        },
+
+        // --- FIX IS HERE ---
+        "/ws": {
+          // 1. The target must use the 'ws://' protocol for WebSockets.
+          target: "ws://localhost:42069",
+          // 2. You must explicitly enable WebSocket proxying.
+          ws: true,
+        },
       },
     },
     css: {

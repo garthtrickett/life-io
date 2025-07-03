@@ -17,9 +17,6 @@ const makeDb = Effect.gen(function* () {
   neonConfig.webSocketConstructor = ws;
 
   if (useLocalProxy) {
-    yield* Effect.logInfo(
-      "LOCAL DEV (PROXY): Configuring NeonDialect to connect via local proxy.",
-    );
     // This existing logic for the proxy is correct and remains unchanged.
     neonConfig.useSecureWebSocket = false;
     neonConfig.wsProxy = (host) => `${host}:3333/v1`;

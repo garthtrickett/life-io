@@ -1,7 +1,7 @@
 // FILE: features/notes/updateNote.ts
 import { Effect, pipe } from "effect";
 import { Db } from "../../db/DbTag";
-import type { NoteUpdate, Note } from "../../types/generated/public/Note";
+import type { Note } from "../../types/generated/public/Note";
 import { serverLog } from "../../lib/server/logger.server";
 import { validateNoteId, validateUserId } from "../../lib/shared/domain";
 import {
@@ -11,15 +11,23 @@ import {
 } from "./Errors";
 import { Schema } from "@effect/schema";
 import { NoteSchema } from "../../lib/shared/schemas";
-// --- FIX: Map validation errors and adjust function return type ---
+import { parseMarkdownToBlocks } from "../../lib/server/parser";
+// FIX: Changed from 'import type' to a value import
+import { Crypto } from "../../lib/server/crypto";
+
+interface NoteUpdatePayload {
+  title: string;
+  content: string; // This will be the raw markdown
+}
+
 export const updateNote = (
   noteId: string,
   userId: string,
-  note: NoteUpdate,
+  noteUpdate: NoteUpdatePayload,
 ): Effect.Effect<
   Note,
   NoteDatabaseError | NoteNotFoundError | NoteValidationError,
-  Db
+  Db | Crypto // This effect now correctly requires Crypto
 > =>
   Effect.gen(function* () {
     const validatedNoteId = yield* validateNoteId(noteId).pipe(
@@ -29,52 +37,82 @@ export const updateNote = (
       Effect.mapError((cause) => new NoteValidationError({ cause })),
     );
     const db = yield* Db;
+    // Get the crypto service from the context to be used inside the transaction
+    const crypto = yield* Crypto;
 
-    // *** LOGGING ADDED ***
     yield* Effect.forkDaemon(
       serverLog(
         "info",
-        `[updateNote] Attempting to update note. ID: "${validatedNoteId}", UserID: "${validatedUserId}", Payload: ${JSON.stringify(note)}`,
+        `[updateNote] Parsing and updating note. ID: "${validatedNoteId}"`,
         validatedUserId,
         "UpdateNote",
       ),
     );
 
-    const result = yield* pipe(
-      Effect.tryPromise({
-        try: () =>
-          db
+    // This effect encapsulates the entire database transaction.
+    // We use `Effect.tryPromise` to correctly handle the async nature of Kysely's transaction.
+    const result = yield* Effect.tryPromise({
+      try: () =>
+        db.transaction().execute(async (trx) => {
+          // --- TRANSACTION LOGIC BEGINS ---
+          // Inside this async block, we can use `await`.
+
+          // 1. Update the parent note's title and markdown content
+          const parentNote = await trx
             .updateTable("note")
-            .set({ ...note, updated_at: new Date() })
+            .set({
+              title: noteUpdate.title,
+              content: noteUpdate.content,
+              updated_at: new Date(),
+            })
             .where("id", "=", validatedNoteId)
             .where("user_id", "=", validatedUserId)
             .returningAll()
-            .executeTakeFirst(),
-        catch: (error) => new NoteDatabaseError({ cause: error }),
-      }),
-      Effect.tap((maybeNote) =>
-        // *** LOGGING ADDED ***
-        serverLog(
-          "debug",
-          `[updateNote] Database returned: ${JSON.stringify(maybeNote)}`,
-          validatedUserId,
-          "UpdateNote:DBResult",
-        ),
-      ),
-      Effect.flatMap((maybeNote) =>
-        Effect.if(maybeNote === undefined, {
-          onTrue: () => Effect.fail(new NoteNotFoundError({ noteId, userId })),
-          onFalse: () =>
-            Schema.decodeUnknown(NoteSchema)(maybeNote!).pipe(
-              Effect.mapError((cause) => new NoteValidationError({ cause })),
+            .executeTakeFirstOrThrow();
+
+          // 2. Delete all existing child blocks for this note
+          await trx
+            .deleteFrom("block")
+            .where("note_id", "=", validatedNoteId)
+            .execute();
+
+          // 3. Parse the new markdown content into new child blocks.
+          // We must run the `parseMarkdownToBlocks` Effect here.
+          const childBlocks = await Effect.runPromise(
+            // Provide the required Crypto service to the parser effect
+            Effect.provideService(
+              Crypto,
+              crypto,
+            )(
+              parseMarkdownToBlocks(
+                noteUpdate.content,
+                `${parentNote.id}.md`, // Use note ID for file path
+                validatedUserId,
+                validatedNoteId, // Pass the note ID
+              ),
             ),
+          );
+
+          // 4. Insert the new child blocks if there are any
+          if (childBlocks.length > 0) {
+            await trx.insertInto("block").values(childBlocks).execute();
+          }
+
+          return parentNote;
+          // --- TRANSACTION LOGIC ENDS ---
         }),
-      ),
+      catch: (cause) => new NoteDatabaseError({ cause }),
+    });
+
+    // Validate the final result from the transaction against the NoteSchema
+    return yield* pipe(
+      Schema.decodeUnknown(NoteSchema)(result),
+      Effect.mapError((cause) => new NoteValidationError({ cause })),
       Effect.tap((updatedNote) =>
         Effect.forkDaemon(
           serverLog(
             "info",
-            `[updateNote] Successfully updated note with ID: ${updatedNote.id}`,
+            `[updateNote] Successfully updated note and reparsed blocks for ID: ${updatedNote.id}`,
             validatedUserId,
             "UpdateNote",
           ),
@@ -94,5 +132,4 @@ export const updateNote = (
         ),
       ),
     );
-    return result;
   });

@@ -16,11 +16,11 @@ import { s } from "../validator";
 // --- Input Schemas defined with Effect Schema ---
 const CreateNoteInput = Schema.Struct({
   title: Schema.String.pipe(
-    // --- FIX: In newer versions of @effect/schema, message must be a function ---
     Schema.minLength(1, { message: () => "Title cannot be empty." }),
   ),
   content: Schema.String,
 });
+
 const GetByIdInput = Schema.Struct({
   id: NoteIdSchema,
 });
@@ -28,16 +28,12 @@ const GetByIdInput = Schema.Struct({
 const UpdateNoteInput = Schema.Struct({
   id: NoteIdSchema,
   title: Schema.String.pipe(
-    // --- FIX: In newer versions of @effect/schema, message must be a function ---
     Schema.minLength(1, { message: () => "Title cannot be empty." }),
   ),
   content: Schema.String,
 });
 
-// --- REMOVED HELPER ---
-
 export const noteRouter = router({
-  // --- FIX: Directly use runServerPromise as type inference is now correct ---
   list: createPermissionProtectedProcedure(perms.note.read).query(({ ctx }) =>
     runServerPromise(getNotes(ctx.user.id)),
   ),
@@ -45,12 +41,16 @@ export const noteRouter = router({
   getById: createPermissionProtectedProcedure(perms.note.read)
     .input(s(GetByIdInput))
     .query(({ input, ctx }) => {
+      // The getNote feature still returns a single Note, not its blocks.
+      // The client page gets the blocks via Replicache subscription.
       return runServerPromise(getNote(input.id, ctx.user.id));
     }),
 
   create: createPermissionProtectedProcedure(perms.note.write)
     .input(s(CreateNoteInput))
     .mutation(({ input, ctx }) => {
+      // This is now creating a simple note, which is fine.
+      // The block parsing happens on update.
       const noteData: NewNote = {
         ...input,
         user_id: ctx.user.id,
@@ -62,6 +62,7 @@ export const noteRouter = router({
     .input(s(UpdateNoteInput))
     .mutation(({ input, ctx }) => {
       const { id, ...noteUpdateData } = input;
+      // This now correctly calls the refactored updateNote feature
       return runServerPromise(updateNote(id, ctx.user.id, noteUpdateData));
     }),
 });

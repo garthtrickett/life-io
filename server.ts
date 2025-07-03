@@ -16,7 +16,10 @@ import {
   PubSub,
 } from "effect";
 import { Elysia } from "elysia";
-import type { PushRequest } from "replicache";
+import type {
+  PushRequest,
+  PullRequest as ReplicachePullRequest,
+} from "replicache";
 import { handlePull, handlePush } from "./replicache/server";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { validateSessionEffect } from "./lib/server/auth";
@@ -46,6 +49,11 @@ class S3UploadError extends Data.TaggedError("S3UploadError")<{
 }> {}
 class DbUpdateError extends Data.TaggedError("DbUpdateError")<{
   cause: unknown;
+}> {}
+class InvalidPullRequestError extends Data.TaggedError(
+  "InvalidPullRequestError",
+)<{
+  message: string;
 }> {}
 
 // --- Reusable Authentication Effect ---
@@ -242,50 +250,92 @@ const setupApp = Effect.gen(function* () {
   app.post("/trpc/*", handleTrpc);
 
   // --- Replicache Endpoints ---
-  app.post("/replicache/pull", async ({ request }) => {
-    const effect = Effect.gen(function* () {
-      const user = yield* authenticateRequestEffect(request);
-      return yield* handlePull(user.id);
-    });
+  app.group("/replicache", (group) =>
+    group
+      .post("/pull", async ({ request, body }) => {
+        // --- FIX START ---
+        // This is now the main program for the endpoint.
+        // It includes the logic for authentication and request validation.
+        const pullProgram = Effect.gen(function* () {
+          const user = yield* authenticateRequestEffect(request);
+          const pull = body as ReplicachePullRequest;
 
-    return runServerPromise(
-      effect.pipe(
-        Effect.catchAll((e) => {
-          if (e instanceof AuthError) {
-            return Effect.succeed(new Response(e.message, { status: 401 }));
+          if (!("clientGroupID" in pull)) {
+            return yield* Effect.fail(
+              new InvalidPullRequestError({
+                message:
+                  "Unsupported pull request version. 'clientGroupID' is missing.",
+              }),
+            );
           }
-          const message =
-            e instanceof Error
-              ? e.message
-              : "An internal server error occurred.";
-          return Effect.succeed(new Response(message, { status: 500 }));
-        }),
-      ),
-    );
-  });
-  app.post("/replicache/push", async ({ request, body }) => {
-    const effect = Effect.gen(function* () {
-      const user = yield* authenticateRequestEffect(request);
-      yield* handlePush(body as PushRequest, user.id);
-      yield* PubSub.publish(replicachePokes, "poke");
-      return { success: true };
-    });
 
-    return runServerPromise(
-      effect.pipe(
-        Effect.catchAll((e) => {
-          if (e instanceof AuthError) {
-            return Effect.succeed(new Response(e.message, { status: 401 }));
+          return yield* handlePull(user.id, pull);
+        });
+
+        try {
+          // Run the program. On success, it returns a PullResponse.
+          const pullResponse = await runServerPromise(pullProgram);
+          // Log and return the successful response.
+          await runServerPromise(
+            serverLog(
+              "debug",
+              `[PullHandler] Final response to be sent: ${JSON.stringify(
+                pullResponse,
+              ).substring(0, 500)}...`,
+              undefined,
+              "Replicache:PullHandler",
+            ),
+          );
+          return pullResponse;
+        } catch (error) {
+          // If runServerPromise throws, the error is one of our caught failures.
+          if (error instanceof AuthError) {
+            return new Response(error.message, { status: 401 });
           }
+          if (error instanceof InvalidPullRequestError) {
+            return new Response(error.message, { status: 400 });
+          }
+          // Handle any other unexpected errors.
           const message =
-            e instanceof Error
-              ? e.message
+            error instanceof Error
+              ? error.message
               : "An internal server error occurred.";
-          return Effect.succeed(new Response(message, { status: 500 }));
-        }),
-      ),
-    );
-  });
+          await runServerPromise(
+            serverLog(
+              "error",
+              `[PullHandler] Unhandled error processing pull: ${message}`,
+              undefined,
+              "Replicache:PullHandler",
+            ),
+          );
+          return new Response(message, { status: 500 });
+        }
+        // --- FIX END ---
+      })
+      .post("/push", async ({ request, body }) => {
+        const effect = Effect.gen(function* () {
+          const user = yield* authenticateRequestEffect(request);
+          yield* handlePush(body as PushRequest, user.id);
+          yield* PubSub.publish(replicachePokes, "poke");
+          return { success: true };
+        });
+
+        return runServerPromise(
+          effect.pipe(
+            Effect.catchAll((e) => {
+              if (e instanceof AuthError) {
+                return Effect.succeed(new Response(e.message, { status: 401 }));
+              }
+              const message =
+                e instanceof Error
+                  ? e.message
+                  : "An internal server error occurred.";
+              return Effect.succeed(new Response(message, { status: 500 }));
+            }),
+          ),
+        );
+      }),
+  );
 
   // --- WebSocket for Replicache Pokes ---
   app.ws("/ws", {
@@ -294,7 +344,7 @@ const setupApp = Effect.gen(function* () {
         Effect.scoped(
           Stream.fromPubSub(replicachePokes).pipe(
             Stream.runForEach((message: string) =>
-              Effect.sync(() => ws.send(message)),
+              Effect.sync(() => void ws.send(message)),
             ),
           ),
         ),
@@ -304,7 +354,7 @@ const setupApp = Effect.gen(function* () {
         serverLog(
           "info",
           `WebSocket client connected: ${ws.id}`,
-          undefined, // Use undefined for non-user-specific logs
+          undefined,
           "WS",
         ),
       );
@@ -319,7 +369,7 @@ const setupApp = Effect.gen(function* () {
         serverLog(
           "info",
           `WebSocket client disconnected: ${ws.id}`,
-          undefined, // Use undefined for non-user-specific logs
+          undefined,
           "WS",
         ),
       );

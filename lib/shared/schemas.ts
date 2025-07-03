@@ -70,8 +70,8 @@ export const NoteSchema: Schema.Schema<Note, any> = Schema.Struct({
   user_id: UserIdSchema,
   title: Schema.String,
   content: Schema.String,
-  created_at: LenientDateSchema, // <-- Fix
-  updated_at: LenientDateSchema, // <-- Fix
+  created_at: LenientDateSchema,
+  updated_at: LenientDateSchema,
 });
 
 /**
@@ -91,7 +91,7 @@ export const UserSchema: Schema.Schema<User, any> = Schema.Struct({
     ),
   ),
   password_hash: Schema.String,
-  created_at: LenientDateSchema, // <-- Fix
+  created_at: LenientDateSchema,
   permissions: Schema.Union(
     Schema.mutable(Schema.Array(Schema.String)),
     Schema.Null,
@@ -107,6 +107,7 @@ export const UserSchema: Schema.Schema<User, any> = Schema.Struct({
 export const BlockSchema: Schema.Schema<Block, any> = Schema.Struct({
   id: BlockIdSchema,
   user_id: UserIdSchema,
+  note_id: Schema.Union(NoteIdSchema, Schema.Null),
   type: Schema.String,
   content: Schema.String,
   fields: Schema.Any,
@@ -118,6 +119,6 @@ export const BlockSchema: Schema.Schema<Block, any> = Schema.Struct({
   order: Schema.Number,
   transclusions: Schema.mutable(Schema.Array(Schema.String)),
   version: Schema.Number,
-  created_at: LenientDateSchema, // <-- Fix
-  updated_at: LenientDateSchema, // <-- Fix
+  created_at: LenientDateSchema,
+  updated_at: LenientDateSchema,
 });

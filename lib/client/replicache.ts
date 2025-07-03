@@ -22,7 +22,7 @@ type Mutators = {
 
 export const rep = new Replicache<Mutators>({
   name: "life-io-user-id", // Should be unique per user/device
-  licenseKey: "l_5a79f57f443b45a4b79b9a6741491e84", // Replace with your actual license key
+  licenseKey: "l10f93d37bcd041beba8d111a72da0031", 
   pushURL: "/replicache/push",
   pullURL: "/replicache/pull",
   mutators: {

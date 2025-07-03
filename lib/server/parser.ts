@@ -4,6 +4,7 @@ import type { BlockId, NewBlock } from "../../types/generated/public/Block";
 import { generateId } from "./utils";
 import type { Crypto } from "./crypto";
 import type { UserId } from "../../types/generated/public/User";
+import type { NoteId } from "../../types/generated/public/Note";
 
 const tagRegex = /#([\w-]+)/g;
 const linkRegex = /\[\[([^\]]+)\]\]/g;
@@ -20,6 +21,7 @@ function parseLineComponents(line: string) {
     .replace(linkRegex, "")
     .replace(transclusionRegex, "")
     .trim();
+
   return { content, tags, links, transclusions };
 }
 
@@ -27,6 +29,7 @@ export const parseMarkdownToBlocks = (
   markdownContent: string,
   filePath: string,
   userId: UserId,
+  noteId: NoteId, // Accept the parent note's ID
 ): Effect.Effect<NewBlock[], never, Crypto> =>
   Effect.gen(function* () {
     const lines = markdownContent.split("\n");
@@ -60,7 +63,7 @@ export const parseMarkdownToBlocks = (
       if (fieldMatch && parent) {
         const key = fieldMatch[1].trim();
         const value = fieldMatch[2].trim();
-        // FIX: Use `unknown` instead of `any` for better type safety.
+        // Use `unknown` instead of `any` for better type safety.
         parent.fields = {
           ...(parent.fields as Record<string, unknown>),
           [key]: value,
@@ -70,11 +73,13 @@ export const parseMarkdownToBlocks = (
 
       const { content, tags, links, transclusions } = parseLineComponents(line);
       if (!content) continue;
+
       const id = (yield* generateId(36)) as BlockId;
       const now = new Date();
       const newBlock: NewBlock & { depth: number } = {
         id,
         user_id: userId,
+        note_id: noteId, // Assign the note_id to the block
         type: tags[0]?.substring(1) || "note",
         content,
         fields: {},
@@ -89,6 +94,7 @@ export const parseMarkdownToBlocks = (
         updated_at: now,
         version: 0,
       };
+
       blocks.push(newBlock);
       parentStack.push(newBlock);
     }
