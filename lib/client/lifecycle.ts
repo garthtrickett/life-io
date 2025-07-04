@@ -1,66 +1,12 @@
-// lib/client/lifecycle.ts
+// =================================================================
+// FILE: lib/client/lifecycle.ts
+// =================================================================
 import { Stream, Effect, Layer, Context, Chunk } from "effect";
 import { authState, type AuthModel } from "./stores/authStore";
 import { clientLog } from "./logger.client";
 import { runClientUnscoped } from "./runtime";
+import { LocationService } from "./LocationService";
 
-// --- Location Stream ---
-export interface LocationChange {
-  readonly path: string;
-}
-
-export const locationStream: Stream.Stream<LocationChange> =
-  Stream.async<LocationChange>((emit) => {
-    runClientUnscoped(
-      clientLog("debug", "locationStream subscribed.", undefined, "lifecycle"),
-    );
-    const emitPath = (path: string) => {
-      runClientUnscoped(
-        clientLog(
-          "debug",
-          `locationStream emitting path: ${path}`,
-          undefined,
-          "lifecycle",
-        ),
-      );
-      void emit(Effect.succeed(Chunk.fromIterable([{ path }])));
-    };
-
-    emitPath(window.location.pathname);
-
-    const onPopState = () => {
-      emitPath(window.location.pathname);
-    };
-
-    const onNavigateTo = (e: Event) => {
-      const { path } = (e as CustomEvent<{ path: string }>).detail;
-      if (window.location.pathname !== path) {
-        window.history.pushState({}, "", path);
-        emitPath(path);
-      }
-    };
-
-    window.addEventListener("popstate", onPopState);
-    window.addEventListener("navigate-to", onNavigateTo);
-
-    return Effect.sync(() => {
-      runClientUnscoped(
-        clientLog(
-          "debug",
-          "locationStream unsubscribed.",
-          undefined,
-          "lifecycle",
-        ),
-      );
-      window.removeEventListener("popstate", onPopState);
-      window.removeEventListener("navigate-to", onNavigateTo);
-    });
-  }).pipe(
-    Stream.changesWith(
-      (a: LocationChange, b: LocationChange) => a.path === b.path,
-    ),
-  );
-// --- Auth Stream ---
 export const authStream: Stream.Stream<AuthModel> = Stream.async<AuthModel>(
   (emit) => {
     runClientUnscoped(
@@ -91,17 +37,20 @@ export const authStream: Stream.Stream<AuthModel> = Stream.async<AuthModel>(
       a.status === b.status && a.user?.id === b.user?.id,
   ),
 );
-// --- Combined App State Stream ---
-// --- FIX: Use Stream.zipLatest with Stream.map instead of Stream.combine ---
-// `Stream.zipLatest` emits a tuple `[A, B]` whenever either stream emits a new
-// value, using the most recent value from the other stream.
-// This is more
-// type-safe and avoids the overload resolution issues seen with `Stream.combine`.
-export const appStateStream = Stream.zipLatest(locationStream, authStream).pipe(
-  Stream.map(([location, auth]) => ({
-    path: location.path,
-    auth,
-  })),
+
+export const appStateStream: Stream.Stream<
+  { path: string; auth: AuthModel },
+  never,
+  LocationService
+> = Stream.unwrap(
+  // FIX: Use Stream.unwrap to correctly flatten the Effect<Stream<...>>
+  // This preserves the inner stream's type for the subsequent operators.
+  Effect.gen(function* () {
+    const location = yield* LocationService;
+    return Stream.zipLatest(location.pathname, authStream);
+  }),
+).pipe(
+  Stream.map(([path, auth]) => ({ path, auth })),
   Stream.tap(({ path, auth }) =>
     clientLog(
       "debug",
@@ -111,7 +60,7 @@ export const appStateStream = Stream.zipLatest(locationStream, authStream).pipe(
     ),
   ),
 );
-// --- Service for View Cleanup ---
+
 export class ViewManager extends Context.Tag("ViewManager")<
   ViewManager,
   {

@@ -1,7 +1,8 @@
-// components/layouts/app-shell.ts
+// =================================================================
+// FILE: components/layouts/app-shell.ts
+// =================================================================
 import { render, html } from "lit-html";
-import { Stream, Effect, Fiber } from "effect";
-
+import { Stream, Effect, Fiber, Layer } from "effect";
 import {
   appStateStream,
   ViewManager,
@@ -12,13 +13,13 @@ import { AppLayout } from "./AppLayout";
 import { clientLog } from "../../lib/client/logger.client";
 import { runClientPromise, runClientUnscoped } from "../../lib/client/runtime";
 import { type AuthModel } from "../../lib/client/stores/authStore";
+import { LocationLive } from "../../lib/client/LocationService";
 
 const hasAllPerms = (
   needed: string[],
   user: { permissions?: readonly string[] | null } | null,
 ) => needed.every((p) => user?.permissions?.includes(p));
 
-// The core logic remains the same, but it will now render into the component instance.
 const processStateChange = (
   appRoot: HTMLElement,
   {
@@ -58,7 +59,8 @@ const processStateChange = (
       return yield* Effect.never;
     }
 
-    const route = matchRoute(path);
+    const route = yield* matchRoute(path);
+
     if (route.meta.requiresAuth && auth.status === "unauthenticated") {
       yield* clientLog(
         "info",
@@ -66,7 +68,7 @@ const processStateChange = (
         undefined,
         "AppShell:guard",
       );
-      return yield* Effect.sync(() => navigate("/login"));
+      return yield* navigate("/login");
     }
 
     if (auth.status === "authenticated" && route.meta.isPublicOnly) {
@@ -76,7 +78,7 @@ const processStateChange = (
         auth.user?.id,
         "AppShell:guard",
       );
-      return yield* Effect.sync(() => navigate("/"));
+      return yield* navigate("/");
     }
 
     if (
@@ -89,7 +91,7 @@ const processStateChange = (
         auth.user?.id,
         "AppShell:guard",
       );
-      return yield* Effect.sync(() => navigate("/unauthorized"));
+      return yield* navigate("/unauthorized");
     }
 
     yield* clientLog(
@@ -110,7 +112,6 @@ const processStateChange = (
       viewResult instanceof HTMLElement ? undefined : viewResult.cleanup;
 
     yield* viewManager.set(pageCleanup);
-
     yield* Effect.sync(() => {
       render(AppLayout({ children: pageTemplate }).template, appRoot);
     });
@@ -122,7 +123,6 @@ const processStateChange = (
     );
   });
 
-// --- REFACTORED COMPONENT ---
 export class AppShell extends HTMLElement {
   private mainFiber: Fiber.RuntimeFiber<void, unknown> | undefined;
 
@@ -135,12 +135,15 @@ export class AppShell extends HTMLElement {
         "AppShell",
       ),
     );
+
+    const AppShellLive = Layer.merge(ViewManagerLive, LocationLive);
+
     const mainAppStream = appStateStream.pipe(
       Stream.flatMap(
         (state) => Stream.fromEffect(processStateChange(this, state)),
         { switch: true },
       ),
-      Stream.provideLayer(ViewManagerLive),
+      Stream.provideLayer(AppShellLive),
     );
 
     this.mainFiber = Effect.runFork(Stream.runDrain(mainAppStream));

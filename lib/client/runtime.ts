@@ -1,27 +1,36 @@
 // FILE: lib/client/runtime.ts
-import { Runtime } from "effect";
+import { Effect, Runtime } from "effect";
 import { clientLog } from "./logger.client";
+import { LocationLive, type LocationService } from "./LocationService";
 
 /**
- * The default Effect runtime for the client-side.
- * It does not require any special context like the server-side runtime.
+ * A type alias for all services available in the client-side context.
  */
-const clientRuntime = Runtime.defaultRuntime;
+export type ClientContext = LocationService;
+
+/**
+ * A combined Layer that provides live implementations for all client-side services.
+ */
+export const ClientLive = LocationLive;
 
 /**
  * Executes a client-side Effect and returns a Promise of its result.
- * Use when the UI needs to react to the completion or failure of the Effect.
+ * Automatically provides all necessary client services.
  */
-export const runClientPromise = Runtime.runPromise(clientRuntime);
+export const runClientPromise = <A, E>(
+  effect: Effect.Effect<A, E, ClientContext>,
+) => Effect.runPromise(Effect.provide(effect, ClientLive));
 
 /**
  * Executes a client-side Effect in “fire-and-forget” mode.
- * Ideal for tasks such as logging where the result isn’t needed immediately.
+ * Automatically provides all necessary client services.
  */
-export const runClientUnscoped = Runtime.runFork(clientRuntime);
+export const runClientUnscoped = <A, E>(
+  effect: Effect.Effect<A, E, ClientContext>,
+) => Effect.runFork(Effect.provide(effect, ClientLive));
 
 // ───────────────────────────────────────────────────────────────────────────
-// Global Error Logger Setup
+// Global Error Logger Setup (Unchanged)
 // ───────────────────────────────────────────────────────────────────────────
 const setupGlobalErrorLogger = () => {
   const handler =
@@ -29,9 +38,6 @@ const setupGlobalErrorLogger = () => {
       let message = "Unknown error";
       let stack: string | undefined;
 
-      // The `reason` property on PromiseRejectionEvent is `any`.
-      // The `error` property on ErrorEvent is `any`.
-      // We need to safely extract details.
       const errorCandidate: unknown =
         "reason" in event ? event.reason : event.error;
 
@@ -39,7 +45,6 @@ const setupGlobalErrorLogger = () => {
         message = errorCandidate.message;
         stack = errorCandidate.stack;
       } else {
-        // Fallback for non-error objects (e.g., strings, numbers)
         message = String(errorCandidate);
       }
 
@@ -53,16 +58,11 @@ const setupGlobalErrorLogger = () => {
       );
     };
 
-  // Catch uncaught exceptions
   window.addEventListener("error", handler("Uncaught Exception"));
-
-  // Catch unhandled promise rejections
   window.addEventListener("unhandledrejection", handler("Unhandled Rejection"));
-
   runClientUnscoped(
     clientLog("info", "Global error logger initialized.", undefined, "Runtime"),
   );
 };
 
-// Initialise the global error logger immediately
 setupGlobalErrorLogger();
