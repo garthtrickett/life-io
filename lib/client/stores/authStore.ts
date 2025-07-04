@@ -1,4 +1,4 @@
-// File: lib/client/stores/authStore.ts
+// lib/client/stores/authStore.ts
 import { signal } from "@preact/signals-core";
 import { Effect, pipe, Queue, Ref, Stream } from "effect";
 import { trpc } from "../../../lib/client/trpc";
@@ -6,8 +6,27 @@ import type { User } from "../../../types/generated/public/User";
 import { runClientUnscoped } from "../runtime";
 import { clientLog } from "../logger.client";
 import { rep, initReplicache, nullifyReplicache } from "../replicache";
+import { makeIDBName, dropDatabase } from "replicache";
 
-// --- Model and Action Types ---
+/* ─────────────────────────── Helpers ──────────────────────────── */
+
+/** Expire a cookie in every reasonable permutation. */
+const expireCookie = (name: string) => {
+  const base = `${name}=; path=/; SameSite=Lax`;
+  const expiry = "expires=Thu, 01 Jan 1970 00:00:00 GMT";
+  const host = location.hostname;
+
+  // Host-only (no domain) — expires & Max-Age
+  document.cookie = `${base}; ${expiry}`;
+  document.cookie = `${base}; Max-Age=0`;
+
+  // Explicit domain — expires & Max-Age
+  document.cookie = `${base}; domain=${host}; ${expiry}`;
+  document.cookie = `${base}; domain=${host}; Max-Age=0`;
+};
+
+/* ─────────────────────────── Model & Actions ─────────────────────────── */
+
 export interface AuthModel {
   status:
     | "initializing"
@@ -16,6 +35,7 @@ export interface AuthModel {
     | "authenticated";
   user: User | null;
 }
+
 type AuthAction =
   | { type: "AUTH_CHECK_START" }
   | { type: "AUTH_CHECK_SUCCESS"; payload: User }
@@ -24,20 +44,23 @@ type AuthAction =
   | { type: "LOGOUT_SUCCESS" }
   | { type: "SET_AUTHENTICATED"; payload: User };
 
-// --- Internal State Management ---
+/* ───────────────────────── Internal State ────────────────────────────── */
+
 const _authStateRef = Ref.unsafeMake<AuthModel>({
   status: "initializing",
   user: null,
 });
 const _actionQueue = Effect.runSync(Queue.unbounded<AuthAction>());
 
-// --- Globally Exposed State Signal ---
+/* ───────────────────────── Public Signal ─────────────────────────────── */
+
 export const authState = signal<AuthModel>({
   status: "initializing",
   user: null,
 });
 
-// --- Pure Update Function ---
+/* ──────────────────────── Pure Update Function ───────────────────────── */
+
 const update = (model: AuthModel, action: AuthAction): AuthModel => {
   switch (action.type) {
     case "AUTH_CHECK_START":
@@ -57,7 +80,8 @@ const update = (model: AuthModel, action: AuthAction): AuthModel => {
   }
 };
 
-// --- Side-Effect Handler ---
+/* ───────────────────── Side-Effect Processor ─────────────────────────── */
+
 const handleAuthAction = (action: AuthAction): Effect.Effect<void, never> =>
   Effect.gen(function* () {
     const currentModel = yield* Ref.get(_authStateRef);
@@ -67,9 +91,8 @@ const handleAuthAction = (action: AuthAction): Effect.Effect<void, never> =>
       authState.value = nextModel;
     });
 
-    const userId = currentModel.user?.id;
-
     switch (action.type) {
+      /* ---------- login / session restore ---------- */
       case "AUTH_CHECK_SUCCESS": {
         yield* clientLog(
           "info",
@@ -85,8 +108,6 @@ const handleAuthAction = (action: AuthAction): Effect.Effect<void, never> =>
           Effect.andThen(() =>
             Effect.tryPromise({
               try: () => trpc.auth.me.query(),
-              // Instead of creating a generic error, we cast the cause to Error.
-              // This preserves the specific TRPCClientError for better debugging.
               catch: (err) => err as Error,
             }),
           ),
@@ -102,10 +123,14 @@ const handleAuthAction = (action: AuthAction): Effect.Effect<void, never> =>
                   proposeAuthAction({ type: "AUTH_CHECK_FAILURE" }),
                 ),
           ),
-          // The catchAll block now receives the original error.
           Effect.catchAll((error) =>
             pipe(
-              clientLog("info", `Auth check failed: ${error.message}`),
+              clientLog(
+                "info",
+                `Auth check failed: ${error.message}`,
+                undefined,
+                "authStore",
+              ),
               Effect.andThen(() =>
                 proposeAuthAction({ type: "AUTH_CHECK_FAILURE" }),
               ),
@@ -115,94 +140,64 @@ const handleAuthAction = (action: AuthAction): Effect.Effect<void, never> =>
         yield* Effect.fork(authCheckEffect);
         break;
       }
+
+      /* -------------------- LOGOUT -------------------- */
       case "LOGOUT_START": {
-        const cleanupAndFinalizeLogout = pipe(
-          Effect.sync(() => {
-            document.cookie =
-              "session_id=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax";
-          }),
-          Effect.andThen(
-            Effect.if(
-              Effect.sync(() => !!(rep && userId)),
-              {
-                onTrue: () => {
-                  const replicacheName = `life-io-user-${userId}`;
-                  return pipe(
-                    clientLog(
-                      "info",
-                      `Deleting IndexedDB database: ${replicacheName}`,
-                      userId,
-                      "authStore:replicache",
-                    ),
-                    Effect.andThen(
-                      Effect.tryPromise({
-                        try: () =>
-                          new Promise<void>((resolve, reject) => {
-                            const deleteRequest =
-                              window.indexedDB.deleteDatabase(replicacheName);
-                            deleteRequest.onsuccess = () => resolve();
-                            deleteRequest.onerror = () =>
-                              reject(
-                                new Error(
-                                  `Failed to delete IndexedDB: ${replicacheName}`,
-                                ),
-                              );
-                            deleteRequest.onblocked = () =>
-                              reject(
-                                new Error(
-                                  `Blocked from deleting IndexedDB: ${replicacheName}. Close other tabs.`,
-                                ),
-                              );
-                          }),
-                        catch: (e) => e as Error,
-                      }),
-                    ),
-                    Effect.andThen(nullifyReplicache),
-                    Effect.catchAll((err) =>
-                      clientLog(
-                        "error",
-                        `Failed to delete Replicache DB: ${err.message}`,
-                        userId,
-                        "authStore:replicache",
-                      ),
-                    ),
-                  );
-                },
-                onFalse: () =>
-                  clientLog(
-                    "debug",
-                    "No active Replicache instance or user ID to delete.",
-                  ),
-              },
+        const logoutEffect = Effect.gen(function* () {
+          const userId = currentModel.user?.id;
+          yield* clientLog("info", "Logout process started.", userId);
+
+          /* 1️⃣  Compute logical & physical DB names */
+          const logicalName = userId ? `life-io-user-${userId}` : undefined;
+          const idbName = logicalName ? makeIDBName(logicalName) : undefined;
+
+          /* 2️⃣  Close Replicache */
+          if (rep) {
+            yield* clientLog("info", "Closing Replicache instance…", userId);
+            yield* Effect.promise(() => rep!.close());
+            yield* nullifyReplicache();
+          }
+
+          /* 3️⃣  Drop IndexedDBs */
+          if (idbName) {
+            yield* clientLog("info", `Dropping DB "${idbName}"`, userId);
+            yield* Effect.promise(() => dropDatabase(idbName));
+
+            yield* clientLog(
+              "info",
+              'Dropping meta DB "replicache-dbs-v0"',
+              userId,
+            );
+            yield* Effect.promise(() => dropDatabase("replicache-dbs-v0"));
+          }
+
+          /* 4️⃣  Clear the session cookie (all variants) */
+          expireCookie("session_id");
+
+          /* 5️⃣  Tell the server to invalidate the session */
+          yield* clientLog("info", "Invalidating server session…", userId);
+          yield* Effect.tryPromise({
+            try: () => trpc.auth.logout.mutate(),
+            catch: (err) => err as Error,
+          });
+        }).pipe(
+          Effect.catchAll((error) =>
+            clientLog(
+              "error",
+              `An error occurred during logout: ${error.message}`,
+              currentModel.user?.id,
             ),
           ),
           Effect.andThen(() =>
             Effect.sync(() => proposeAuthAction({ type: "LOGOUT_SUCCESS" })),
           ),
         );
-        const logoutEffect = pipe(
-          clientLog("info", "Logout process started.", userId, "authStore"),
-          Effect.andThen(() =>
-            Effect.tryPromise(() => trpc.auth.logout.mutate()),
-          ),
-          Effect.andThen(cleanupAndFinalizeLogout),
-          Effect.catchAll((error) =>
-            pipe(
-              clientLog(
-                "warn",
-                `Server logout failed, but proceeding with client-side cleanup: ${String(
-                  error,
-                )}`,
-                userId,
-                "authStore",
-              ),
-              Effect.andThen(cleanupAndFinalizeLogout),
-            ),
-          ),
-        );
+
         yield* Effect.fork(logoutEffect);
         break;
       }
+
+      /* ---------- Manual set (e.g. after signup) ---------- */
       case "SET_AUTHENTICATED": {
         yield* clientLog(
           "info",
@@ -215,18 +210,18 @@ const handleAuthAction = (action: AuthAction): Effect.Effect<void, never> =>
     }
   });
 
-// --- Main Store Process ---
+/* ───────────────────────── Store Runtime ─────────────────────────────── */
+
 const authProcess = Stream.fromQueue(_actionQueue).pipe(
   Stream.runForEach(handleAuthAction),
 );
-
-// --- Start all background processes for the store ---
 runClientUnscoped(authProcess);
 
-// --- Public Propose Function ---
+/* ───────────────────────── Public API ────────────────────────────────── */
+
 export const proposeAuthAction = (action: AuthAction): void => {
   runClientUnscoped(Queue.offer(_actionQueue, action));
 };
 
-// --- Initial Action ---
+/* Kick off an initial auth check on startup */
 proposeAuthAction({ type: "AUTH_CHECK_START" });

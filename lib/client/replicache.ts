@@ -1,4 +1,4 @@
-// File: lib/client/replicache.ts
+// lib/client/replicache.ts
 import {
   Replicache,
   type ReadonlyJSONValue,
@@ -29,20 +29,20 @@ type Mutators = {
   ) => Promise<void>;
 };
 
+/* ────────────────────────── Global Instance ───────────────────────────── */
+
 export let rep: Replicache<Mutators> | null = null;
 
-// --- NEW ---
 /**
- * A function to nullify the exported `rep` variable.
- * This is called from the auth store to reset the Replicache instance on logout.
+ * Clear the exported `rep` reference.
+ * Called from the auth store after we’ve closed the instance on logout.
  */
 export const nullifyReplicache = (): Effect.Effect<void> =>
   Effect.sync(() => {
     rep = null;
   });
-// --- END NEW ---
 
-/* ─────────────────────────── Initialiser ───────────────────────────────── */
+/* ────────────────────────── Initialiser ───────────────────────────────── */
 
 export const initReplicache = (
   userId: string,
@@ -248,7 +248,7 @@ export const initReplicache = (
     ),
   );
 
-/* ───────────────────────────── WebSocket ───────────────────────────────── */
+/* ──────────────────────────── WebSocket ───────────────────────────────── */
 
 function setupWebSocket() {
   const ws = new WebSocket(
@@ -266,14 +266,5 @@ function setupWebSocket() {
       );
       void rep.pull();
     }
-  };
-
-  ws.onclose = () => {
-    void clientLog(
-      "warn",
-      "WebSocket closed. It will be reopened on next login.",
-      undefined,
-      "Replicache:WS",
-    );
   };
 }
