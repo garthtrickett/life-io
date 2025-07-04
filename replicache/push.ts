@@ -25,23 +25,14 @@ const UpdateNoteMutationArgs = Schema.Struct({
   content: Schema.String,
 });
 
-// A custom tagged error for push-related failures
 class ReplicachePushError extends Data.TaggedError("ReplicachePushError")<{
   readonly cause: unknown;
 }> {}
-
-// ---------------------------------------------------------------------------
-// Helper
-// ---------------------------------------------------------------------------
 
 const getLastMutationID = (
   req: PushRequest,
 ): Effect.Effect<number, Error, never> =>
   Effect.try(() => req.mutations.reduce((max, m) => Math.max(max, m.id), 0));
-
-// ---------------------------------------------------------------------------
-// Push Handler
-// ---------------------------------------------------------------------------
 
 export const handlePush = (
   req: PushRequest,
@@ -83,10 +74,9 @@ export const handlePush = (
 
     const lastMutationID = yield* getLastMutationID(req);
 
-    yield* Effect.tryPromise({
+    const transactionEffect = Effect.tryPromise({
       try: () =>
         db.transaction().execute(async (trx) => {
-          // --- 1. Process mutations ---
           for (const mutation of mutations) {
             await Effect.runPromise(
               serverLog(
@@ -134,7 +124,6 @@ export const handlePush = (
                   .deleteFrom("block")
                   .where("note_id", "=", args.id)
                   .execute();
-                // No longer needs Crypto service
                 const childBlocks = await Effect.runPromise(
                   parseMarkdownToBlocks(
                     args.content,
@@ -151,7 +140,6 @@ export const handlePush = (
             }
           }
 
-          // --- 2. Update client state ---
           await trx
             .insertInto("replicache_client")
             .values({
@@ -164,7 +152,6 @@ export const handlePush = (
             )
             .execute();
 
-          // --- 3. Increment server version ---
           await trx
             .updateTable("replicache_client_group")
             .set((eb) => ({
@@ -174,8 +161,12 @@ export const handlePush = (
             .execute();
         }),
       catch: (e) => new ReplicachePushError({ cause: e }),
-    }).pipe(
-      Effect.mapError((err) => new Error(err.message)),
+    });
+
+    // --- START OF FIX ---
+    // The problematic `.pipe(Effect.mapError(...))` has been removed.
+    // We now let the original `ReplicachePushError` flow through.
+    yield* transactionEffect.pipe(
       Effect.tap(() =>
         serverLog(
           "info",
@@ -187,11 +178,15 @@ export const handlePush = (
       Effect.tapError((e) =>
         serverLog(
           "error",
-          `Push transaction failed for clientGroupID: ${clientGroupID}. Error: ${e.message}`,
+          `Push transaction failed for clientGroupID: ${clientGroupID}. Error: ${
+            (e.cause as Error)?.message || "Unknown cause"
+          }`,
           userId,
           "Replicache:Push:Failure",
         ),
       ),
     );
+    // --- END OF FIX ---
+
     yield* pokeService.poke();
   });

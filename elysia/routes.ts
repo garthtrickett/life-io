@@ -1,6 +1,6 @@
 // FILE: elysia/routes.ts
 import { Elysia, t } from "elysia";
-import { Data, Effect, Fiber, Stream } from "effect";
+import { Effect, Fiber, Stream } from "effect"; // Removed 'Data' as it's no longer needed here
 import { staticPlugin } from "@elysiajs/static";
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import type { PushRequest } from "replicache";
@@ -16,7 +16,9 @@ import {
 } from "../replicache/server";
 import { handleAvatarUpload } from "./handlers";
 import { authenticateRequestEffect } from "./auth";
-import { ApiError } from "./errors";
+// 'ApiError' is no longer used directly in this file, but we'll leave the import
+// in case it's useful for other routes you might add.
+// import { ApiError } from "./errors";
 import { runServerUnscoped } from "../lib/server/runtime";
 import { serverLog } from "../lib/server/logger.server";
 import { effectHandler } from "./effectHandler";
@@ -28,12 +30,7 @@ export const makeApp = Effect.gen(function* () {
   const pokeService = yield* PokeService;
   const wsConnections = new Map<string, Fiber.RuntimeFiber<void, unknown>>();
 
-  const mapToApiError = (error: unknown) => {
-    if (error instanceof Data.TaggedError) return error;
-    if (error instanceof Error)
-      return new ApiError({ message: error.message, cause: error });
-    return new ApiError({ message: "An unknown error occurred", cause: error });
-  };
+  // --- REMOVED: The problematic mapToApiError function is gone. ---
 
   const app = new Elysia()
     /* ---------- API ---------- */
@@ -49,35 +46,36 @@ export const makeApp = Effect.gen(function* () {
           }),
         )
 
-        .post(
-          "/replicache/pull",
-          (ctx) =>
-            effectHandler(
-              Effect.gen(function* () {
-                const user = yield* authenticateRequestEffect(ctx.request);
-                return yield* handlePull(
-                  user.id,
-                  ctx.body as ReplicachePullRequest,
-                );
-              }).pipe(Effect.mapError(mapToApiError)),
-            )(), //  ← CALL IT
+        // --- START OF FIX ---
+        // Pass the raw effect directly to the effectHandler.
+        // It is designed to handle any error type.
+        .post("/replicache/pull", (ctx) =>
+          effectHandler(
+            Effect.gen(function* () {
+              const user = yield* authenticateRequestEffect(ctx.request);
+              return yield* handlePull(
+                user.id,
+                ctx.body as ReplicachePullRequest,
+              );
+            }),
+          )(),
         )
 
-        .post(
-          "/replicache/push",
-          (ctx) =>
-            effectHandler(
-              Effect.gen(function* () {
-                const user = yield* authenticateRequestEffect(ctx.request);
-                yield* handlePush(ctx.body as PushRequest, user.id);
-                return { ok: true }; // Replicache expects this
-              }).pipe(Effect.mapError(mapToApiError)),
-            )(), //  ← CALL IT
+        // Pass the raw effect directly to the effectHandler here as well.
+        .post("/replicache/push", (ctx) =>
+          effectHandler(
+            Effect.gen(function* () {
+              const user = yield* authenticateRequestEffect(ctx.request);
+              yield* handlePush(ctx.body as PushRequest, user.id);
+              return { ok: true }; // Replicache expects this
+            }),
+          )(),
         )
+        // --- END OF FIX ---
 
         .post(
           "/user/avatar",
-          (ctx) => effectHandler(handleAvatarUpload(ctx))(), // ← CALL IT
+          (ctx) => effectHandler(handleAvatarUpload(ctx))(),
           { body: t.Object({ avatar: t.File() }) },
         ),
     )

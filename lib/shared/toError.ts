@@ -1,13 +1,9 @@
-/**
- * Convert any thrown value into a *real* `Error`.
- *
- * ‣ Works for primitives, plain objects, cross-realm errors, etc.
- * ‣ Copies `message` and `stack` when they are available.
- * ‣ Used by both client and server code so we never need
- *   `instanceof Error` inside a `catch`.
- */
+// FILE: lib/shared/toError.ts
+
 export function toError(err: unknown): Error {
-  if (err instanceof Error) return err;
+  // --- DEBUG-F ---
+  // This log confirms this function was entered.
+  console.error(`[DEBUG-F] toError function was called.`);
 
   const message =
     err && typeof err === "object" && "message" in err

@@ -1,52 +1,74 @@
+// FILE: elysia/effectHandler.ts
 import { Effect } from "effect";
 import type { ServerContext } from "../lib/server/runtime";
 import { runServerPromise } from "../lib/server/runtime";
 import { serverLog } from "../lib/server/logger.server";
-import { toError } from "../lib/shared/toError";
-
-/* ───────────────────────────── Utilities ────────────────────────────────── */
-
-/** Extract an Effect-style `_tag` for structured logs, if present. */
-const extractTag = (err: unknown): string =>
-  typeof err === "object" &&
-  err !== null &&
-  "_tag" in err &&
-  typeof (err as Record<string, unknown>)._tag === "string"
-    ? (err as Record<string, string>)._tag
-    : "EffectHandler";
-
-/* ───────────────────────────── Public API ───────────────────────────────── */
+import { ApiError } from "./errors";
 
 /**
- * Turn an `Effect` program into an async handler that:
- * 1. Runs inside the shared server runtime
- * 2. Normalises *any* thrown value into a real `Error`
- * 3. Logs the error consistently
- * 4. Re-throws so Elysia still produces a 500 + stack
+ * Extracts the most specific error message from a caught value.
+ * It intelligently prioritizes looking inside the `cause` property of our
+ * custom tagged errors before falling back to a top-level message.
  */
+function getErrorMessage(err: unknown): string {
+  if (typeof err !== "object" || err === null) {
+    return String(err);
+  }
+
+  // 1. Prioritize the `cause` if it's an object with its own message.
+  // This is where the rich detail from DB errors, etc., is stored.
+  if (
+    "cause" in err &&
+    typeof err.cause === "object" &&
+    err.cause !== null &&
+    "message" in err.cause
+  ) {
+    return String(err.cause.message);
+  }
+
+  // 2. Fallback to the top-level message if the cause isn't informative.
+  if ("message" in err) {
+    return String(err.message);
+  }
+
+  // 3. Final fallback for unusual error shapes.
+  return "An unknown error occurred during processing.";
+}
+
+/**
+ * Extracts a structured log tag from the error (_tag property).
+ */
+function extractTag(err: unknown): string {
+  if (
+    typeof err === "object" &&
+    err !== null &&
+    "_tag" in err &&
+    typeof (err as { _tag: string })._tag === "string"
+  ) {
+    return (err as { _tag: string })._tag;
+  }
+  return "EffectHandler";
+}
+
 export const effectHandler =
-  <A, E extends { _tag?: string; message?: unknown }>(
-    effect: Effect.Effect<A, E, ServerContext>,
-  ) =>
+  <A, E>(effect: Effect.Effect<A, E, ServerContext>) =>
   async (): Promise<A> => {
     try {
-      // 1️⃣ Run the program inside the server runtime
       return await runServerPromise(effect);
     } catch (err: unknown) {
-      // 2️⃣ Normalise without relying on `instanceof`
-      const normalised = toError(err);
+      const message = getErrorMessage(err);
+      const tag = extractTag(err);
 
-      // 3️⃣ Structured log with tag (if present)
+      // Log the detailed error message to the server console.
       await runServerPromise(
-        serverLog(
-          "error",
-          `effectHandler error: ${normalised.message}`,
-          undefined,
-          extractTag(err),
-        ),
+        serverLog("error", `[${tag}] ${message}`, undefined, "API_FAILURE"),
       );
 
-      // 4️⃣ Bubble up so framework returns 500 / stack trace
-      throw normalised;
+      // Throw a new, clean error that our global onError handler can catch.
+      // This error now contains the useful, specific message.
+      throw new ApiError({
+        message,
+        cause: err, // Preserve the original error for the global handler
+      });
     }
   };
