@@ -1,6 +1,6 @@
-// lib/client/stores/authStore.ts
+// FILE: lib/client/stores/authStore.ts
 import { signal } from "@preact/signals-core";
-import { Effect, pipe, Queue, Ref, Stream } from "effect";
+import { Effect, pipe, Queue, Ref, Stream, Data } from "effect"; // Import Data
 import { trpc } from "../../../lib/client/trpc";
 import type { User } from "../../../types/generated/public/User";
 import { runClientUnscoped } from "../runtime";
@@ -9,18 +9,12 @@ import { rep, initReplicache, nullifyReplicache } from "../replicache";
 import { makeIDBName, dropDatabase } from "replicache";
 
 /* ─────────────────────────── Helpers ──────────────────────────── */
-
-/** Expire a cookie in every reasonable permutation. */
 const expireCookie = (name: string) => {
   const base = `${name}=; path=/; SameSite=Lax`;
   const expiry = "expires=Thu, 01 Jan 1970 00:00:00 GMT";
   const host = location.hostname;
-
-  // Host-only (no domain) — expires & Max-Age
   document.cookie = `${base}; ${expiry}`;
   document.cookie = `${base}; Max-Age=0`;
-
-  // Explicit domain — expires & Max-Age
   document.cookie = `${base}; domain=${host}; ${expiry}`;
   document.cookie = `${base}; domain=${host}; Max-Age=0`;
 };
@@ -36,15 +30,19 @@ export interface AuthModel {
   user: User | null;
 }
 
+// --- START OF FIX: Define a specific tagged error ---
+class AuthCheckError extends Data.TaggedError("AuthCheckError")<{
+  readonly cause: unknown;
+}> {}
+// --- END OF FIX ---
+
 type AuthAction =
   | { type: "AUTH_CHECK_START" }
   | { type: "AUTH_CHECK_SUCCESS"; payload: User }
-  | { type: "AUTH_CHECK_FAILURE" }
+  | { type: "AUTH_CHECK_FAILURE"; payload: AuthCheckError } // Payload is now typed
   | { type: "LOGOUT_START" }
   | { type: "LOGOUT_SUCCESS" }
   | { type: "SET_AUTHENTICATED"; payload: User };
-
-/* ───────────────────────── Internal State ────────────────────────────── */
 
 const _authStateRef = Ref.unsafeMake<AuthModel>({
   status: "initializing",
@@ -52,14 +50,10 @@ const _authStateRef = Ref.unsafeMake<AuthModel>({
 });
 const _actionQueue = Effect.runSync(Queue.unbounded<AuthAction>());
 
-/* ───────────────────────── Public Signal ─────────────────────────────── */
-
 export const authState = signal<AuthModel>({
   status: "initializing",
   user: null,
 });
-
-/* ──────────────────────── Pure Update Function ───────────────────────── */
 
 const update = (model: AuthModel, action: AuthAction): AuthModel => {
   switch (action.type) {
@@ -80,8 +74,6 @@ const update = (model: AuthModel, action: AuthAction): AuthModel => {
   }
 };
 
-/* ───────────────────── Side-Effect Processor ─────────────────────────── */
-
 const handleAuthAction = (action: AuthAction): Effect.Effect<void, never> =>
   Effect.gen(function* () {
     const currentModel = yield* Ref.get(_authStateRef);
@@ -92,7 +84,6 @@ const handleAuthAction = (action: AuthAction): Effect.Effect<void, never> =>
     });
 
     switch (action.type) {
-      /* ---------- login / session restore ---------- */
       case "AUTH_CHECK_SUCCESS": {
         yield* clientLog(
           "info",
@@ -105,60 +96,59 @@ const handleAuthAction = (action: AuthAction): Effect.Effect<void, never> =>
       case "AUTH_CHECK_START": {
         const authCheckEffect = pipe(
           clientLog("info", "Starting auth check...", undefined, "authStore"),
+          // --- START OF FIX: Use a proper try-catch effect ---
           Effect.andThen(() =>
             Effect.tryPromise({
               try: () => trpc.auth.me.query(),
-              catch: (err) => err as Error,
+              catch: (cause) => new AuthCheckError({ cause }),
             }),
           ),
-          Effect.flatMap((user) =>
-            user
-              ? Effect.sync(() =>
-                  proposeAuthAction({
-                    type: "AUTH_CHECK_SUCCESS",
-                    payload: user,
-                  }),
-                )
-              : Effect.sync(() =>
-                  proposeAuthAction({ type: "AUTH_CHECK_FAILURE" }),
-                ),
-          ),
-          Effect.catchAll((error) =>
-            pipe(
-              clientLog(
-                "info",
-                `Auth check failed: ${error.message}`,
-                undefined,
-                "authStore",
-              ),
-              Effect.andThen(() =>
-                proposeAuthAction({ type: "AUTH_CHECK_FAILURE" }),
-              ),
-            ),
-          ),
+          Effect.match({
+            onSuccess: (user) => {
+              if (user) {
+                proposeAuthAction({
+                  type: "AUTH_CHECK_SUCCESS",
+                  payload: user,
+                });
+              } else {
+                proposeAuthAction({
+                  type: "AUTH_CHECK_FAILURE",
+                  payload: new AuthCheckError({ cause: "No user returned" }),
+                });
+              }
+            },
+            onFailure: (error) => {
+              proposeAuthAction({ type: "AUTH_CHECK_FAILURE", payload: error });
+            },
+          }),
+          // --- END OF FIX ---
         );
         yield* Effect.fork(authCheckEffect);
         break;
       }
-
-      /* -------------------- LOGOUT -------------------- */
+      case "AUTH_CHECK_FAILURE": {
+        yield* clientLog(
+          "info",
+          `Auth check failed. Cause: ${JSON.stringify(action.payload.cause)}`,
+          undefined,
+          "authStore",
+        );
+        break;
+      }
       case "LOGOUT_START": {
         const logoutEffect = Effect.gen(function* () {
           const userId = currentModel.user?.id;
           yield* clientLog("info", "Logout process started.", userId);
 
-          /* 1️⃣  Compute logical & physical DB names */
           const logicalName = userId ? `life-io-user-${userId}` : undefined;
           const idbName = logicalName ? makeIDBName(logicalName) : undefined;
 
-          /* 2️⃣  Close Replicache */
           if (rep) {
             yield* clientLog("info", "Closing Replicache instance…", userId);
             yield* Effect.promise(() => rep!.close());
             yield* nullifyReplicache();
           }
 
-          /* 3️⃣  Drop IndexedDBs */
           if (idbName) {
             yield* clientLog("info", `Dropping DB "${idbName}"`, userId);
             yield* Effect.promise(() => dropDatabase(idbName));
@@ -171,10 +161,8 @@ const handleAuthAction = (action: AuthAction): Effect.Effect<void, never> =>
             yield* Effect.promise(() => dropDatabase("replicache-dbs-v0"));
           }
 
-          /* 4️⃣  Clear the session cookie (all variants) */
           expireCookie("session_id");
 
-          /* 5️⃣  Tell the server to invalidate the session */
           yield* clientLog("info", "Invalidating server session…", userId);
           yield* Effect.tryPromise({
             try: () => trpc.auth.logout.mutate(),
@@ -196,8 +184,6 @@ const handleAuthAction = (action: AuthAction): Effect.Effect<void, never> =>
         yield* Effect.fork(logoutEffect);
         break;
       }
-
-      /* ---------- Manual set (e.g. after signup) ---------- */
       case "SET_AUTHENTICATED": {
         yield* clientLog(
           "info",
@@ -210,18 +196,13 @@ const handleAuthAction = (action: AuthAction): Effect.Effect<void, never> =>
     }
   });
 
-/* ───────────────────────── Store Runtime ─────────────────────────────── */
-
 const authProcess = Stream.fromQueue(_actionQueue).pipe(
   Stream.runForEach(handleAuthAction),
 );
 runClientUnscoped(authProcess);
 
-/* ───────────────────────── Public API ────────────────────────────────── */
-
 export const proposeAuthAction = (action: AuthAction): void => {
   runClientUnscoped(Queue.offer(_actionQueue, action));
 };
 
-/* Kick off an initial auth check on startup */
 proposeAuthAction({ type: "AUTH_CHECK_START" });
