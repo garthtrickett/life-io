@@ -7,6 +7,9 @@ import { runClientUnscoped } from "../runtime";
 import { clientLog } from "../logger.client";
 import { rep, initReplicache, nullifyReplicache } from "../replicache";
 import { makeIDBName, dropDatabase } from "replicache";
+// --- START OF FIX: Import the toError utility ---
+import { toError } from "../../../lib/shared/toError";
+// --- END OF FIX ---
 
 /* ─────────────────────────── Helpers ──────────────────────────── */
 const expireCookie = (name: string) => {
@@ -30,16 +33,14 @@ export interface AuthModel {
   user: User | null;
 }
 
-// --- START OF FIX: Define a specific tagged error ---
 class AuthCheckError extends Data.TaggedError("AuthCheckError")<{
   readonly cause: unknown;
 }> {}
-// --- END OF FIX ---
 
 type AuthAction =
   | { type: "AUTH_CHECK_START" }
   | { type: "AUTH_CHECK_SUCCESS"; payload: User }
-  | { type: "AUTH_CHECK_FAILURE"; payload: AuthCheckError } // Payload is now typed
+  | { type: "AUTH_CHECK_FAILURE"; payload: AuthCheckError }
   | { type: "LOGOUT_START" }
   | { type: "LOGOUT_SUCCESS" }
   | { type: "SET_AUTHENTICATED"; payload: User };
@@ -96,7 +97,6 @@ const handleAuthAction = (action: AuthAction): Effect.Effect<void, never> =>
       case "AUTH_CHECK_START": {
         const authCheckEffect = pipe(
           clientLog("info", "Starting auth check...", undefined, "authStore"),
-          // --- START OF FIX: Use a proper try-catch effect ---
           Effect.andThen(() =>
             Effect.tryPromise({
               try: () => trpc.auth.me.query(),
@@ -121,7 +121,6 @@ const handleAuthAction = (action: AuthAction): Effect.Effect<void, never> =>
               proposeAuthAction({ type: "AUTH_CHECK_FAILURE", payload: error });
             },
           }),
-          // --- END OF FIX ---
         );
         yield* Effect.fork(authCheckEffect);
         break;
@@ -164,10 +163,12 @@ const handleAuthAction = (action: AuthAction): Effect.Effect<void, never> =>
           expireCookie("session_id");
 
           yield* clientLog("info", "Invalidating server session…", userId);
+          // --- START OF FIX: Use the toError utility for safe error conversion ---
           yield* Effect.tryPromise({
             try: () => trpc.auth.logout.mutate(),
-            catch: (err) => err as Error,
+            catch: (err) => toError(err), // Safe conversion
           });
+          // --- END OF FIX ---
         }).pipe(
           Effect.catchAll((error) =>
             clientLog(

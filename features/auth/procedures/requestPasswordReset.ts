@@ -8,7 +8,13 @@ import { generateId } from "../../../lib/server/utils";
 import { createDate, TimeSpan } from "oslo";
 import type { PasswordResetTokenId } from "../../../types/generated/public/PasswordResetToken";
 import { sendEmail } from "../../../lib/server/email";
-import { EmailSendError, TokenCreationError } from "../Errors";
+// --- START OF FIX: Import the necessary tagged errors ---
+import {
+  EmailSendError,
+  TokenCreationError,
+  AuthDatabaseError,
+} from "../Errors";
+// --- END OF FIX ---
 import { runServerPromise } from "../../../lib/server/runtime";
 import { TRPCError } from "@trpc/server";
 
@@ -24,6 +30,8 @@ export const requestPasswordResetProcedure = publicProcedure
         undefined,
         "auth:requestPasswordReset",
       );
+
+      // --- START OF FIX: The catch block now fails with a specific error ---
       const user = yield* Effect.tryPromise({
         try: () =>
           db
@@ -31,8 +39,10 @@ export const requestPasswordResetProcedure = publicProcedure
             .selectAll()
             .where("email", "=", email.toLowerCase())
             .executeTakeFirst(),
-        catch: () => null,
+        catch: (cause) => new AuthDatabaseError({ cause }),
       });
+      // --- END OF FIX ---
+
       if (user) {
         const tokenId = yield* generateId(40);
         yield* Effect.tryPromise({
@@ -77,7 +87,16 @@ export const requestPasswordResetProcedure = publicProcedure
       }
       return { success: true };
     }).pipe(
+      // --- START OF FIX: Add a handler for the new AuthDatabaseError ---
       Effect.catchTags({
+        AuthDatabaseError: (e) =>
+          Effect.fail(
+            new TRPCError({
+              code: "INTERNAL_SERVER_ERROR",
+              message: "A database error occurred.",
+              cause: e.cause,
+            }),
+          ),
         TokenCreationError: (e) =>
           Effect.fail(
             new TRPCError({
@@ -95,6 +114,7 @@ export const requestPasswordResetProcedure = publicProcedure
             }),
           ),
       }),
+      // --- END OF FIX ---
     );
     return runServerPromise(program);
   });

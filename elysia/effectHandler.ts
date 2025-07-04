@@ -1,4 +1,4 @@
-// FILE: elysia/effectHandler.ts
+// File: ./elysia/effectHandler.ts
 import { Effect } from "effect";
 import type { ServerContext } from "../lib/server/runtime";
 import { runServerPromise } from "../lib/server/runtime";
@@ -16,7 +16,6 @@ function getErrorMessage(err: unknown): string {
   }
 
   // 1. Prioritize the `cause` if it's an object with its own message.
-  // This is where the rich detail from DB errors, etc., is stored.
   if (
     "cause" in err &&
     typeof err.cause === "object" &&
@@ -58,12 +57,10 @@ export const effectHandler =
     } catch (err: unknown) {
       const message = getErrorMessage(err);
       const tag = extractTag(err);
-
       // Log the detailed error message to the server console.
       await runServerPromise(
         serverLog("error", `[${tag}] ${message}`, undefined, "API_FAILURE"),
       );
-
       // Throw a new, clean error that our global onError handler can catch.
       // This error now contains the useful, specific message.
       throw new ApiError({

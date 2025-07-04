@@ -1,10 +1,6 @@
-// lib/server/jobs.ts
+// File: ./lib/server/jobs.ts
 import { Effect } from "effect";
-// --- REMOVED ---
-// import { db } from "../../db/kysely";
-// --- ADDED ---
 import { Db } from "../../db/DbTag";
-
 import { serverLog } from "./logger.server";
 import { EmailSendError } from "../../features/auth/Errors";
 import { sendEmail } from "./email";
@@ -124,7 +120,6 @@ export const retryFailedEmailsEffect = Effect.gen(function* () {
         Effect.fail(new EmailSendError({ cause: "Simulated send failure" })),
       ),
     );
-
     // If we reach here, it means sendEmail either succeeded (with void) or was caught by retry/catchAll.
     // For this simulation, we can log success or increment retries directly after the pipe.
     // In a real durable queue, this would involve database updates.
@@ -134,7 +129,7 @@ export const retryFailedEmailsEffect = Effect.gen(function* () {
       undefined,
       "Job:EmailRetry",
     );
-    dummyFailedEmail.retries++; // Simulate incrementing for subsequent runs in a real queue.
+    dummyFailedEmail.retries++;
   } else {
     yield* serverLog(
       "warn",

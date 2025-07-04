@@ -1,7 +1,5 @@
+// FILE: ./scripts/seed.ts
 // scripts/seed.ts
-// --- REMOVED ---
-// import { db } from "../db/kysely";
-
 import { serverLog } from "../lib/server/logger.server";
 import { perms } from "../lib/shared/permissions";
 import type { UserId } from "../types/generated/public/User";
@@ -9,6 +7,9 @@ import { Argon2id } from "oslo/password";
 import { Effect, Cause, Exit, pipe } from "effect";
 import { DbLayer } from "../db/DbLayer";
 import { Db } from "../db/DbTag";
+// --- START OF FIX: Import the toError utility ---
+import { toError } from "../lib/shared/toError";
+// --- END OF FIX ---
 
 const TEST_USER_PASSWORD = "password123";
 const seedProgram = Effect.gen(function* () {
@@ -22,10 +23,12 @@ const seedProgram = Effect.gen(function* () {
   );
 
   const argon2id = new Argon2id();
+  // --- START OF FIX #1: Use toError for safe error conversion ---
   const hashedPassword = yield* Effect.tryPromise({
     try: () => argon2id.hash(TEST_USER_PASSWORD),
-    catch: (e) => new Error(`Failed to hash password: ${String(e)}`),
+    catch: (e) => toError(e),
   });
+  // --- END OF FIX #1 ---
 
   const TEST_USER = {
     id: "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11" as UserId,
@@ -38,6 +41,7 @@ const seedProgram = Effect.gen(function* () {
   const db = yield* Db;
 
   yield* pipe(
+    // --- START OF FIX #2: Use toError for safe error conversion ---
     Effect.tryPromise({
       try: () =>
         db
@@ -53,8 +57,9 @@ const seedProgram = Effect.gen(function* () {
           )
           .returning("id")
           .executeTakeFirst(),
-      catch: (e) => new Error(`Database seeding failed: ${String(e)}`),
+      catch: (e) => toError(e),
     }),
+    // --- END OF FIX #2 ---
     Effect.tap(() =>
       Effect.forkDaemon(
         serverLog(
@@ -84,10 +89,6 @@ const program = pipe(
     ),
   ),
   Effect.provide(DbLayer),
-  // --- REMOVED ---
-  // The manual `db.destroy()` is no longer needed. The DbLayer provided
-  // to the effect will manage the connection lifecycle automatically.
-  // Effect.ensuring(Effect.promise(() => db.destroy())),
 );
 
 void Effect.runPromiseExit(program).then((exit) => {

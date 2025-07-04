@@ -90,15 +90,20 @@ export const ForgotPasswordView = (): ViewResult => {
                   "ForgotPassword",
                 ),
               ),
+              // --- START OF FIX: Use JSON.stringify for more detailed error logging ---
               Effect.catchAll((error) =>
                 clientLog(
                   "error",
-                  // --- FIX: Explicitly cast the unknown cause to a string ---
-                  `Password reset request failed: ${String(error.cause)}`,
+                  `Password reset request failed: ${JSON.stringify(
+                    error.cause,
+                    null,
+                    2,
+                  )}`,
                   undefined,
                   "ForgotPassword",
                 ),
               ),
+              // --- END OF FIX ---
               Effect.andThen(() => propose({ type: "REQUEST_COMPLETE" })),
             );
             yield* Effect.fork(requestEffect);
@@ -212,7 +217,8 @@ export const ForgotPasswordView = (): ViewResult => {
       ),
     );
     // --- Main Loop ---
-    yield* renderEffect; // Initial render
+    yield* renderEffect;
+    // Initial render
 
     const mainLoop = Queue.take(actionQueue).pipe(
       Effect.flatMap(handleAction),
@@ -220,12 +226,13 @@ export const ForgotPasswordView = (): ViewResult => {
       Effect.catchAllDefect((defect) =>
         clientLog(
           "error",
-          `[FATAL] Uncaught defect in ForgotPasswordView main loop: ${String(defect)}`,
+          `[FATAL] Uncaught defect in ForgotPasswordView main loop: ${String(
+            defect,
+          )}`,
         ),
       ),
       Effect.forever,
     );
-
     yield* mainLoop;
   });
 

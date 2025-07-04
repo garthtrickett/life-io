@@ -1,15 +1,18 @@
+// FILE: ./scripts/generate-types.ts
 // File: ./scripts/generate-types.ts
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { config } from "dotenv";
 import { Effect, Cause, Exit, Data } from "effect"; // Import Data
 import { serverLog } from "../lib/server/logger.server";
+// --- START OF FIX: Import the toError utility ---
+import { toError } from "../lib/shared/toError";
+// --- END OF FIX ---
 
 config({ path: ".env" });
 
 const execAsync = promisify(exec);
 
-// --- NEW Tagged Error ---
 class KanelError extends Data.TaggedError("KanelError")<{
   readonly cause: unknown;
 }> {}
@@ -25,7 +28,7 @@ const generateTypes = Effect.gen(function* () {
 
   const { stdout, stderr } = yield* Effect.tryPromise({
     try: () => execAsync(command),
-    // Use the new tagged error
+    // This part is already correct as it preserves the original `cause`.
     catch: (cause) => new KanelError({ cause }),
   });
 
@@ -50,6 +53,11 @@ Effect.runPromiseExit(generateTypes)
     }
   })
   .catch((error) => {
-    console.error("An unexpected error occurred in the script runner:", error);
+    // --- START OF FIX: Use toError for safe logging in the final catch block ---
+    console.error(
+      "An unexpected error occurred in the script runner:",
+      toError(error),
+    );
+    // --- END OF FIX ---
     process.exit(1);
   });

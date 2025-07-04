@@ -18,6 +18,20 @@ interface ViewResult {
   cleanup?: () => void;
 }
 
+// --- START OF FIX: Define specific tagged errors for different failures ---
+class AvatarUploadError extends Data.TaggedError("AvatarUploadError")<{
+  readonly message: string;
+}> {}
+class ChangePasswordIncorrectPasswordError extends Data.TaggedError(
+  "ChangePasswordIncorrectPasswordError",
+) {}
+class UnknownChangePasswordError extends Data.TaggedError(
+  "UnknownChangePasswordError",
+)<{
+  readonly cause: unknown;
+}> {}
+// --- END OF FIX ---
+
 // --- Model ---
 interface Model {
   auth: AuthModel;
@@ -30,12 +44,8 @@ interface Model {
   confirmPassword: string;
 }
 
-// --- Custom Error Types ---
-class AvatarUploadError extends Data.TaggedError("AvatarUploadError")<{
-  readonly message: string;
-}> {}
-
 // --- Actions ---
+// --- FIX: Update Action type to use the new tagged errors ---
 type Action =
   | { type: "AUTH_STATE_CHANGED"; payload: AuthModel }
   | { type: "UPLOAD_START"; payload: File }
@@ -47,7 +57,12 @@ type Action =
   | { type: "UPDATE_CONFIRM_PASSWORD"; payload: string }
   | { type: "CHANGE_PASSWORD_START" }
   | { type: "CHANGE_PASSWORD_SUCCESS"; payload: string }
-  | { type: "CHANGE_PASSWORD_ERROR"; payload: string };
+  | {
+      type: "CHANGE_PASSWORD_ERROR";
+      payload:
+        | ChangePasswordIncorrectPasswordError
+        | UnknownChangePasswordError;
+    };
 
 // --- View ---
 export const ProfileView = (): ViewResult => {
@@ -222,7 +237,9 @@ export const ProfileView = (): ViewResult => {
             if (currentModel.newPassword !== currentModel.confirmPassword) {
               propose({
                 type: "CHANGE_PASSWORD_ERROR",
-                payload: "New passwords do not match.",
+                payload: new UnknownChangePasswordError({
+                  cause: "New passwords do not match.",
+                }), // Re-using for simplicity
               });
               return;
             }
@@ -235,6 +252,7 @@ export const ProfileView = (): ViewResult => {
                 message: null,
               }),
             );
+            // --- START OF FIX: The `catch` block now inspects the TRPC error ---
             const changePasswordEffect = pipe(
               Effect.tryPromise({
                 try: () =>
@@ -242,12 +260,17 @@ export const ProfileView = (): ViewResult => {
                     oldPassword: currentModel.oldPassword,
                     newPassword: currentModel.newPassword,
                   }),
-                catch: (err) =>
-                  new Error(
-                    err instanceof Error
-                      ? err.message
-                      : "An unknown error occurred.",
-                  ),
+                catch: (err) => {
+                  if (
+                    typeof err === "object" &&
+                    err !== null &&
+                    "data" in err &&
+                    (err.data as { code?: string }).code === "BAD_REQUEST"
+                  ) {
+                    return new ChangePasswordIncorrectPasswordError();
+                  }
+                  return new UnknownChangePasswordError({ cause: err });
+                },
               }),
               Effect.match({
                 onSuccess: () =>
@@ -258,10 +281,11 @@ export const ProfileView = (): ViewResult => {
                 onFailure: (error) =>
                   propose({
                     type: "CHANGE_PASSWORD_ERROR",
-                    payload: error.message,
+                    payload: error,
                   }),
               }),
             );
+            // --- END OF FIX ---
             yield* Effect.fork(changePasswordEffect);
             break;
           }
@@ -282,17 +306,30 @@ export const ProfileView = (): ViewResult => {
             );
             break;
 
-          case "CHANGE_PASSWORD_ERROR":
+          // --- START OF FIX: Handle specific tagged errors to show the correct message ---
+          case "CHANGE_PASSWORD_ERROR": {
+            let errorMessage: string;
+            switch (action.payload._tag) {
+              case "ChangePasswordIncorrectPasswordError":
+                errorMessage = "Incorrect old password provided.";
+                break;
+              case "UnknownChangePasswordError":
+              default:
+                errorMessage = "An unknown error occurred. Please try again.";
+                break;
+            }
             yield* Ref.update(
               model,
               (m): Model => ({
                 ...m,
                 status: "error",
                 loadingAction: null,
-                message: action.payload,
+                message: errorMessage,
               }),
             );
             break;
+          }
+          // --- END OF FIX ---
         }
       });
 
@@ -451,7 +488,6 @@ export const ProfileView = (): ViewResult => {
       // The effect returned here is the cleanup logic for the stream
       return Effect.sync(unsubscribe);
     }).pipe(Stream.runDrain, Effect.fork);
-
     yield* authStreamEffect;
     yield* renderEffect; // Initial render
 
@@ -466,7 +502,6 @@ export const ProfileView = (): ViewResult => {
       ),
       Effect.forever,
     );
-
     yield* mainLoop;
   });
 

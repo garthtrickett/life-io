@@ -1,6 +1,6 @@
 // File: ./components/pages/login-page.ts (Fully Effect-Driven with Logging)
 import { render, html, type TemplateResult, nothing } from "lit-html";
-import { pipe, Effect, Queue, Ref, Fiber } from "effect";
+import { pipe, Effect, Queue, Ref, Fiber, Data } from "effect";
 import { trpc } from "../../lib/client/trpc";
 import { proposeAuthAction } from "../../lib/client/stores/authStore";
 import { NotionButton } from "../ui/notion-button";
@@ -8,6 +8,18 @@ import { runClientUnscoped } from "../../lib/client/runtime";
 import { navigate } from "../../lib/client/router";
 import type { User } from "../../types/generated/public/User";
 import { clientLog } from "../../lib/client/logger.client";
+
+// --- START OF FIX: Define specific, tagged errors for different login failures ---
+class LoginInvalidCredentialsError extends Data.TaggedError(
+  "LoginInvalidCredentialsError",
+) {}
+class LoginEmailNotVerifiedError extends Data.TaggedError(
+  "LoginEmailNotVerifiedError",
+) {}
+class UnknownLoginError extends Data.TaggedError("UnknownLoginError")<{
+  readonly cause: unknown;
+}> {}
+// --- END OF FIX ---
 
 // --- Types ---
 interface ViewResult {
@@ -27,12 +39,19 @@ interface LoginSuccessPayload {
   user: User;
 }
 
+// --- FIX: Update Action type to use the new tagged errors ---
 type Action =
   | { type: "UPDATE_EMAIL"; payload: string }
   | { type: "UPDATE_PASSWORD"; payload: string }
   | { type: "LOGIN_START" }
   | { type: "LOGIN_SUCCESS"; payload: LoginSuccessPayload }
-  | { type: "LOGIN_ERROR"; payload: string };
+  | {
+      type: "LOGIN_ERROR";
+      payload:
+        | LoginInvalidCredentialsError
+        | LoginEmailNotVerifiedError
+        | UnknownLoginError;
+    };
 
 // --- View ---
 export const LoginView = (): ViewResult => {
@@ -74,7 +93,7 @@ export const LoginView = (): ViewResult => {
       return Effect.runFork(Queue.offer(actionQueue, action));
     };
 
-    // A pure render function that depends only on the current state
+    // A
     const renderView = (currentModel: Model) => {
       const handleLoginSubmit = (e: Event) => {
         e.preventDefault();
@@ -202,6 +221,7 @@ export const LoginView = (): ViewResult => {
               isLoading: true,
               error: null,
             });
+            // --- START OF FIX: The `catch` block now inspects the TRPC error ---
             const loginEffect = pipe(
               Effect.tryPromise({
                 try: () =>
@@ -209,12 +229,24 @@ export const LoginView = (): ViewResult => {
                     email: currentModel.email,
                     password: currentModel.password,
                   }),
-                catch: (err) =>
-                  new Error(
-                    err instanceof Error
-                      ? err.message
-                      : "An unknown error occurred.",
-                  ),
+                catch: (err) => {
+                  // Check if the error has the shape of a tRPC client error
+                  if (
+                    typeof err === "object" &&
+                    err !== null &&
+                    "data" in err
+                  ) {
+                    const code = (err.data as { code?: string }).code;
+                    if (code === "UNAUTHORIZED") {
+                      return new LoginInvalidCredentialsError();
+                    }
+                    if (code === "FORBIDDEN") {
+                      return new LoginEmailNotVerifiedError();
+                    }
+                  }
+                  // For all other errors, wrap them in a generic login error
+                  return new UnknownLoginError({ cause: err });
+                },
               }),
               Effect.match({
                 onSuccess: (result) =>
@@ -223,9 +255,10 @@ export const LoginView = (): ViewResult => {
                     payload: result as LoginSuccessPayload,
                   }),
                 onFailure: (error) =>
-                  propose({ type: "LOGIN_ERROR", payload: error.message }),
+                  propose({ type: "LOGIN_ERROR", payload: error }),
               }),
             );
+            // --- END OF FIX ---
             yield* Effect.fork(loginEffect);
             break;
           }
@@ -245,19 +278,38 @@ export const LoginView = (): ViewResult => {
             proposeAuthAction({ type: "SET_AUTHENTICATED", payload: user });
             break;
           }
-          case "LOGIN_ERROR":
+          // --- START OF FIX: Handle specific tagged errors to show the correct message ---
+          case "LOGIN_ERROR": {
+            let errorMessage: string;
+            switch (action.payload._tag) {
+              case "LoginInvalidCredentialsError":
+                errorMessage = "Incorrect email or password.";
+                break;
+              case "LoginEmailNotVerifiedError":
+                errorMessage =
+                  "Please verify your email address before logging in.";
+                break;
+              case "UnknownLoginError":
+              default:
+                errorMessage = "An unknown error occurred. Please try again.";
+                break;
+            }
+
             yield* clientLog(
               "error",
-              `Login error: ${action.payload}`,
+              `Login error: ${errorMessage}`,
               undefined,
               "LoginView:handleAction",
             );
+
             yield* Ref.set(model, {
               ...currentModel,
               isLoading: false,
-              error: action.payload,
+              error: errorMessage,
             });
             break;
+          }
+          // --- END OF FIX ---
         }
       });
 
@@ -276,7 +328,6 @@ export const LoginView = (): ViewResult => {
 
     // Initial render
     yield* renderEffect;
-
     // The main loop that drives the component
     const mainLoop = Queue.take(actionQueue).pipe(
       Effect.flatMap(handleAction), // Update state based on action

@@ -1,10 +1,11 @@
-// FILE: /trpc/trpc.ts
+// FILE: ./trpc/trpc.ts
 import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
 import type { Context } from "./context";
 import { serverLog } from "../lib/server/logger.server";
 import { runServerPromise } from "../lib/server/runtime";
 import { Effect } from "effect";
+import { toError } from "../lib/shared/toError"; // <-- Add this import
 
 const t = initTRPC.context<Context>().create({
   transformer: superjson,
@@ -21,10 +22,12 @@ const loggerMiddleware = t.middleware(({ ctx, path, type, next }) => {
       );
     }
 
+    // --- START OF FIX: Use toError for safe error conversion ---
     const result = yield* Effect.tryPromise({
       try: () => next({ ctx }),
-      catch: (e) => e as Error,
+      catch: (e) => toError(e),
     });
+    // --- END OF FIX ---
 
     const status = result.ok && !("error" in result) ? "OK" : "ERR";
 

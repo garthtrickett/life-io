@@ -29,15 +29,20 @@ class ReplicachePushError extends Data.TaggedError("ReplicachePushError")<{
   readonly cause: unknown;
 }> {}
 
+// --- START OF FIX: This function now fails with the specific tagged error ---
 const getLastMutationID = (
   req: PushRequest,
-): Effect.Effect<number, Error, never> =>
-  Effect.try(() => req.mutations.reduce((max, m) => Math.max(max, m.id), 0));
+): Effect.Effect<number, ReplicachePushError, never> =>
+  Effect.try({
+    try: () => req.mutations.reduce((max, m) => Math.max(max, m.id), 0),
+    catch: (cause) => new ReplicachePushError({ cause }),
+  });
+// --- END OF FIX ---
 
 export const handlePush = (
   req: PushRequest,
   userId: UserId,
-): Effect.Effect<void, Error, Db | PokeService | Crypto> =>
+): Effect.Effect<void, ReplicachePushError, Db | PokeService | Crypto> => // <-- The error type is now consistent
   Effect.gen(function* () {
     if (!("clientGroupID" in req)) {
       yield* serverLog(
@@ -163,9 +168,6 @@ export const handlePush = (
       catch: (e) => new ReplicachePushError({ cause: e }),
     });
 
-    // --- START OF FIX ---
-    // The problematic `.pipe(Effect.mapError(...))` has been removed.
-    // We now let the original `ReplicachePushError` flow through.
     yield* transactionEffect.pipe(
       Effect.tap(() =>
         serverLog(
@@ -186,7 +188,6 @@ export const handlePush = (
         ),
       ),
     );
-    // --- END OF FIX ---
 
     yield* pokeService.poke();
   });

@@ -19,28 +19,37 @@ const setupApp = Effect.gen(function* () {
   app.onError(({ code, error, set }) => {
     // --- START OF DEFINITIVE FIX ---
 
-    // 1. Safely get a descriptive message for logging.
-    let logMessage: string;
+    // 1. Safely get a descriptive message for both logging and the client.
+    let descriptiveMessage: string;
     if (error instanceof Error) {
-      logMessage = error.message;
+      descriptiveMessage = error.message;
+    } else if (
+      typeof error === "object" &&
+      error !== null &&
+      "message" in error
+    ) {
+      // Handle objects with a 'message' property
+      descriptiveMessage = String((error as { message: unknown }).message);
     } else if (typeof error === "object" && error !== null) {
       // For any other object, stringify it to avoid "[object Object]".
-      logMessage = JSON.stringify(error);
+      descriptiveMessage =
+        "An object was thrown as an error. See server logs for details.";
     } else {
       // For primitives, String() is safe.
-      logMessage = String(error);
+      descriptiveMessage = String(error);
     }
 
+    // 2. Log the detailed error information on the server.
     runServerUnscoped(
       serverLog(
         "error",
-        `[Elysia onError] Caught a ${code} error: ${logMessage}`,
+        `[Elysia onError] Caught a ${code} error: ${JSON.stringify(error, null, 2)}`,
         undefined,
         "Elysia:GlobalError",
       ),
     );
 
-    // 2. Check if the error is the specific `ApiError` from our `effectHandler`.
+    // 3. Check if the error is the specific `ApiError` from our `effectHandler`.
     if (
       typeof error === "object" &&
       error !== null &&
@@ -50,7 +59,7 @@ const setupApp = Effect.gen(function* () {
       const apiError = error as { message: string; cause?: unknown };
       let originalErrorTag = "UnknownCause";
 
-      // 3. Safely check the *cause* of the ApiError to find the original error's tag.
+      // 4. Safely check the *cause* of the ApiError to find the original error's tag.
       const cause = apiError.cause;
       if (
         typeof cause === "object" &&
@@ -61,7 +70,7 @@ const setupApp = Effect.gen(function* () {
         originalErrorTag = (cause as { _tag: string })._tag;
       }
 
-      // 4. Set the HTTP status code based on the original error's tag.
+      // 5. Set the HTTP status code based on the original error's tag.
       switch (originalErrorTag) {
         case "AuthError":
           set.status = 401; // Unauthorized
@@ -76,13 +85,14 @@ const setupApp = Effect.gen(function* () {
           break;
         // All other specific, but internal, errors default to 500.
         case "ReplicachePushError":
+        case "PullError":
         case "NoteDatabaseError":
         default:
           set.status = 500; // Internal Server Error
           break;
       }
 
-      // 5. Return a structured JSON response to the client.
+      // 6. Return a structured JSON response to the client.
       return {
         error: {
           type: originalErrorTag,
@@ -91,13 +101,13 @@ const setupApp = Effect.gen(function* () {
       };
     }
 
-    // 6. If it wasn't an ApiError, it's something else from the framework.
-    //    Return a generic 500 response.
+    // 7. If it wasn't an ApiError, it's something else from the framework.
+    //    Return a more descriptive (but still safe) response.
     set.status = 500;
     return {
       error: {
         type: "UnknownServerError",
-        message: "An unexpected server error occurred.",
+        message: descriptiveMessage, // Use the more descriptive message.
       },
     };
     // --- END OF DEFINITIVE FIX ---

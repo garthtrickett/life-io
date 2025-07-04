@@ -42,6 +42,23 @@ export const nullifyReplicache = (): Effect.Effect<void> =>
     rep = null;
   });
 
+/* ──────────────────────────── Helpers ─────────────────────────────────── */
+
+/** Safely stringify anything for logging so we avoid @typescript-eslint/no-base-to-string */
+function stringifyForLog(value: unknown): string {
+  if (value == null) return ""; // null | undefined
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean")
+    return String(value);
+  if (value instanceof Error) return value.message;
+
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return Object.prototype.toString.call(value);
+  }
+}
+
 /* ────────────────────────── Initialiser ───────────────────────────────── */
 
 export const initReplicache = (
@@ -97,12 +114,17 @@ export const initReplicache = (
           });
 
           const handled = createNoteEffect.pipe(
-            Effect.catchAll((err) =>
-              clientLog(
+            Effect.catchAll((err) => {
+              const error = toError(err);
+              const cause =
+                error.cause !== undefined
+                  ? ` | Cause: ${stringifyForLog(error.cause)}`
+                  : "";
+              return clientLog(
                 "error",
-                `Error in createNote mutator: ${toError(err).message}`,
-              ),
-            ),
+                `Error in createNote mutator: ${error.message}${cause}`,
+              );
+            }),
           );
 
           return runClientPromise(handled);
@@ -157,12 +179,17 @@ export const initReplicache = (
           });
 
           const handled = updateNoteEffect.pipe(
-            Effect.catchAll((err) =>
-              clientLog(
+            Effect.catchAll((err) => {
+              const error = toError(err);
+              const cause =
+                error.cause !== undefined
+                  ? ` | Cause: ${stringifyForLog(error.cause)}`
+                  : "";
+              return clientLog(
                 "error",
-                `Error in updateNote mutator: ${toError(err).message}`,
-              ),
-            ),
+                `Error in updateNote mutator: ${error.message}${cause}`,
+              );
+            }),
           );
 
           return runClientPromise(handled);
@@ -220,12 +247,17 @@ export const initReplicache = (
           });
 
           const handled = updateBlockEffect.pipe(
-            Effect.catchAll((err) =>
-              clientLog(
+            Effect.catchAll((err) => {
+              const error = toError(err);
+              const cause =
+                error.cause !== undefined
+                  ? ` | Cause: ${stringifyForLog(error.cause)}`
+                  : "";
+              return clientLog(
                 "error",
-                `Error in updateBlock mutator: ${toError(err).message}`,
-              ),
-            ),
+                `Error in updateBlock mutator: ${error.message}${cause}`,
+              );
+            }),
           );
 
           return runClientPromise(handled);
