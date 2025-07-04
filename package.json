@@ -1,7 +1,7 @@
 {
   "type": "module",
   "scripts": {
-    "dev": "concurrently \"bun --watch elysia.ts\" \"vite\"",
+    "dev": "concurrently \"bun --preload=dotenv/config --watch elysia.ts\" \"vite\"",
     "lint": "eslint . --ext .ts,.js --cache --fix",
     "format": "prettier --write .",
     "build": "vite build && bun type-check",

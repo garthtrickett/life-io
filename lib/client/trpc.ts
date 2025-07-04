@@ -10,11 +10,11 @@ import { loggingLink } from "./loggingLink";
  */
 export const trpc = createTRPCProxyClient<AppRouter>({
   links: [
-    // 1️⃣  log everything first
     loggingLink<AppRouter>(),
-    // 2️⃣  then send it over the wire
     httpBatchLink({
-      url: "/trpc",
+      // --- START OF FIX ---
+      url: "/api/trpc", // All tRPC calls now go through /api/trpc
+      // --- END OF FIX ---
       transformer: superjson,
     }),
   ],

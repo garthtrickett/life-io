@@ -1,6 +1,7 @@
 // FILE: lib/client/LocationService.ts
 import { Context, Effect, Layer, Stream, Chunk } from "effect";
 import { clientLog } from "./logger.client";
+import { runClientUnscoped } from "./runtime";
 
 /**
  * 1. The Interface: Defines the "shape" of our service.
@@ -30,18 +31,24 @@ export const LocationLive: Layer.Layer<LocationService> = Layer.sync(
     // This object is the concrete implementation of ILocationService
     const implementation: ILocationService = {
       pathname: Stream.async<string>((emit) => {
+        // --- START OF FIX ---
+        // Void the promise returned by `emit` to fix floating promise errors.
         const emitPath = () =>
-          emit(Effect.succeed(Chunk.of(window.location.pathname)));
+          void emit(Effect.succeed(Chunk.of(window.location.pathname)));
 
         const locationChangedHandler = () => {
-          clientLog(
-            "debug",
-            "Received custom 'location-changed' event.",
-            undefined,
-            "LocationService",
+          // Fix latent bug: clientLog returns an Effect and must be executed.
+          runClientUnscoped(
+            clientLog(
+              "debug",
+              "Received custom 'location-changed' event.",
+              undefined,
+              "LocationService",
+            ),
           );
           emitPath();
         };
+        // --- END OF FIX ---
 
         window.addEventListener("popstate", emitPath);
         window.addEventListener("location-changed", locationChangedHandler);

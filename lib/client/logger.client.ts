@@ -1,4 +1,6 @@
-// lib/client/logger.client.ts
+// FILE: lib/client/logger.client.ts
+// --- Full content with the added debugging line ---
+
 import { Console, Data, Effect, pipe, Schedule } from "effect";
 import type { LogLevel } from "../shared/logConfig";
 import { runClientUnscoped } from "./runtime";
@@ -28,7 +30,7 @@ const sendLogToServer = (
   level: LogLevel,
   args: unknown[],
 ): Effect.Effect<void, SendLogError> => {
-  const url = "/log/client";
+  const url = "/api/log/client";
   const data = JSON.stringify({ level, args });
 
   // Use sendBeacon if available, as it's non-blocking for page unloads.
@@ -62,6 +64,15 @@ const sendLogToServer = (
       }),
     catch: (cause) => new SendLogError({ cause }),
   }).pipe(
+    // --- START OF FIX ---
+    // This new line will log any network or proxy error from the fetch call itself,
+    // which is crucial for debugging the Vite proxy.
+    Effect.tapError((e) =>
+      Console.error(
+        `[CRITICAL] sendLogToServer fetch failed: ${String(e.cause)}`,
+      ),
+    ),
+    // --- END OF FIX ---
     Effect.flatMap((response) =>
       response.ok
         ? Effect.void

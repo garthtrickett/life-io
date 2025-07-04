@@ -1,5 +1,5 @@
 // FILE: lib/client/runtime.ts
-import { Effect, Runtime } from "effect";
+import { Effect } from "effect";
 import { clientLog } from "./logger.client";
 import { LocationLive, type LocationService } from "./LocationService";
 

@@ -1,4 +1,6 @@
-// File: ./elysia/routes.ts
+// FILE: elysia/routes.ts
+// --- Full content with corrected prefixing and error handling ---
+
 import { Elysia } from "elysia";
 import { Data, Effect, Fiber, Stream } from "effect";
 import { staticPlugin } from "@elysiajs/static";
@@ -16,7 +18,7 @@ import {
 } from "../replicache/server";
 import { handleAvatarUpload, handleClientLog } from "./handlers";
 import { authenticateRequestEffect } from "./auth";
-import { ApiError, InvalidPullRequestError } from "./errors";
+import { ApiError } from "./errors";
 import { runServerUnscoped } from "../lib/server/runtime";
 import { serverLog } from "../lib/server/logger.server";
 import { effectHandler } from "./effectHandler";
@@ -27,134 +29,97 @@ type WsSender = { id: string; send: (message: string) => void };
  * An Effect that creates and configures the Elysia application instance.
  */
 export const makeApp = Effect.gen(function* () {
-  const app = new Elysia();
   const isProduction = process.env.NODE_ENV === "production";
   const pokeService = yield* PokeService;
   const wsConnections = new Map<string, Fiber.RuntimeFiber<void, unknown>>();
 
-  // A helper function to map any non-tagged error to our new ApiError
   const mapToApiError = (error: unknown) => {
-    if (error instanceof Data.TaggedError) {
-      return error; // It's already tagged, pass it through.
-    }
-    if (error instanceof Error) {
+    if (error instanceof Data.TaggedError) return error;
+    if (error instanceof Error)
       return new ApiError({ message: error.message, cause: error });
-    }
-    return new ApiError({
-      message: "An unknown error occurred",
-      cause: error,
-    });
+    return new ApiError({ message: "An unknown error occurred", cause: error });
   };
 
-  // --- tRPC Endpoints ---
-  const handleTrpc = (context: { request: Request }) =>
-    fetchRequestHandler({
-      endpoint: "/trpc",
-      router: appRouter,
-      req: context.request,
-      createContext,
-    });
-  app.get("/trpc/*", handleTrpc).post("/trpc/*", handleTrpc);
-
-  app.group("/replicache", (group) =>
-    group
-      .post("/pull", ({ request, body }) => {
-        const pullProgram = Effect.gen(function* () {
-          const user = yield* authenticateRequestEffect(request);
-          const pull = body as ReplicachePullRequest;
-
-          if (!("clientGroupID" in pull)) {
-            return yield* Effect.fail(
-              new InvalidPullRequestError({
-                message: "Unsupported pull request version.",
-              }),
-            );
-          }
-          // All errors from this point forward are handled by the pipe below
-          return yield* handlePull(user.id, pull);
-        }).pipe(
-          // A single `mapError` catches all errors from the chain and ensures they are tagged.
-          Effect.mapError(mapToApiError),
-        );
-
-        return effectHandler(pullProgram);
-      })
-      .post("/push", ({ request, body }) => {
-        const pushProgram = Effect.gen(function* () {
-          const user = yield* authenticateRequestEffect(request);
-          // All errors from this point forward are handled by the pipe below
-          yield* handlePush(body as PushRequest, user.id);
-          return { success: true };
-        }).pipe(
-          // A single `mapError` catches all errors from the chain and ensures they are tagged.
-          Effect.mapError(mapToApiError),
-        );
-
-        return effectHandler(pushProgram);
-      }),
-  );
-
-  // --- WebSocket for Replicache Pokes ---
-  app.ws("/ws", {
-    open(ws: WsSender) {
-      const streamFiber = Effect.runFork(
-        Effect.scoped(
-          pokeService
-            .subscribe()
-            .pipe(
-              Stream.runForEach((message: string) =>
-                Effect.sync(() => void ws.send(message)),
-              ),
-            ),
-        ),
-      );
-      wsConnections.set(ws.id, streamFiber);
-      runServerUnscoped(
-        serverLog("info", `WebSocket connected: ${ws.id}`, undefined, "WS"),
-      );
-    },
-    close(ws: WsSender) {
-      const streamFiber = wsConnections.get(ws.id);
-      if (streamFiber) {
-        Effect.runFork(Fiber.interrupt(streamFiber));
-        wsConnections.delete(ws.id);
-      }
-      runServerUnscoped(
-        serverLog("info", `WebSocket disconnected: ${ws.id}`, undefined, "WS"),
-      );
-    },
-  });
-  // --- Other API Endpoints ---
-  app
-    .post("/api/user/avatar", (context) =>
-      effectHandler(
-        handleAvatarUpload(context).pipe(
-          Effect.catchTags({
-            // Errors from this specific handler are mapped to a failure in the effect handler's context
-            FileError: (e) =>
-              Effect.succeed(new Response(e.message, { status: 400 })),
-            S3UploadError: () =>
-              Effect.succeed(
-                new Response("S3 upload failed.", { status: 500 }),
-              ),
-            DbUpdateError: () =>
-              Effect.succeed(
-                new Response("Database update failed.", { status: 500 }),
-              ),
-          }),
-        ),
+  // 1. Define all API routes as a separate Elysia "plugin".
+  //    This instance has no prefix of its own.
+  const apiRoutes = new Elysia()
+    .group("/trpc", (group) =>
+      group.all("/*", ({ request }) =>
+        fetchRequestHandler({
+          endpoint: "/api/trpc", // The full path for the adapter
+          router: appRouter,
+          req: request,
+          createContext,
+        }),
       ),
     )
-    .post("/log/client", ({ body }) =>
-      effectHandler(
-        handleClientLog(body).pipe(
-          Effect.catchTag("FileError", (e) =>
-            Effect.succeed(new Response(e.message, { status: 400 })),
+    .group("/replicache", (group) =>
+      group
+        .post("/pull", ({ request, body }) =>
+          effectHandler(
+            Effect.gen(function* () {
+              const user = yield* authenticateRequestEffect(request);
+              return yield* handlePull(user.id, body as ReplicachePullRequest);
+            }).pipe(Effect.mapError(mapToApiError)),
+          ),
+        )
+        .post("/push", ({ request, body }) =>
+          effectHandler(
+            Effect.gen(function* () {
+              const user = yield* authenticateRequestEffect(request);
+              yield* handlePush(body as PushRequest, user.id);
+              return { success: true };
+            }).pipe(Effect.mapError(mapToApiError)),
           ),
         ),
-      ),
-    );
-  // --- Static File Serving & SPA Fallback (Production) ---
+    )
+    .post("/user/avatar", (context) =>
+      effectHandler(handleAvatarUpload(context)),
+    )
+    // REMOVED the problematic .pipe() and .catchTag() from this route.
+    .post("/log/client", ({ body }) => effectHandler(handleClientLog(body)));
+
+  // 2. Create the main app instance.
+  const app = new Elysia()
+    // 3. Use .group() to apply the "/api" prefix and .use() to mount the plugin.
+    .group("/api", (group) => group.use(apiRoutes))
+    // WebSocket (remains at the root level, not under /api)
+    .ws("/ws", {
+      open(ws: WsSender) {
+        const streamFiber = Effect.runFork(
+          Effect.scoped(
+            pokeService
+              .subscribe()
+              .pipe(
+                Stream.runForEach((message: string) =>
+                  Effect.sync(() => void ws.send(message)),
+                ),
+              ),
+          ),
+        );
+        wsConnections.set(ws.id, streamFiber);
+        runServerUnscoped(
+          serverLog("info", `WebSocket connected: ${ws.id}`, undefined, "WS"),
+        );
+      },
+      close(ws: WsSender) {
+        const streamFiber = wsConnections.get(ws.id);
+        if (streamFiber) {
+          Effect.runFork(Fiber.interrupt(streamFiber));
+          wsConnections.delete(ws.id);
+        }
+        runServerUnscoped(
+          serverLog(
+            "info",
+            `WebSocket disconnected: ${ws.id}`,
+            undefined,
+            "WS",
+          ),
+        );
+      },
+    });
+
+  // --- Static File Serving (Production Only) ---
   if (isProduction) {
     yield* Effect.forkDaemon(
       serverLog("info", "Production mode: Setting up static file serving."),

@@ -31,8 +31,8 @@ type Mutators = {
 export const rep = new Replicache<Mutators>({
   name: "life-io-user-id",
   licenseKey: "l10f93d37bcd041beba8d111a72da0031",
-  pushURL: "/replicache/push",
-  pullURL: "/replicache/pull",
+  pushURL: "/api/replicache/push",
+  pullURL: "/api/replicache/pull",
   mutators: {
     /**
      * Creates a new note. The logic is defined as an Effect and then executed
