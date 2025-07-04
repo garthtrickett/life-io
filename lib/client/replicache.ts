@@ -1,5 +1,3 @@
-// FILE: lib/client/replicache.ts
-
 import {
   Replicache,
   type ReadonlyJSONValue,
@@ -12,10 +10,12 @@ import { formatErrorSync } from "@effect/schema/TreeFormatter";
 import { BlockSchema, NoteSchema } from "../shared/schemas";
 import type { BlockUpdate } from "../../types/generated/public/Block";
 import { clientLog } from "./logger.client";
-import { runClientPromise, runClientUnscoped } from "./runtime";
+import { runClientPromise } from "./runtime";
 import type { NewNote } from "../../types/generated/public/Note";
+import { toError } from "../shared/toError"; // ← NEW
 
-// Define the shape of our client-side mutators
+/* ───────────────────────────── Types ───────────────────────────────────── */
+
 type Mutators = {
   createNote: (tx: WriteTransaction, note: NewNote) => Promise<void>;
   updateNote: (
@@ -28,16 +28,15 @@ type Mutators = {
   ) => Promise<void>;
 };
 
-// --- START OF FIX: Create a mutable holder for the Replicache instance ---
 export let rep: Replicache<Mutators> | null = null;
-// --- END OF FIX ---
 
-// --- START OF FIX: Wrap instantiation in a function ---
+/* ─────────────────────────── Initialiser ───────────────────────────────── */
+
 export const initReplicache = (
   userId: string,
 ): Effect.Effect<Replicache<Mutators>> =>
   Effect.gen(function* () {
-    // If an instance already exists, close it first.
+    /* Close any previous instance first */
     if (rep) {
       yield* clientLog(
         "warn",
@@ -47,14 +46,16 @@ export const initReplicache = (
     }
 
     const newRep = new Replicache<Mutators>({
-      // The name is now unique to the user
+      logLevel: "debug",
       name: `life-io-user-${userId}`,
       licenseKey: "l10f93d37bcd041beba8d111a72da0031",
       pushURL: "/api/replicache/push",
       pullURL: "/api/replicache/pull",
+
+      /* ──────────────── Mutators ──────────────── */
       mutators: {
+        /* ---------------- createNote ---------------- */
         async createNote(tx: WriteTransaction, args: NewNote) {
-          /* ... mutator logic remains the same ... */
           const createNoteEffect = Effect.gen(function* () {
             yield* clientLog(
               "info",
@@ -62,8 +63,10 @@ export const initReplicache = (
               args.user_id,
               "Replicache:createNote",
             );
+
             const key = `note/${args.id}`;
             const now = new Date();
+
             const note = yield* Schema.decodeUnknown(NoteSchema)({
               ...args,
               created_at: now,
@@ -74,22 +77,30 @@ export const initReplicache = (
                   new Error(`Note validation failed: ${formatErrorSync(e)}`),
               ),
             );
+
             const noteForJSON: ReadonlyJSONValue = {
               ...note,
               created_at: note.created_at.toISOString(),
               updated_at: note.updated_at.toISOString(),
             };
+
             yield* Effect.promise(() => tx.set(key, noteForJSON));
           });
-          return runClientPromise(createNoteEffect).catch((err) => {
-            const message = err instanceof Error ? err.message : String(err);
-            runClientUnscoped(
-              clientLog("error", `Error in createNote mutator: ${message}`),
-            );
-          });
+
+          const handled = createNoteEffect.pipe(
+            Effect.catchAll((err) =>
+              clientLog(
+                "error",
+                `Error in createNote mutator: ${toError(err).message}`,
+              ),
+            ),
+          );
+
+          return runClientPromise(handled);
         },
+
+        /* ---------------- updateNote ---------------- */
         async updateNote(tx, { id, title, content }) {
-          /* ... mutator logic remains the same ... */
           const updateNoteEffect = Effect.gen(function* () {
             yield* clientLog(
               "info",
@@ -97,24 +108,29 @@ export const initReplicache = (
               undefined,
               "Replicache:updateNote",
             );
+
             const key = `note/${id}`;
             const noteJSON = yield* Effect.promise(() => tx.get(key));
+
             if (noteJSON === undefined) {
               return yield* Effect.fail(
                 new Error(`Note with id ${id} not found for update.`),
               );
             }
+
             const note = yield* Schema.decodeUnknown(NoteSchema)(noteJSON).pipe(
               Effect.mapError((e) => new Error(formatErrorSync(e))),
             );
-            const updatedNoteData = {
+
+            const updated = {
               ...note,
               title,
               content,
               updated_at: new Date(),
             };
-            const validatedUpdate = yield* Schema.decodeUnknown(NoteSchema)(
-              updatedNoteData,
+
+            const validated = yield* Schema.decodeUnknown(NoteSchema)(
+              updated,
             ).pipe(
               Effect.mapError(
                 (e) =>
@@ -123,22 +139,30 @@ export const initReplicache = (
                   ),
               ),
             );
-            const updatedNoteForJSON: ReadonlyJSONValue = {
-              ...validatedUpdate,
-              created_at: validatedUpdate.created_at.toISOString(),
-              updated_at: validatedUpdate.updated_at.toISOString(),
+
+            const updatedForJSON: ReadonlyJSONValue = {
+              ...validated,
+              created_at: validated.created_at.toISOString(),
+              updated_at: validated.updated_at.toISOString(),
             };
-            yield* Effect.promise(() => tx.set(key, updatedNoteForJSON));
+
+            yield* Effect.promise(() => tx.set(key, updatedForJSON));
           });
-          return runClientPromise(updateNoteEffect).catch((err) => {
-            const message = err instanceof Error ? err.message : String(err);
-            runClientUnscoped(
-              clientLog("error", `Error in updateNote mutator: ${message}`),
-            );
-          });
+
+          const handled = updateNoteEffect.pipe(
+            Effect.catchAll((err) =>
+              clientLog(
+                "error",
+                `Error in updateNote mutator: ${toError(err).message}`,
+              ),
+            ),
+          );
+
+          return runClientPromise(handled);
         },
+
+        /* ---------------- updateBlock ---------------- */
         async updateBlock(tx, { id, ...update }) {
-          /* ... mutator logic remains the same ... */
           const updateBlockEffect = Effect.gen(function* () {
             yield* clientLog(
               "info",
@@ -146,26 +170,31 @@ export const initReplicache = (
               undefined,
               "Replicache:updateBlock",
             );
+
             const key = `block/${id}`;
             const blockJSON = (yield* Effect.promise(() => tx.get(key))) as
               | JSONValue
               | undefined;
+
             if (blockJSON === undefined) {
               return yield* Effect.fail(
                 new Error(`Block with id ${id} not found for update`),
               );
             }
+
             const block = yield* Schema.decodeUnknown(BlockSchema)(
               blockJSON,
             ).pipe(Effect.mapError((e) => new Error(formatErrorSync(e))));
-            const updatedBlockData = {
+
+            const updated = {
               ...block,
               ...update,
               version: block.version + 1,
               updated_at: new Date(),
             };
-            const validatedUpdate = yield* Schema.decodeUnknown(BlockSchema)(
-              updatedBlockData,
+
+            const validated = yield* Schema.decodeUnknown(BlockSchema)(
+              updated,
             ).pipe(
               Effect.mapError(
                 (e) =>
@@ -174,51 +203,65 @@ export const initReplicache = (
                   ),
               ),
             );
-            const updatedBlockForJSON: ReadonlyJSONValue = {
-              ...validatedUpdate,
-              created_at: validatedUpdate.created_at.toISOString(),
-              updated_at: validatedUpdate.updated_at.toISOString(),
-              fields: validatedUpdate.fields as JSONValue,
+
+            const updatedForJSON: ReadonlyJSONValue = {
+              ...validated,
+              created_at: validated.created_at.toISOString(),
+              updated_at: validated.updated_at.toISOString(),
+              fields: validated.fields as JSONValue,
             };
-            yield* Effect.promise(() => tx.set(key, updatedBlockForJSON));
+
+            yield* Effect.promise(() => tx.set(key, updatedForJSON));
           });
-          return runClientPromise(updateBlockEffect).catch((err) => {
-            const message = err instanceof Error ? err.message : String(err);
-            runClientUnscoped(
-              clientLog("error", `Error in updateBlock mutator: ${message}`),
-            );
-          });
+
+          const handled = updateBlockEffect.pipe(
+            Effect.catchAll((err) =>
+              clientLog(
+                "error",
+                `Error in updateBlock mutator: ${toError(err).message}`,
+              ),
+            ),
+          );
+
+          return runClientPromise(handled);
         },
       },
     });
 
-    // Assign the new instance to the mutable export
     rep = newRep;
     setupWebSocket();
     yield* clientLog("info", `Replicache initialized for user: ${userId}`);
     return newRep;
-  });
-// --- END OF FIX ---
+  }).pipe(
+    Effect.catchAll((err) =>
+      clientLog(
+        "error",
+        `Critical error during Replicache initialization: ${toError(err).message}`,
+      ).pipe(Effect.andThen(Effect.die(err))),
+    ),
+  );
 
-// Listen for pokes from the server via WebSocket
+/* ───────────────────────────── WebSocket ───────────────────────────────── */
+
 function setupWebSocket() {
   const ws = new WebSocket(
     `${window.location.protocol === "https:" ? "wss" : "ws"}://${
       window.location.host
     }/ws`,
   );
+
   ws.onmessage = (event) => {
     if (event.data === "poke" && rep) {
-      // Check if rep exists
       void clientLog(
         "info",
-        "Poke received, pulling changes...",
+        "Poke received, pulling changes…",
         undefined,
         "Replicache:WS",
       );
       void rep.pull();
     }
   };
+
   ws.onclose = () => {
     void clientLog(
       "warn",
