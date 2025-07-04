@@ -1,5 +1,5 @@
-// File: ./replicache/pull.ts
-import { Effect } from "effect";
+// File: replicache/pull.ts
+import { Effect, Data } from "effect"; // Import Data
 import type { ReadonlyJSONValue } from "replicache";
 import { Db } from "../db/DbTag";
 import { serverLog } from "../lib/server/logger.server";
@@ -8,28 +8,27 @@ import type { Note } from "../types/generated/public/Note";
 import type { ReplicacheClientGroupId } from "../types/generated/public/ReplicacheClientGroup";
 import type { UserId } from "../types/generated/public/User";
 
-// ---------------------------------------------------------------------------
-// Types (Specific to Pull)
-// ---------------------------------------------------------------------------
+// --- NEW Tagged Error ---
+class PullError extends Data.TaggedError("PullError")<{
+  readonly cause: unknown;
+}> {}
 
+// --- Types (Specific to Pull) ---
 /** Shape of the incoming Pull request. Exported for use in the main server. */
 export interface PullRequest {
   clientGroupID: string;
   cookie: ReadonlyJSONValue | null;
 }
-
 /** A JSON‑safe Note (dates → ISO strings). */
 type JsonSafeNote = Omit<Note, "created_at" | "updated_at"> & {
   created_at: string;
   updated_at: string;
 };
-
 /** A JSON‑safe Block (dates → ISO strings). */
 type JsonSafeBlock = Omit<Block, "created_at" | "updated_at"> & {
   created_at: string;
   updated_at: string;
 };
-
 /** Replicache PullResponse for protocol **v1**. */
 interface PullResponse {
   lastMutationIDChanges: Record<string, number>;
@@ -40,15 +39,13 @@ interface PullResponse {
     | { op: "clear" }
   )[];
 }
-
 // ---------------------------------------------------------------------------
 // Pull Handler
 // ---------------------------------------------------------------------------
-
 export const handlePull = (
   userId: UserId,
   req: PullRequest,
-): Effect.Effect<PullResponse, Error, Db> =>
+): Effect.Effect<PullResponse, PullError, Db> => // Updated error type
   Effect.gen(function* () {
     const db = yield* Db;
 
@@ -70,7 +67,6 @@ export const handlePull = (
           .where("user_id", "=", userId)
           .selectAll()
           .executeTakeFirst();
-
         if (!group) {
           group = await db
             .insertInto("replicache_client_group")
@@ -84,7 +80,8 @@ export const handlePull = (
         }
         return group;
       },
-      catch: (e) => new Error(String(e)),
+      // Use the new tagged error
+      catch: (cause) => new PullError({ cause }),
     });
 
     const clients = yield* Effect.tryPromise({
@@ -98,7 +95,8 @@ export const handlePull = (
           )
           .select(["id", "last_mutation_id as lastMutationID"])
           .execute(),
-      catch: (e) => new Error(String(e)),
+      // Use the new tagged error
+      catch: (cause) => new PullError({ cause }),
     });
 
     const lastMutationIDChanges = clients.reduce<Record<string, number>>(
@@ -132,7 +130,8 @@ export const handlePull = (
           .where("user_id", "=", userId)
           .selectAll()
           .execute(),
-      catch: (e) => new Error(String(e)),
+      // Use the new tagged error
+      catch: (cause) => new PullError({ cause }),
     });
 
     const blocks = yield* Effect.tryPromise({
@@ -142,7 +141,8 @@ export const handlePull = (
           .where("user_id", "=", userId)
           .selectAll()
           .execute(),
-      catch: (e) => new Error(String(e)),
+      // Use the new tagged error
+      catch: (cause) => new PullError({ cause }),
     });
 
     yield* serverLog(
@@ -190,6 +190,5 @@ export const handlePull = (
       userId,
       "Replicache:Pull",
     );
-
     return pullResponse;
   });

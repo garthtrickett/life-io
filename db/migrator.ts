@@ -1,19 +1,18 @@
 // File: ./db/migrator.ts
-import { Cause, Effect, Exit } from "effect";
+import { Cause, Effect, Exit, Data } from "effect"; // Import Data
 import type { Kysely } from "kysely";
-// --- REMOVED ---
-// import { db } from "./kysely";
-// --- ADDED ---
 import { makeDbLive } from "./kysely";
-// Import the effect that creates the DB
 import type { Database } from "../types";
-
 import { serverLog } from "../lib/server/logger.server";
 import { Migrator } from "kysely";
 import { CentralMigrationProvider } from "../lib/server/migrations/MigrationProviderTag";
 import { CentralMigrationProviderLive } from "../lib/server/migrations/EmbeddedCentralMigrationProvider";
 
-// --- MODIFIED: The function now accepts the db instance and requires a provider ---
+// --- NEW Tagged Error ---
+class MigrationError extends Data.TaggedError("MigrationError")<{
+  readonly cause: unknown;
+}> {}
+
 const runMigrations = (direction: "up" | "down", db: Kysely<Database>) =>
   Effect.gen(function* () {
     const providerService = yield* CentralMigrationProvider;
@@ -26,8 +25,7 @@ const runMigrations = (direction: "up" | "down", db: Kysely<Database>) =>
     );
 
     const migrator = new Migrator({
-      db, // Use the passed-in instance
-      // --- MODIFIED: Bridge our Effect-based service to Kysely's Promise-based API ---
+      db,
       provider: {
         getMigrations: () => Effect.runPromise(providerService.getMigrations),
       },
@@ -38,7 +36,8 @@ const runMigrations = (direction: "up" | "down", db: Kysely<Database>) =>
         direction === "up"
           ? migrator.migrateToLatest()
           : migrator.migrateDown(),
-      catch: (e) => new Error(`Migration execution failed: ${String(e)}`),
+      // Use the new tagged error
+      catch: (cause) => new MigrationError({ cause }),
     });
 
     for (const it of results ?? []) {
@@ -67,7 +66,6 @@ const runMigrations = (direction: "up" | "down", db: Kysely<Database>) =>
     }
   });
 
-// --- MODIFIED: Execution logic now builds its own runtime ---
 const getDirection = () => {
   const directionArg = Bun.argv[2];
   if (directionArg !== "up" && directionArg !== "down") {
@@ -78,22 +76,13 @@ const getDirection = () => {
 };
 
 const direction = getDirection();
-
-// --- MODIFIED: The main program now provides all necessary layers ---
 const program = Effect.gen(function* () {
-  // 1. Create the db instance from our live effect
   const db = yield* makeDbLive;
-
-  // 2. Ensure the connection is destroyed after the main logic runs
   yield* Effect.ensuring(
-    // The migrator effect now requires the CentralMigrationProvider
     runMigrations(direction, db),
     Effect.promise(() => db.destroy()),
   );
-}).pipe(
-  // 3. Provide the live layer for the migration provider
-  Effect.provide(CentralMigrationProviderLive),
-);
+}).pipe(Effect.provide(CentralMigrationProviderLive));
 
 void Effect.runPromiseExit(program).then((exit) => {
   if (Exit.isFailure(exit)) {

@@ -11,15 +11,33 @@ import { Db } from "../../db/DbTag";
 import { Schema } from "@effect/schema";
 import { UserSchema } from "../shared/schemas";
 import { formatErrorSync } from "@effect/schema/TreeFormatter";
+import { AuthDatabaseError } from "../../features/auth/Errors"; // Import the tagged error
 
 export const argon2id = new Argon2id();
 
-// --- MODIFIED: This effect now depends on the `Db` service ---
+/**
+ * A reusable Effect to extract the session ID from a request's Cookie header.
+ * @param request The incoming Fetch API Request object.
+ * @returns An Effect that resolves to an Option of the session ID string.
+ */
+export const getSessionIdFromRequest = (
+  request: Request,
+): Effect.Effect<Option.Option<string>> =>
+  Effect.sync(() => {
+    const cookieHeader = request.headers.get("Cookie") ?? "";
+    return Option.fromNullable(
+      cookieHeader
+        .split(";")
+        .find((c) => c.trim().startsWith("session_id="))
+        ?.split("=")[1],
+    );
+  });
+
 export const createSessionEffect = (
   userId: string,
-): Effect.Effect<string, Error, Db> =>
+): Effect.Effect<string, AuthDatabaseError, Db> => // Updated error type
   Effect.gen(function* () {
-    const db = yield* Db; // Get the DB instance from the context
+    const db = yield* Db;
     const sessionId = generateRandomString(40, alphabet("a-z", "0-9"));
     const expiresAt = createDate(new TimeSpan(30, "d"));
     yield* Effect.tryPromise({
@@ -32,7 +50,8 @@ export const createSessionEffect = (
             expires_at: expiresAt,
           })
           .execute(),
-      catch: (e) => new Error(String(e)),
+      // Use the new tagged error
+      catch: (cause) => new AuthDatabaseError({ cause }),
     });
     yield* Effect.forkDaemon(
       serverLog("info", `Session created for user ${userId}`, userId, "Auth"),
@@ -40,39 +59,34 @@ export const createSessionEffect = (
     return sessionId;
   });
 
-// --- MODIFIED: This effect now depends on the `Db` service ---
 export const deleteSessionEffect = (
   sessionId: string,
-): Effect.Effect<void, Error, Db> =>
+): Effect.Effect<void, AuthDatabaseError, Db> => // Updated error type
   Effect.gen(function* () {
-    const db = yield* Db; // Get the DB instance from the context
+    const db = yield* Db;
     yield* Effect.tryPromise({
       try: () =>
         db
           .deleteFrom("session")
           .where("id", "=", sessionId as SessionId)
           .execute(),
-      catch: (e) => new Error(String(e)),
+      // Use the new tagged error
+      catch: (cause) => new AuthDatabaseError({ cause }),
     });
     yield* Effect.forkDaemon(
       serverLog("info", `Session ${sessionId} deleted.`, undefined, "Auth"),
     );
   });
 
-/**
- * Validates a session ID and returns the user and session.
- * This is now an Effect program for better safety and composability.
- * --- MODIFIED: This effect now depends on the `Db` service ---
- */
 export const validateSessionEffect = (
   sessionId: string,
 ): Effect.Effect<
   { user: User | null; session: { id: string } | null },
-  Error,
+  AuthDatabaseError, // Updated error type
   Db
 > =>
   Effect.gen(function* () {
-    const db = yield* Db; // Get the DB instance from the context
+    const db = yield* Db;
     const sessionOption = yield* Effect.tryPromise({
       try: () =>
         db
@@ -80,7 +94,8 @@ export const validateSessionEffect = (
           .selectAll()
           .where("id", "=", sessionId as SessionId)
           .executeTakeFirst(),
-      catch: (e) => new Error(String(e)),
+      // Use the new tagged error
+      catch: (cause) => new AuthDatabaseError({ cause }),
     }).pipe(Effect.map(Option.fromNullable));
 
     if (Option.isNone(sessionOption)) {
@@ -110,7 +125,6 @@ export const validateSessionEffect = (
       return { user: null, session: null };
     }
 
-    // --- REFACTORED: Validate the user object against the schema ---
     const userOption = yield* Effect.tryPromise({
       try: () =>
         db
@@ -118,14 +132,14 @@ export const validateSessionEffect = (
           .selectAll()
           .where("id", "=", session.user_id)
           .executeTakeFirst(),
-      catch: (e) => new Error(String(e)),
+      // Use the new tagged error
+      catch: (cause) => new AuthDatabaseError({ cause }),
     }).pipe(
       Effect.flatMap((maybeUser) =>
         maybeUser === undefined
           ? Effect.succeed(Option.none<User>())
           : Schema.decodeUnknown(UserSchema)(maybeUser).pipe(
               Effect.map(Option.some),
-              // If validation fails, log it but treat it as "user not found" for security.
               Effect.catchAll((parseError) =>
                 serverLog(
                   "warn",
@@ -139,7 +153,6 @@ export const validateSessionEffect = (
             ),
       ),
     );
-
     if (Option.isNone(userOption)) {
       yield* Effect.forkDaemon(
         serverLog(

@@ -1,6 +1,9 @@
-// File: ./elysia/auth.ts
+// File: elysia/auth.ts
 import { Effect, Option } from "effect";
-import { validateSessionEffect } from "../lib/server/auth";
+import {
+  validateSessionEffect,
+  getSessionIdFromRequest,
+} from "../lib/server/auth"; // Import new helper
 import { AuthError } from "./errors";
 
 /**
@@ -10,13 +13,7 @@ import { AuthError } from "./errors";
  */
 export const authenticateRequestEffect = (request: Request) =>
   Effect.gen(function* () {
-    const cookieHeader = request.headers.get("Cookie") ?? "";
-    const sessionIdOption = Option.fromNullable(
-      cookieHeader
-        .split(";")
-        .find((c) => c.trim().startsWith("session_id="))
-        ?.split("=")[1],
-    );
+    const sessionIdOption = yield* getSessionIdFromRequest(request); // Use the new helper
 
     if (Option.isNone(sessionIdOption)) {
       return yield* Effect.fail(

@@ -5,7 +5,7 @@ import { trpc } from "../../../lib/client/trpc";
 import type { User } from "../../../types/generated/public/User";
 import { runClientUnscoped } from "../runtime";
 import { clientLog } from "../logger.client";
-import { rep, initReplicache } from "../replicache";
+import { rep, initReplicache, nullifyReplicache } from "../replicache";
 
 // --- Model and Action Types ---
 export interface AuthModel {
@@ -36,6 +36,7 @@ export const authState = signal<AuthModel>({
   status: "initializing",
   user: null,
 });
+
 // --- Pure Update Function ---
 const update = (model: AuthModel, action: AuthAction): AuthModel => {
   switch (action.type) {
@@ -84,7 +85,9 @@ const handleAuthAction = (action: AuthAction): Effect.Effect<void, never> =>
           Effect.andThen(() =>
             Effect.tryPromise({
               try: () => trpc.auth.me.query(),
-              catch: (err) => new Error(String(err)),
+              // Instead of creating a generic error, we cast the cause to Error.
+              // This preserves the specific TRPCClientError for better debugging.
+              catch: (err) => err as Error,
             }),
           ),
           Effect.flatMap((user) =>
@@ -99,9 +102,13 @@ const handleAuthAction = (action: AuthAction): Effect.Effect<void, never> =>
                   proposeAuthAction({ type: "AUTH_CHECK_FAILURE" }),
                 ),
           ),
-          Effect.catchAll(() =>
-            Effect.sync(() =>
-              proposeAuthAction({ type: "AUTH_CHECK_FAILURE" }),
+          // The catchAll block now receives the original error.
+          Effect.catchAll((error) =>
+            pipe(
+              clientLog("info", `Auth check failed: ${error.message}`),
+              Effect.andThen(() =>
+                proposeAuthAction({ type: "AUTH_CHECK_FAILURE" }),
+              ),
             ),
           ),
         );
@@ -112,37 +119,60 @@ const handleAuthAction = (action: AuthAction): Effect.Effect<void, never> =>
         const cleanupAndFinalizeLogout = pipe(
           Effect.sync(() => {
             document.cookie =
-              "session_id=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+              "session_id=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax";
           }),
           Effect.andThen(
             Effect.if(
-              Effect.sync(() => rep !== null),
+              Effect.sync(() => !!(rep && userId)),
               {
-                // --- START OF FIX: Wrap `onTrue` and `onFalse` in functions ---
-                onTrue: () =>
-                  pipe(
+                onTrue: () => {
+                  const replicacheName = `life-io-user-${userId}`;
+                  return pipe(
                     clientLog(
                       "info",
-                      "Closing Replicache database...",
+                      `Deleting IndexedDB database: ${replicacheName}`,
                       userId,
                       "authStore:replicache",
                     ),
                     Effect.andThen(
-                      Effect.promise(() => rep!.close()).pipe(
-                        Effect.catchAll((err) =>
-                          clientLog(
-                            "error",
-                            `Failed to close Replicache: ${String(err)}`,
-                            userId,
-                            "authStore:replicache",
-                          ),
-                        ),
+                      Effect.tryPromise({
+                        try: () =>
+                          new Promise<void>((resolve, reject) => {
+                            const deleteRequest =
+                              window.indexedDB.deleteDatabase(replicacheName);
+                            deleteRequest.onsuccess = () => resolve();
+                            deleteRequest.onerror = () =>
+                              reject(
+                                new Error(
+                                  `Failed to delete IndexedDB: ${replicacheName}`,
+                                ),
+                              );
+                            deleteRequest.onblocked = () =>
+                              reject(
+                                new Error(
+                                  `Blocked from deleting IndexedDB: ${replicacheName}. Close other tabs.`,
+                                ),
+                              );
+                          }),
+                        catch: (e) => e as Error,
+                      }),
+                    ),
+                    Effect.andThen(nullifyReplicache),
+                    Effect.catchAll((err) =>
+                      clientLog(
+                        "error",
+                        `Failed to delete Replicache DB: ${err.message}`,
+                        userId,
+                        "authStore:replicache",
                       ),
                     ),
-                  ),
+                  );
+                },
                 onFalse: () =>
-                  clientLog("debug", "No active Replicache instance to close."),
-                // --- END OF FIX ---
+                  clientLog(
+                    "debug",
+                    "No active Replicache instance or user ID to delete.",
+                  ),
               },
             ),
           ),
@@ -150,7 +180,6 @@ const handleAuthAction = (action: AuthAction): Effect.Effect<void, never> =>
             Effect.sync(() => proposeAuthAction({ type: "LOGOUT_SUCCESS" })),
           ),
         );
-
         const logoutEffect = pipe(
           clientLog("info", "Logout process started.", userId, "authStore"),
           Effect.andThen(() =>
@@ -185,6 +214,7 @@ const handleAuthAction = (action: AuthAction): Effect.Effect<void, never> =>
       }
     }
   });
+
 // --- Main Store Process ---
 const authProcess = Stream.fromQueue(_actionQueue).pipe(
   Stream.runForEach(handleAuthAction),
@@ -197,5 +227,6 @@ runClientUnscoped(authProcess);
 export const proposeAuthAction = (action: AuthAction): void => {
   runClientUnscoped(Queue.offer(_actionQueue, action));
 };
+
 // --- Initial Action ---
 proposeAuthAction({ type: "AUTH_CHECK_START" });

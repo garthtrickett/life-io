@@ -1,3 +1,4 @@
+// File: lib/client/replicache.ts
 import {
   Replicache,
   type ReadonlyJSONValue,
@@ -12,7 +13,7 @@ import type { BlockUpdate } from "../../types/generated/public/Block";
 import { clientLog } from "./logger.client";
 import { runClientPromise } from "./runtime";
 import type { NewNote } from "../../types/generated/public/Note";
-import { toError } from "../shared/toError"; // ← NEW
+import { toError } from "../shared/toError";
 
 /* ───────────────────────────── Types ───────────────────────────────────── */
 
@@ -29,6 +30,17 @@ type Mutators = {
 };
 
 export let rep: Replicache<Mutators> | null = null;
+
+// --- NEW ---
+/**
+ * A function to nullify the exported `rep` variable.
+ * This is called from the auth store to reset the Replicache instance on logout.
+ */
+export const nullifyReplicache = (): Effect.Effect<void> =>
+  Effect.sync(() => {
+    rep = null;
+  });
+// --- END NEW ---
 
 /* ─────────────────────────── Initialiser ───────────────────────────────── */
 
@@ -63,7 +75,6 @@ export const initReplicache = (
               args.user_id,
               "Replicache:createNote",
             );
-
             const key = `note/${args.id}`;
             const now = new Date();
 
@@ -77,13 +88,11 @@ export const initReplicache = (
                   new Error(`Note validation failed: ${formatErrorSync(e)}`),
               ),
             );
-
             const noteForJSON: ReadonlyJSONValue = {
               ...note,
               created_at: note.created_at.toISOString(),
               updated_at: note.updated_at.toISOString(),
             };
-
             yield* Effect.promise(() => tx.set(key, noteForJSON));
           });
 
@@ -139,13 +148,11 @@ export const initReplicache = (
                   ),
               ),
             );
-
             const updatedForJSON: ReadonlyJSONValue = {
               ...validated,
               created_at: validated.created_at.toISOString(),
               updated_at: validated.updated_at.toISOString(),
             };
-
             yield* Effect.promise(() => tx.set(key, updatedForJSON));
           });
 
@@ -203,14 +210,12 @@ export const initReplicache = (
                   ),
               ),
             );
-
             const updatedForJSON: ReadonlyJSONValue = {
               ...validated,
               created_at: validated.created_at.toISOString(),
               updated_at: validated.updated_at.toISOString(),
               fields: validated.fields as JSONValue,
             };
-
             yield* Effect.promise(() => tx.set(key, updatedForJSON));
           });
 
@@ -236,7 +241,9 @@ export const initReplicache = (
     Effect.catchAll((err) =>
       clientLog(
         "error",
-        `Critical error during Replicache initialization: ${toError(err).message}`,
+        `Critical error during Replicache initialization: ${
+          toError(err).message
+        }`,
       ).pipe(Effect.andThen(Effect.die(err))),
     ),
   );
@@ -249,7 +256,6 @@ function setupWebSocket() {
       window.location.host
     }/ws`,
   );
-
   ws.onmessage = (event) => {
     if (event.data === "poke" && rep) {
       void clientLog(
