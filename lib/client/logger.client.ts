@@ -38,14 +38,14 @@ const sendLogToServer = (
 
 const createClientLogger = (): Logger => {
   const logWithRemote = (level: LoggableLevel, ...args: unknown[]) => {
-    // Log to the local console immediately
-    console[level](...args);
+    // Only log to the local console if silent mode is NOT enabled.
+    if (import.meta.env.VITE_SILENT_CLIENT_LOGGING !== "true") {
+      console[level](...args); // This line is now conditional
+    }
 
-    // Fire-and-forget the server-side logging
+    // Fire-and-forget the server-side logging (this always runs)
     runClientUnscoped(
       sendLogToServer(level, args).pipe(
-        // If all retries fail, log a critical error to the console and give up.
-        // This prevents an unhandled promise rejection.
         Effect.catchAll((e) =>
           Effect.sync(() =>
             console.error(

@@ -1,5 +1,5 @@
 // FILE: elysia/routes.ts
-import { Elysia } from "elysia";
+import { Elysia, t } from "elysia";
 import { Data, Effect, Fiber, Stream } from "effect";
 import { staticPlugin } from "@elysiajs/static";
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
@@ -23,9 +23,6 @@ import { effectHandler } from "./effectHandler";
 
 type WsSender = { id: string; send: (message: string) => void };
 
-/**
- * An Effect that creates and configures the Elysia application instance.
- */
 export const makeApp = Effect.gen(function* () {
   const isProduction = process.env.NODE_ENV === "production";
   const pokeService = yield* PokeService;
@@ -38,65 +35,76 @@ export const makeApp = Effect.gen(function* () {
     return new ApiError({ message: "An unknown error occurred", cause: error });
   };
 
-  const apiRoutes = new Elysia()
-    .group("/trpc", (group) =>
-      group.all("/*", ({ request }) =>
-        fetchRequestHandler({
-          endpoint: "/api/trpc",
-          router: appRouter,
-          req: request,
-          createContext,
-        }),
-      ),
-    )
-    .group("/replicache", (group) =>
+  const app = new Elysia()
+    /* ---------- API ---------- */
+    .group("/api", (group) =>
       group
-        .post("/pull", ({ request, body }) =>
-          effectHandler(
-            Effect.gen(function* () {
-              const user = yield* authenticateRequestEffect(request);
-              return yield* handlePull(user.id, body as ReplicachePullRequest);
-            }).pipe(Effect.mapError(mapToApiError)),
-          ),
+        /* tRPC */
+        .all("/trpc/*", ({ request }) =>
+          fetchRequestHandler({
+            endpoint: "/api/trpc",
+            router: appRouter,
+            req: request,
+            createContext,
+          }),
         )
-        .post("/push", ({ request, body }) =>
-          effectHandler(
-            Effect.gen(function* () {
-              const user = yield* authenticateRequestEffect(request);
-              yield* handlePush(body as PushRequest, user.id);
-              return { success: true };
-            }).pipe(Effect.mapError(mapToApiError)),
-          ),
+
+        .post(
+          "/replicache/pull",
+          (ctx) =>
+            effectHandler(
+              Effect.gen(function* () {
+                const user = yield* authenticateRequestEffect(ctx.request);
+                return yield* handlePull(
+                  user.id,
+                  ctx.body as ReplicachePullRequest,
+                );
+              }).pipe(Effect.mapError(mapToApiError)),
+            )(), //  ← CALL IT
+        )
+
+        .post(
+          "/replicache/push",
+          (ctx) =>
+            effectHandler(
+              Effect.gen(function* () {
+                const user = yield* authenticateRequestEffect(ctx.request);
+                yield* handlePush(ctx.body as PushRequest, user.id);
+                return { ok: true }; // Replicache expects this
+              }).pipe(Effect.mapError(mapToApiError)),
+            )(), //  ← CALL IT
+        )
+
+        .post(
+          "/user/avatar",
+          (ctx) => effectHandler(handleAvatarUpload(ctx))(), // ← CALL IT
+          { body: t.Object({ avatar: t.File() }) },
         ),
     )
-    .post("/user/avatar", (context) =>
-      effectHandler(handleAvatarUpload(context)),
-    );
 
-  const app = new Elysia()
-    .group("/api", (group) => group.use(apiRoutes))
+    /* ---------- WebSocket ---------- */
     .ws("/ws", {
       open(ws: WsSender) {
-        const streamFiber = Effect.runFork(
+        const fiber = Effect.runFork(
           Effect.scoped(
             pokeService
               .subscribe()
               .pipe(
-                Stream.runForEach((message: string) =>
-                  Effect.sync(() => void ws.send(message)),
+                Stream.runForEach((msg: string) =>
+                  Effect.sync(() => void ws.send(msg)),
                 ),
               ),
           ),
         );
-        wsConnections.set(ws.id, streamFiber);
+        wsConnections.set(ws.id, fiber);
         runServerUnscoped(
           serverLog("info", `WebSocket connected: ${ws.id}`, undefined, "WS"),
         );
       },
       close(ws: WsSender) {
-        const streamFiber = wsConnections.get(ws.id);
-        if (streamFiber) {
-          Effect.runFork(Fiber.interrupt(streamFiber));
+        const fiber = wsConnections.get(ws.id);
+        if (fiber) {
+          Effect.runFork(Fiber.interrupt(fiber));
           wsConnections.delete(ws.id);
         }
         runServerUnscoped(
@@ -110,6 +118,7 @@ export const makeApp = Effect.gen(function* () {
       },
     });
 
+  /* ---------- Static files ---------- */
   if (isProduction) {
     yield* Effect.forkDaemon(
       serverLog("info", "Production mode: Setting up static file serving."),
@@ -126,8 +135,11 @@ export const makeApp = Effect.gen(function* () {
           new Response(indexHtml, { headers: { "Content-Type": "text/html" } }),
       );
     } else {
-      const errorMessage = `[Production Error] Frontend build not found at: ${indexHtmlPath}.`;
-      return yield* Effect.fail(new Error(errorMessage));
+      return yield* Effect.fail(
+        new Error(
+          `[Production Error] Frontend build not found at: ${indexHtmlPath}.`,
+        ),
+      );
     }
   } else {
     yield* Effect.forkDaemon(
