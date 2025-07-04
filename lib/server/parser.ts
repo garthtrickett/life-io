@@ -1,8 +1,7 @@
 // lib/server/parser.ts
 import { Effect } from "effect";
 import type { BlockId, NewBlock } from "../../types/generated/public/Block";
-import { generateId } from "./utils";
-import type { Crypto } from "./crypto";
+import { generateUUID } from "./utils";
 import type { UserId } from "../../types/generated/public/User";
 import type { NoteId } from "../../types/generated/public/Note";
 
@@ -15,13 +14,11 @@ function parseLineComponents(line: string) {
   const tags = [...line.matchAll(tagRegex)].map((m) => m[0]);
   const links = [...line.matchAll(linkRegex)].map((m) => m[1]);
   const transclusions = [...line.matchAll(transclusionRegex)].map((m) => m[1]);
-
   const content = line
     .replace(tagRegex, "")
     .replace(linkRegex, "")
     .replace(transclusionRegex, "")
     .trim();
-
   return { content, tags, links, transclusions };
 }
 
@@ -30,7 +27,7 @@ export const parseMarkdownToBlocks = (
   filePath: string,
   userId: UserId,
   noteId: NoteId, // Accept the parent note's ID
-): Effect.Effect<NewBlock[], never, Crypto> =>
+): Effect.Effect<NewBlock[], never, never> =>
   Effect.gen(function* () {
     const lines = markdownContent.split("\n");
     const blocks: NewBlock[] = [];
@@ -73,8 +70,7 @@ export const parseMarkdownToBlocks = (
 
       const { content, tags, links, transclusions } = parseLineComponents(line);
       if (!content) continue;
-
-      const id = (yield* generateId(36)) as BlockId;
+      const id = (yield* generateUUID()) as BlockId;
       const now = new Date();
       const newBlock: NewBlock & { depth: number } = {
         id,
@@ -94,7 +90,6 @@ export const parseMarkdownToBlocks = (
         updated_at: now,
         version: 0,
       };
-
       blocks.push(newBlock);
       parentStack.push(newBlock);
     }

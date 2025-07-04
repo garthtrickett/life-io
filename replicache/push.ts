@@ -1,5 +1,5 @@
 // FILE: replicache/push.ts
-import { Effect } from "effect";
+import { Effect, Data } from "effect";
 import type { PushRequest } from "replicache";
 import { Db } from "../db/DbTag";
 import { PokeService } from "../lib/server/PokeService";
@@ -19,12 +19,16 @@ const CreateNoteMutationArgs = Schema.Struct({
   content: Schema.String,
   user_id: UserIdSchema,
 });
-
 const UpdateNoteMutationArgs = Schema.Struct({
   id: NoteIdSchema,
   title: Schema.String,
   content: Schema.String,
 });
+
+// A custom tagged error for push-related failures
+class ReplicachePushError extends Data.TaggedError("ReplicachePushError")<{
+  readonly cause: unknown;
+}> {}
 
 // ---------------------------------------------------------------------------
 // Helper
@@ -69,7 +73,6 @@ export const handlePush = (
     const clientID = mutations[0].clientID;
     const db = yield* Db;
     const pokeService = yield* PokeService;
-    const crypto = yield* Crypto;
 
     yield* serverLog(
       "info",
@@ -85,87 +88,66 @@ export const handlePush = (
         db.transaction().execute(async (trx) => {
           // --- 1. Process mutations ---
           for (const mutation of mutations) {
-            try {
-              await Effect.runPromise(
-                serverLog(
-                  "debug",
-                  `  Processing mutation: ${mutation.name} (id: ${mutation.id})`,
-                  userId,
-                  "Replicache:Push:Mutation",
-                ),
-              );
-              switch (mutation.name) {
-                case "createNote": {
-                  const args = Schema.decodeUnknownSync(CreateNoteMutationArgs)(
-                    mutation.args,
+            await Effect.runPromise(
+              serverLog(
+                "debug",
+                `  Processing mutation: ${mutation.name} (id: ${mutation.id})`,
+                userId,
+                "Replicache:Push:Mutation",
+              ),
+            );
+            switch (mutation.name) {
+              case "createNote": {
+                const args = Schema.decodeUnknownSync(CreateNoteMutationArgs)(
+                  mutation.args,
+                );
+                if (args.user_id !== userId) {
+                  throw new Error(
+                    "Mutation user_id does not match authenticated user.",
                   );
-                  if (args.user_id !== userId) {
-                    throw new Error(
-                      "Mutation user_id does not match authenticated user.",
-                    );
-                  }
-                  const newNote: NewNote = {
-                    id: args.id,
+                }
+                const newNote: NewNote = {
+                  id: args.id,
+                  title: args.title,
+                  content: args.content,
+                  user_id: args.user_id,
+                };
+                await trx.insertInto("note").values(newNote).execute();
+                break;
+              }
+              case "updateNote": {
+                const args = Schema.decodeUnknownSync(UpdateNoteMutationArgs)(
+                  mutation.args,
+                );
+                const parentNote = await trx
+                  .updateTable("note")
+                  .set({
                     title: args.title,
                     content: args.content,
-                    user_id: args.user_id,
-                  };
-                  await trx.insertInto("note").values(newNote).execute();
-                  break;
+                    updated_at: new Date(),
+                  })
+                  .where("id", "=", args.id)
+                  .where("user_id", "=", userId)
+                  .returningAll()
+                  .executeTakeFirstOrThrow();
+                await trx
+                  .deleteFrom("block")
+                  .where("note_id", "=", args.id)
+                  .execute();
+                // No longer needs Crypto service
+                const childBlocks = await Effect.runPromise(
+                  parseMarkdownToBlocks(
+                    args.content,
+                    `${parentNote.id}.md`,
+                    userId,
+                    args.id,
+                  ),
+                );
+                if (childBlocks.length > 0) {
+                  await trx.insertInto("block").values(childBlocks).execute();
                 }
-                case "updateNote": {
-                  const args = Schema.decodeUnknownSync(UpdateNoteMutationArgs)(
-                    mutation.args,
-                  );
-                  const parentNote = await trx
-                    .updateTable("note")
-                    .set({
-                      title: args.title,
-                      content: args.content,
-                      updated_at: new Date(),
-                    })
-                    .where("id", "=", args.id)
-                    .where("user_id", "=", userId)
-                    .returningAll()
-                    .executeTakeFirstOrThrow();
-
-                  await trx
-                    .deleteFrom("block")
-                    .where("note_id", "=", args.id)
-                    .execute();
-
-                  const childBlocks = await Effect.runPromise(
-                    Effect.provideService(
-                      Crypto,
-                      crypto,
-                    )(
-                      parseMarkdownToBlocks(
-                        args.content,
-                        `${parentNote.id}.md`,
-                        userId,
-                        args.id,
-                      ),
-                    ),
-                  );
-
-                  if (childBlocks.length > 0) {
-                    await trx.insertInto("block").values(childBlocks).execute();
-                  }
-                  break;
-                }
+                break;
               }
-            } catch (e) {
-              // FIX: Use structured logging instead of console.error
-              await Effect.runPromise(
-                serverLog(
-                  "error",
-                  `Error processing mutation ${mutation.id} (${mutation.name}): ${String(
-                    e,
-                  )}`,
-                  userId,
-                  "Replicache:Push:MutationError",
-                ),
-              );
             }
           }
 
@@ -191,9 +173,9 @@ export const handlePush = (
             .where("id", "=", clientGroupID as ReplicacheClientGroupId)
             .execute();
         }),
-      catch: (e) => new Error(String(e)),
+      catch: (e) => new ReplicachePushError({ cause: e }),
     }).pipe(
-      // Add logging for the success or failure of the entire transaction
+      Effect.mapError((err) => new Error(err.message)),
       Effect.tap(() =>
         serverLog(
           "info",
@@ -211,6 +193,5 @@ export const handlePush = (
         ),
       ),
     );
-
     yield* pokeService.poke();
   });
