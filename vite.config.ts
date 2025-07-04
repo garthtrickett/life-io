@@ -14,8 +14,9 @@ export default defineConfig(({ command }) => {
     },
     server: {
       proxy: {
-        // --- START OF FIX ---
-        // A single, clean proxy for ALL API calls.
+        // The specific proxy for /api/log/client has been removed.
+        // All API requests, including tRPC calls to /api/trpc/*,
+        // will now be handled by the general /api rule.
         "/api": {
           target: "http://localhost:42069",
           changeOrigin: true,
@@ -25,7 +26,6 @@ export default defineConfig(({ command }) => {
           target: "ws://localhost:42069",
           ws: true,
         },
-        // --- END OF FIX ---
       },
     },
     css: {

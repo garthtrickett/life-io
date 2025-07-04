@@ -6,6 +6,7 @@ import { trpc } from "../../lib/client/trpc";
 import { navigate } from "../../lib/client/router";
 import { NotionButton } from "../ui/notion-button";
 import { runClientPromise } from "../../lib/client/runtime";
+import { runClientUnscoped } from "../../lib/client/runtime";
 
 // --- Custom Error Types ---
 class InvalidTokenError extends Data.TaggedError("InvalidTokenError") {}
@@ -95,7 +96,11 @@ const react = async (action: Action, token: string) => {
     await runClientPromise(resetEffect);
   }
   if (action.type === "RESET_SUCCESS") {
-    setTimeout(() => navigate("/login"), 3000);
+    setTimeout(
+      () => runClientUnscoped(navigate("/login")),
+
+      3000,
+    );
   }
 };
 

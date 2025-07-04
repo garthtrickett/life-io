@@ -14,9 +14,12 @@ const loggerMiddleware = t.middleware(({ ctx, path, type, next }) => {
   const program = Effect.gen(function* () {
     const userId = ctx.user?.id;
 
-    yield* Effect.forkDaemon(
-      serverLog("info", `tRPC → [${type}] ${path}`, userId, "tRPC:req"),
-    );
+    // Don't log the logger's own operations to avoid noise.
+    if (path !== "log.log") {
+      yield* Effect.forkDaemon(
+        serverLog("info", `tRPC → [${type}] ${path}`, userId, "tRPC:req"),
+      );
+    }
 
     const result = yield* Effect.tryPromise({
       try: () => next({ ctx }),
@@ -25,14 +28,17 @@ const loggerMiddleware = t.middleware(({ ctx, path, type, next }) => {
 
     const status = result.ok && !("error" in result) ? "OK" : "ERR";
 
-    yield* Effect.forkDaemon(
-      serverLog(
-        "info",
-        `tRPC ← [${type}] ${path} (${status})`,
-        userId,
-        "tRPC:res",
-      ),
-    );
+    // Apply the same check to the response log.
+    if (path !== "log.log") {
+      yield* Effect.forkDaemon(
+        serverLog(
+          "info",
+          `tRPC ← [${type}] ${path} (${status})`,
+          userId,
+          "tRPC:res",
+        ),
+      );
+    }
 
     if (!result.ok && "error" in result) {
       return yield* Effect.fail(result.error);

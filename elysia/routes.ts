@@ -1,6 +1,4 @@
 // FILE: elysia/routes.ts
-// --- Full content with corrected prefixing and error handling ---
-
 import { Elysia } from "elysia";
 import { Data, Effect, Fiber, Stream } from "effect";
 import { staticPlugin } from "@elysiajs/static";
@@ -16,7 +14,7 @@ import {
   handlePush,
   type PullRequest as ReplicachePullRequest,
 } from "../replicache/server";
-import { handleAvatarUpload, handleClientLog } from "./handlers";
+import { handleAvatarUpload } from "./handlers";
 import { authenticateRequestEffect } from "./auth";
 import { ApiError } from "./errors";
 import { runServerUnscoped } from "../lib/server/runtime";
@@ -40,13 +38,11 @@ export const makeApp = Effect.gen(function* () {
     return new ApiError({ message: "An unknown error occurred", cause: error });
   };
 
-  // 1. Define all API routes as a separate Elysia "plugin".
-  //    This instance has no prefix of its own.
   const apiRoutes = new Elysia()
     .group("/trpc", (group) =>
       group.all("/*", ({ request }) =>
         fetchRequestHandler({
-          endpoint: "/api/trpc", // The full path for the adapter
+          endpoint: "/api/trpc",
           router: appRouter,
           req: request,
           createContext,
@@ -75,15 +71,10 @@ export const makeApp = Effect.gen(function* () {
     )
     .post("/user/avatar", (context) =>
       effectHandler(handleAvatarUpload(context)),
-    )
-    // REMOVED the problematic .pipe() and .catchTag() from this route.
-    .post("/log/client", ({ body }) => effectHandler(handleClientLog(body)));
+    );
 
-  // 2. Create the main app instance.
   const app = new Elysia()
-    // 3. Use .group() to apply the "/api" prefix and .use() to mount the plugin.
     .group("/api", (group) => group.use(apiRoutes))
-    // WebSocket (remains at the root level, not under /api)
     .ws("/ws", {
       open(ws: WsSender) {
         const streamFiber = Effect.runFork(
@@ -119,7 +110,6 @@ export const makeApp = Effect.gen(function* () {
       },
     });
 
-  // --- Static File Serving (Production Only) ---
   if (isProduction) {
     yield* Effect.forkDaemon(
       serverLog("info", "Production mode: Setting up static file serving."),

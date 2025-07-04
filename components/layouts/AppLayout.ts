@@ -35,7 +35,7 @@ export const AppLayout = ({ children }: Props): ViewResult => {
   const handleNavClick = (e: MouseEvent) => {
     e.preventDefault();
     const path = (e.currentTarget as HTMLAnchorElement).pathname;
-    navigate(path);
+    runClientUnscoped(navigate(path));
   };
 
   return {

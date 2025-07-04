@@ -6,6 +6,7 @@ import { clientLog } from "../../../../lib/client/logger.client";
 import { authState } from "../../../../lib/client/stores/authStore";
 import type { Action, Model } from "./types";
 import { NoteId } from "../../../../types/generated/public/Note";
+import { runClientUnscoped } from "../../../../lib/client/runtime";
 
 export const handleAction = (
   action: Action,
@@ -44,6 +45,7 @@ export const handleAction = (
           error: action.payload,
         });
         break;
+
       case "CREATE_NOTE_START": {
         yield* Ref.set(modelRef, {
           ...currentModel,
@@ -52,6 +54,12 @@ export const handleAction = (
         });
         const createEffect = pipe(
           Effect.gen(function* () {
+            if (!rep) {
+              return yield* Effect.fail("Replicache is not initialized.");
+            }
+            // Create a non-nullable constant
+            const replicacheInstance = rep;
+
             if (!userId) {
               return yield* Effect.fail("User not authenticated.");
             }
@@ -64,9 +72,9 @@ export const handleAction = (
 
             const newNoteId = crypto.randomUUID();
 
-            // Call the Replicache mutator. This is an optimistic update.
             yield* Effect.promise(() =>
-              rep.mutate.createNote({
+              // Use the new constant here
+              replicacheInstance.mutate.createNote({
                 id: newNoteId as NoteId,
                 title: "Untitled Note",
                 content: "",
@@ -81,8 +89,7 @@ export const handleAction = (
               "NotesList:createNote",
             );
 
-            // Navigate immediately. The UI will update via the subscription.
-            navigate(`/notes/${newNoteId}`);
+            runClientUnscoped(navigate(`/notes/${newNoteId}`));
           }),
           Effect.catchAll((error) =>
             pipe(
@@ -96,7 +103,7 @@ export const handleAction = (
                 Ref.set(modelRef, {
                   ...currentModel,
                   isCreating: false,
-                  error,
+                  error: String(error),
                 }),
               ),
             ),

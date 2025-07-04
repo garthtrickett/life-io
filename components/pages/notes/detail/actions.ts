@@ -82,6 +82,16 @@ export const handleAction = (
         break;
 
       case "SAVE_NOTE_TO_REPLICACHE": {
+        if (!rep) {
+          yield* clientLog(
+            "error",
+            "Attempted to save note, but Replicache is not initialized.",
+          );
+          return;
+        }
+        // Create a non-nullable constant to use inside the closure
+        const replicacheInstance = rep;
+
         if (!currentModel.note) return;
         yield* clientLog(
           "info",
@@ -92,7 +102,8 @@ export const handleAction = (
         const saveEffect = pipe(
           Effect.tryPromise({
             try: () =>
-              rep.mutate.updateNote({
+              // Use the new constant here
+              replicacheInstance.mutate.updateNote({
                 id: currentModel.note!.id,
                 title: currentModel.note!.title,
                 content: currentModel.note!.content,

@@ -1,4 +1,3 @@
-// FILE: elysia/handlers.ts
 /* -------------------------------------------------------------------------- */
 /*  elysia/handlers.ts                                                        */
 /* -------------------------------------------------------------------------- */
@@ -31,14 +30,6 @@ const AvatarUploadBody = Schema.Struct({
     ),
   ),
 });
-
-const ClientLogBody = Schema.Struct({
-  level: Schema.String,
-  args: Schema.Array(Schema.Any),
-});
-type ServerLoggableLevel = "info" | "error" | "warn" | "debug";
-const isLoggableLevel = (l: string): l is ServerLoggableLevel =>
-  ["info", "error", "warn", "debug"].includes(l);
 
 /* ───────────────────────────── Handlers ─────────────────────────────────── */
 
@@ -127,37 +118,4 @@ export const handleAvatarUpload = (ctx: { request: Request; body: unknown }) =>
     return { avatarUrl };
   });
 
-export const handleClientLog = (rawBody: unknown) =>
-  Effect.gen(function* () {
-    /* ── Need-more-visibility: dump whatever arrived ─────────────────────── */
-    yield* serverLog(
-      "debug",
-      `Raw client log body: ${
-        typeof rawBody === "string" ? rawBody : JSON.stringify(rawBody)
-      }`,
-      undefined,
-      "Client:RAW",
-    );
-
-    /* Accept either real JSON or the text/plain payload produced by          *
-     * navigator.sendBeacon.                                                  */
-    // --- START OF FIX ---
-    const body: unknown =
-      typeof rawBody === "string" ? JSON.parse(rawBody) : rawBody;
-    // --- END OF FIX ---
-
-    const { level, args } = yield* Schema.decodeUnknown(ClientLogBody)(
-      body,
-    ).pipe(
-      Effect.mapError((e) => new FileError({ message: formatErrorSync(e) })),
-    );
-
-    if (isLoggableLevel(level)) {
-      const msg = Array.isArray(args)
-        ? args.map(String).join(" ")
-        : String(args);
-      yield* serverLog(level, `[CLIENT] ${msg}`, undefined, "Client");
-    }
-
-    return new Response(null, { status: 204 });
-  });
+// The handleClientLog function has been removed.

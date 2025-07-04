@@ -140,7 +140,7 @@ export const LoginView = (): ViewResult => {
                 href="/forgot-password"
                 @click=${(e: Event) => {
                   e.preventDefault();
-                  navigate("/forgot-password");
+                  runClientUnscoped(navigate("/forgot-password"));
                 }}
                 class="font-medium text-zinc-500 hover:text-zinc-700"
               >

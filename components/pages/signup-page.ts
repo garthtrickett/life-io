@@ -130,7 +130,7 @@ export const SignupView = (): ViewResult => {
                 class="font-medium text-zinc-600 hover:text-zinc-500"
                 @click=${(e: Event) => {
                   e.preventDefault();
-                  navigate("/login");
+                  runClientUnscoped(navigate("/login"));
                 }}
                 >Already have an account? Log in.</a
               >

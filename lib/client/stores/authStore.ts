@@ -5,6 +5,7 @@ import { trpc } from "../../../lib/client/trpc";
 import type { User } from "../../../types/generated/public/User";
 import { runClientUnscoped } from "../runtime";
 import { clientLog } from "../logger.client";
+import { rep, initReplicache } from "../replicache";
 
 // --- Model and Action Types ---
 export interface AuthModel {
@@ -56,12 +57,11 @@ const update = (model: AuthModel, action: AuthAction): AuthModel => {
 };
 
 // --- Side-Effect Handler ---
-const handleAuthAction = (action: AuthAction): Effect.Effect<void> =>
+const handleAuthAction = (action: AuthAction): Effect.Effect<void, never> =>
   Effect.gen(function* () {
     const currentModel = yield* Ref.get(_authStateRef);
     const nextModel = update(currentModel, action);
     yield* Ref.set(_authStateRef, nextModel);
-    // Directly update the external signal after the internal ref is set.
     yield* Effect.sync(() => {
       authState.value = nextModel;
     });
@@ -69,6 +69,15 @@ const handleAuthAction = (action: AuthAction): Effect.Effect<void> =>
     const userId = currentModel.user?.id;
 
     switch (action.type) {
+      case "AUTH_CHECK_SUCCESS": {
+        yield* clientLog(
+          "info",
+          "Auth check success. Initializing Replicache.",
+          action.payload.id,
+        );
+        yield* initReplicache(action.payload.id);
+        break;
+      }
       case "AUTH_CHECK_START": {
         const authCheckEffect = pipe(
           clientLog("info", "Starting auth check...", undefined, "authStore"),
@@ -100,20 +109,54 @@ const handleAuthAction = (action: AuthAction): Effect.Effect<void> =>
         break;
       }
       case "LOGOUT_START": {
+        const cleanupAndFinalizeLogout = pipe(
+          Effect.sync(() => {
+            document.cookie =
+              "session_id=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+          }),
+          Effect.andThen(
+            Effect.if(
+              Effect.sync(() => rep !== null),
+              {
+                // --- START OF FIX: Wrap `onTrue` and `onFalse` in functions ---
+                onTrue: () =>
+                  pipe(
+                    clientLog(
+                      "info",
+                      "Closing Replicache database...",
+                      userId,
+                      "authStore:replicache",
+                    ),
+                    Effect.andThen(
+                      Effect.promise(() => rep!.close()).pipe(
+                        Effect.catchAll((err) =>
+                          clientLog(
+                            "error",
+                            `Failed to close Replicache: ${String(err)}`,
+                            userId,
+                            "authStore:replicache",
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                onFalse: () =>
+                  clientLog("debug", "No active Replicache instance to close."),
+                // --- END OF FIX ---
+              },
+            ),
+          ),
+          Effect.andThen(() =>
+            Effect.sync(() => proposeAuthAction({ type: "LOGOUT_SUCCESS" })),
+          ),
+        );
+
         const logoutEffect = pipe(
           clientLog("info", "Logout process started.", userId, "authStore"),
           Effect.andThen(() =>
             Effect.tryPromise(() => trpc.auth.logout.mutate()),
           ),
-          Effect.tap(() =>
-            Effect.sync(() => {
-              document.cookie =
-                "session_id=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
-            }),
-          ),
-          Effect.andThen(() =>
-            Effect.sync(() => proposeAuthAction({ type: "LOGOUT_SUCCESS" })),
-          ),
+          Effect.andThen(cleanupAndFinalizeLogout),
           Effect.catchAll((error) =>
             pipe(
               clientLog(
@@ -124,15 +167,20 @@ const handleAuthAction = (action: AuthAction): Effect.Effect<void> =>
                 userId,
                 "authStore",
               ),
-              Effect.andThen(() =>
-                Effect.sync(() =>
-                  proposeAuthAction({ type: "LOGOUT_SUCCESS" }),
-                ),
-              ),
+              Effect.andThen(cleanupAndFinalizeLogout),
             ),
           ),
         );
         yield* Effect.fork(logoutEffect);
+        break;
+      }
+      case "SET_AUTHENTICATED": {
+        yield* clientLog(
+          "info",
+          "User set to authenticated. Initializing Replicache.",
+          action.payload.id,
+        );
+        yield* initReplicache(action.payload.id);
         break;
       }
     }

@@ -17,27 +17,30 @@ export const loggingLink =
   () => {
     return ({ op, next }) =>
       observable((observer) => {
-        // ---- outgoing -----------------------------------------------------
-        runClientUnscoped(
-          clientLog(
-            "debug",
-            `tRPC → [${op.type}] ${op.path}`,
-            undefined,
-            "tRPC",
-          ),
-        );
+        // Prevent logging of the log call itself, which would cause an infinite loop.
+        if (op.path !== "log.log") {
+          runClientUnscoped(
+            clientLog(
+              "debug",
+              `tRPC → [${op.type}] ${op.path}`,
+              undefined,
+              "tRPC",
+            ),
+          );
+        }
 
         const subscription = next(op).subscribe({
           next(data) {
-            // ---- incoming --------------------------------------------------
-            runClientUnscoped(
-              clientLog(
-                "debug",
-                `tRPC ← [${op.type}] ${op.path}`,
-                undefined,
-                "tRPC",
-              ),
-            );
+            if (op.path !== "log.log") {
+              runClientUnscoped(
+                clientLog(
+                  "debug",
+                  `tRPC ← [${op.type}] ${op.path}`,
+                  undefined,
+                  "tRPC",
+                ),
+              );
+            }
             observer.next(data);
           },
           error(err) {

@@ -1,7 +1,8 @@
 // FILE: trpc/router.ts
 import { router } from "./trpc";
 import { noteRouter } from "./routers/note";
-import { authRouter } from "./routers/auth"; // Import the auth router
+import { authRouter } from "./routers/auth";
+import { logRouter } from "./routers/log";
 
 /**
  * This is the main router for your tRPC API.
@@ -10,6 +11,7 @@ import { authRouter } from "./routers/auth"; // Import the auth router
 export const appRouter = router({
   note: noteRouter,
   auth: authRouter,
+  log: logRouter,
 });
 
 // Export the type of your AppRouter. This is the crucial part

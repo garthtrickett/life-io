@@ -4,6 +4,7 @@ import { repeat } from "lit-html/directives/repeat.js";
 import { navigate } from "../../../../lib/client/router";
 import styles from "../../NotesView.module.css";
 import type { Model, Action } from "./types";
+import { runClientUnscoped } from "../../../../lib/client/runtime";
 
 export const renderView = (
   container: HTMLElement,
@@ -41,7 +42,7 @@ export const renderView = (
                 class=${styles.noteItem}
                 @click=${(e: Event) => {
                   e.preventDefault();
-                  navigate(`/notes/${note.id}`);
+                  runClientUnscoped(navigate(`/notes/${note.id}`));
                 }}
               >
                 <h3>${note.title}</h3>

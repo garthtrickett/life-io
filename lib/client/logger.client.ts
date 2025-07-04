@@ -1,9 +1,8 @@
 // FILE: lib/client/logger.client.ts
-// --- Full content with the added debugging line ---
-
-import { Console, Data, Effect, pipe, Schedule } from "effect";
+import { Console, Effect, pipe, Schedule } from "effect";
 import type { LogLevel } from "../shared/logConfig";
 import { runClientUnscoped } from "./runtime";
+import { trpc } from "./trpc";
 
 export type Logger = {
   info: (...args: unknown[]) => void;
@@ -15,106 +14,65 @@ export type Logger = {
 export type LoggableLevel = Exclude<LogLevel, "silent">;
 
 /**
- * A typed error for when sending logs to the server fails.
- */
-class SendLogError extends Data.TaggedError("SendLogError")<{
-  readonly cause: unknown;
-}> {}
-
-/**
- * An Effect-based function to send a log entry to the server.
- * It prefers `sendBeacon` for its non-blocking nature and falls back to `fetch`
- * with a retry mechanism for increased reliability.
+ * An Effect-based function to send a log entry to the server via tRPC.
+ * It includes a retry mechanism for increased reliability.
  */
 const sendLogToServer = (
-  level: LogLevel,
+  level: LoggableLevel,
   args: unknown[],
-): Effect.Effect<void, SendLogError> => {
-  const url = "/api/log/client";
-  const data = JSON.stringify({ level, args });
-
-  // Use sendBeacon if available, as it's non-blocking for page unloads.
-  if (navigator.sendBeacon) {
-    return Effect.sync(() => {
-      const blob = new Blob([data], { type: "application/json" });
-      if (!navigator.sendBeacon(url, blob)) {
-        throw new Error("sendBeacon returned false, data was not queued.");
-      }
-    }).pipe(Effect.mapError((cause) => new SendLogError({ cause })));
-  }
-
-  const baseRetrySchedule = Schedule.exponential("100 millis").pipe(
+): Effect.Effect<void, Error> => {
+  // A retry schedule with exponential backoff and jitter.
+  const retrySchedule = Schedule.exponential("200 millis").pipe(
     Schedule.jittered,
-    Schedule.compose(Schedule.recurs(3)),
+    Schedule.compose(Schedule.recurs(3)), // Retry up to 3 times
   );
 
-  const loggingRetrySchedule = baseRetrySchedule.pipe(
-    Schedule.onDecision(() =>
-      Console.warn(`Log transmission failed. Retrying...`),
-    ),
-  );
-
-  return Effect.tryPromise({
-    try: () =>
-      fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: data,
-        keepalive: true,
-      }),
-    catch: (cause) => new SendLogError({ cause }),
-  }).pipe(
-    // --- START OF FIX ---
-    // This new line will log any network or proxy error from the fetch call itself,
-    // which is crucial for debugging the Vite proxy.
-    Effect.tapError((e) =>
-      Console.error(
-        `[CRITICAL] sendLogToServer fetch failed: ${String(e.cause)}`,
-      ),
-    ),
-    // --- END OF FIX ---
-    Effect.flatMap((response) =>
-      response.ok
-        ? Effect.void
-        : Effect.fail(
-            new SendLogError({
-              cause: `Server responded with status ${response.status}`,
-            }),
-          ),
-    ),
-    Effect.retry(loggingRetrySchedule),
+  return pipe(
+    Effect.tryPromise({
+      try: () => trpc.log.log.mutate({ level, args }),
+      catch: (cause) => new Error(String(cause)),
+    }),
+    Effect.retry(retrySchedule),
   );
 };
 
 const createClientLogger = (): Logger => {
+  const logWithRemote = (level: LoggableLevel, ...args: unknown[]) => {
+    // Log to the local console immediately
+    console[level](...args);
+
+    // Fire-and-forget the server-side logging
+    runClientUnscoped(
+      sendLogToServer(level, args).pipe(
+        // If all retries fail, log a critical error to the console and give up.
+        // This prevents an unhandled promise rejection.
+        Effect.catchAll((e) =>
+          Effect.sync(() =>
+            console.error(
+              `[CRITICAL] Log transmission failed permanently: ${e.message}`,
+            ),
+          ),
+        ),
+      ),
+    );
+  };
+
   return {
-    info: (...args) => {
-      console.info(...args);
-      runClientUnscoped(sendLogToServer("info", args));
-    },
-    error: (...args) => {
-      console.error(...args);
-      runClientUnscoped(sendLogToServer("error", args));
-    },
-    warn: (...args) => {
-      console.warn(...args);
-      runClientUnscoped(sendLogToServer("warn", args));
-    },
-    debug: (...args) => {
-      console.debug(...args);
-      runClientUnscoped(sendLogToServer("debug", args));
-    },
+    info: (...args) => logWithRemote("info", ...args),
+    error: (...args) => logWithRemote("error", ...args),
+    warn: (...args) => logWithRemote("warn", ...args),
+    debug: (...args) => logWithRemote("debug", ...args),
   };
 };
 
 const createClientLoggerEffect = pipe(
-  Console.log(
-    "Client logger created. All logs will be sent to the server endpoint.",
+  Console.warn(
+    "Client logger created. All logs will be sent to the server via tRPC.",
   ),
   Effect.map(() => createClientLogger()),
 );
 
-export const clientLoggerPromise: Promise<Logger> = Effect.runPromise(
+export const loggerPromise: Promise<Logger> = Effect.runPromise(
   createClientLoggerEffect,
 );
 
@@ -122,7 +80,7 @@ export async function getClientLoggerWithUser(
   userId?: string,
   context?: string,
 ): Promise<Logger> {
-  const logger = await clientLoggerPromise;
+  const logger = await loggerPromise;
 
   const parts: string[] = [];
   if (userId) parts.push(`[user: ${userId}]`);

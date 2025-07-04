@@ -54,11 +54,17 @@ export const NoteDetailView = (id: string): ViewResult => {
       ),
     );
 
-    // --- Data Subscription Stream from Replicache ---
     const replicacheStream: Stream.Stream<
       { note: Note | null; blocks: Block[] },
       string
     > = Stream.async((emit) => {
+      // --- START OF FIX: Add a null check for the `rep` instance ---
+      if (!rep) {
+        void emit.fail("Replicache is not initialized.");
+        return;
+      }
+      // --- END OF FIX ---
+
       let isInitialLoad = true;
       const unsubscribe = rep.subscribe(
         async (tx) => {
@@ -81,7 +87,6 @@ export const NoteDetailView = (id: string): ViewResult => {
                 }),
               ];
             } catch (e) {
-              // FIX: Log decoding errors for blocks
               void clientLog(
                 "error",
                 `Failed to decode block from Replicache: ${String(e)}`,
@@ -117,7 +122,6 @@ export const NoteDetailView = (id: string): ViewResult => {
       return Effect.sync(unsubscribe);
     });
 
-    // --- Main Loop ---
     const mainLoop = Effect.gen(function* () {
       const actionProcessor = Queue.take(actionQueue).pipe(
         Effect.flatMap((action) => handleAction(action, model, propose)),

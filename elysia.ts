@@ -19,6 +19,19 @@ import {
 const setupApp = Effect.gen(function* () {
   const app = yield* makeApp;
 
+  // --- DEBUGGING: Add a global hook to log all incoming requests ---
+  app.onBeforeHandle(({ request }) => {
+    runServerUnscoped(
+      serverLog(
+        "debug",
+        `[SERVER IN] ${request.method} ${new URL(request.url).pathname}`,
+        undefined,
+        "Elysia:Request",
+      ),
+    );
+  });
+  // --- END DEBUGGING ---
+
   // --- Scheduled Jobs ---
   yield* Effect.forkDaemon(
     pipe(

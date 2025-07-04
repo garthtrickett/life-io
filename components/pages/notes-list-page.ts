@@ -51,11 +51,9 @@ export const NotesView = (): ViewResult => {
           "NotesView:render",
         ),
       ),
-      // Animation logic is now a side-effect of rendering.
       Effect.tap((m) =>
         Effect.sync(() => {
           if (!m.isLoading && m.notes.length > 0) {
-            // A small delay to ensure the DOM is updated before animating.
             requestAnimationFrame(() => {
               const noteElements = Array.from(
                 container.querySelectorAll("ul li"),
@@ -76,8 +74,13 @@ export const NotesView = (): ViewResult => {
       ),
     );
 
-    // --- Data subscription stream from Replicache ---
-    const replicacheStream = Stream.async<Note[]>((emit) => {
+    const replicacheStream = Stream.async<Note[], string>((emit) => {
+      // --- START OF FIX: Add a null check for the `rep` instance ---
+      if (!rep) {
+        void emit.fail("Replicache is not initialized.");
+        return;
+      }
+      // --- END OF FIX ---
       const unsubscribe = rep.subscribe(
         async (tx) => {
           const noteJSONs = await tx
@@ -89,7 +92,6 @@ export const NotesView = (): ViewResult => {
             if (Either.isRight(decoded)) {
               return [decoded.right];
             }
-            // FIX: Log decoding errors for debugging
             void clientLog(
               "error",
               `Failed to decode note from Replicache: ${JSON.stringify(
@@ -121,7 +123,6 @@ export const NotesView = (): ViewResult => {
       return Effect.sync(unsubscribe);
     });
 
-    // --- Main Application Loop ---
     const mainLoop = Effect.gen(function* () {
       const actionProcessor = Queue.take(actionQueue).pipe(
         Effect.flatMap((action) => handleAction(action, model)),

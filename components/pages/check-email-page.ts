@@ -2,6 +2,7 @@
 import { html } from "lit-html";
 import { navigate } from "../../lib/client/router";
 import type { ViewResult } from "../../lib/client/router";
+import { runClientUnscoped } from "../../lib/client/runtime";
 
 /**
  * A simple, static view to inform the user to check their email for a
@@ -25,7 +26,7 @@ export const CheckEmailView = (): ViewResult => {
               href="/login"
               @click=${(e: Event) => {
                 e.preventDefault();
-                navigate("/login");
+                runClientUnscoped(navigate("/login"));
               }}
               class="font-medium text-zinc-600 hover:text-zinc-500"
             >

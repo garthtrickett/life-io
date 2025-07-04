@@ -41,21 +41,21 @@ const processStateChange = (
 
     if (auth.status === "initializing" || auth.status === "authenticating") {
       yield* clientLog(
-        "info",
-        "Auth status is initializing/authenticating. Rendering loading screen.",
+        "debug",
+        "Auth status is initializing/authenticating. Rendering full-page loader.",
         auth.user?.id,
         "AppShell:process",
       );
-      const loadingTemplate = html`<div
-        class="flex h-32 items-center justify-center p-8 text-center text-zinc-500"
+      // This is a full-page loader, not content within the AppLayout
+      const fullPageLoader = html`<div
+        class="flex min-h-screen items-center justify-center bg-gray-50"
       >
         <div
           class="h-12 w-12 animate-spin rounded-full border-4 border-zinc-300 border-t-zinc-600"
         ></div>
       </div>`;
-      yield* Effect.sync(() =>
-        render(AppLayout({ children: loadingTemplate }).template, appRoot),
-      );
+      // Render the loader directly into the app shell, bypassing the main layout
+      yield* Effect.sync(() => render(fullPageLoader, appRoot));
       return yield* Effect.never;
     }
 
