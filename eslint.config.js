@@ -1,12 +1,9 @@
 // eslint.config.js
-import globals from "globals";
-import pluginJs from "@eslint/js";
 import tseslint from "typescript-eslint";
-
-// Import plugins directly
 import pluginLit from "eslint-plugin-lit";
 import pluginWc from "eslint-plugin-wc";
 import pluginLitA11y from "eslint-plugin-lit-a11y";
+import globals from "globals";
 
 export default tseslint.config(
   // 1. Global ignores
@@ -22,15 +19,14 @@ export default tseslint.config(
       "postcss.config.js",
       "tailwind.config.js",
       ".kanelrc.js",
-      "eslint.config.js", // Add this file to prevent it from being linted with project-based rules
+      "eslint.config.js",
     ],
   },
 
-  // 2. Base configs
-  pluginJs.configs.recommended,
+  // 2. Base recommended rules for TypeScript (with type checking)
   ...tseslint.configs.recommendedTypeChecked,
 
-  // 3. Lit and Web Component specific configs
+  // 3. Web Component and Lit rules (only apply to components/)
   {
     files: ["components/**/*.ts"],
     plugins: {
@@ -39,10 +35,10 @@ export default tseslint.config(
       "lit-a11y": pluginLitA11y,
     },
     rules: {
-      // Manually apply recommended rules from plugins
       ...pluginLit.configs.recommended.rules,
       ...pluginWc.configs.recommended.rules,
-      // Manually list the lit-a11y recommended rules to avoid compatibility issues
+
+      // Lit A11y rules listed explicitly (avoids config conflicts)
       "lit-a11y/accessible-emoji": "error",
       "lit-a11y/alt-text": "error",
       "lit-a11y/anchor-is-valid": "error",
@@ -74,7 +70,7 @@ export default tseslint.config(
     },
   },
 
-  // 4. Project-wide rule overrides and settings
+  // 4. Project-wide settings & rule overrides
   {
     languageOptions: {
       parserOptions: {
@@ -82,12 +78,16 @@ export default tseslint.config(
         tsconfigRootDir: import.meta.dirname,
       },
       globals: {
-        ...globals.browser,
         ...globals.node,
+        ...globals.browser,
         ...globals.es2021,
       },
     },
     rules: {
+      // Replace deprecated rules safely
+      // "no-unused-expressions": "off",
+      // "@typescript-eslint/no-unused-expressions": "error",
+
       "@typescript-eslint/no-explicit-any": "warn",
       "@typescript-eslint/no-floating-promises": "error",
       "no-console": ["warn", { allow: ["warn", "error", "info", "debug"] }],

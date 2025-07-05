@@ -13,6 +13,9 @@ import type { NewNote } from "../types/generated/public/Note";
 import { Crypto } from "../lib/server/crypto";
 import { parseMarkdownToBlocks } from "../lib/server/parser";
 
+/* --------------------------------------------------------------------------
+   Schemas for mutation arguments
+   -------------------------------------------------------------------------- */
 const CreateNoteMutationArgs = Schema.Struct({
   id: NoteIdSchema,
   title: Schema.String,
@@ -25,11 +28,16 @@ const UpdateNoteMutationArgs = Schema.Struct({
   content: Schema.String,
 });
 
+/* --------------------------------------------------------------------------
+   Error type used throughout this module
+   -------------------------------------------------------------------------- */
 class ReplicachePushError extends Data.TaggedError("ReplicachePushError")<{
   readonly cause: unknown;
 }> {}
 
-// --- START OF FIX: This function now fails with the specific tagged error ---
+/* --------------------------------------------------------------------------
+   Helper: compute lastMutationID with proper error tagging
+   -------------------------------------------------------------------------- */
 const getLastMutationID = (
   req: PushRequest,
 ): Effect.Effect<number, ReplicachePushError, never> =>
@@ -37,13 +45,18 @@ const getLastMutationID = (
     try: () => req.mutations.reduce((max, m) => Math.max(max, m.id), 0),
     catch: (cause) => new ReplicachePushError({ cause }),
   });
-// --- END OF FIX ---
 
+/* ==========================================================================
+   Main entry point
+   ========================================================================== */
 export const handlePush = (
   req: PushRequest,
   userId: UserId,
-): Effect.Effect<void, ReplicachePushError, Db | PokeService | Crypto> => // <-- The error type is now consistent
+): Effect.Effect<void, ReplicachePushError, Db | PokeService | Crypto> =>
   Effect.gen(function* () {
+    /* ---------------------------------------------------------------------- */
+    /* Guard: V0 protocol check                                                */
+    /* ---------------------------------------------------------------------- */
     if (!("clientGroupID" in req)) {
       yield* serverLog(
         "error",
@@ -54,9 +67,9 @@ export const handlePush = (
       return;
     }
 
-    const { clientGroupID, mutations } = req;
+    const { clientGroupID, mutations: originalMutations } = req;
 
-    if (mutations.length === 0) {
+    if (originalMutations.length === 0) {
       yield* serverLog(
         "warn",
         `Push request received with no mutations for clientGroupID: ${clientGroupID}`,
@@ -66,7 +79,16 @@ export const handlePush = (
       return;
     }
 
-    const clientID = mutations[0].clientID;
+    /* ---------------------------------------------------------------------- */
+    /* Fix #1: capture clientID BEFORE sorting                                */
+    /* ---------------------------------------------------------------------- */
+    const clientID = originalMutations[0].clientID;
+
+    /* ---------------------------------------------------------------------- */
+    /* Fix #2: enforce deterministic processing order                         */
+    /* ---------------------------------------------------------------------- */
+    const mutations = [...originalMutations].sort((a, b) => a.id - b.id);
+
     const db = yield* Db;
     const pokeService = yield* PokeService;
 
@@ -79,6 +101,9 @@ export const handlePush = (
 
     const lastMutationID = yield* getLastMutationID(req);
 
+    /* ---------------------------------------------------------------------- */
+    /* Actual transactional work                                              */
+    /* ---------------------------------------------------------------------- */
     const transactionEffect = Effect.tryPromise({
       try: () =>
         db.transaction().execute(async (trx) => {
@@ -91,7 +116,11 @@ export const handlePush = (
                 "Replicache:Push:Mutation",
               ),
             );
+
             switch (mutation.name) {
+              /* ------------------------------------------------------------ */
+              /* createNote — now idempotent                                 */
+              /* ------------------------------------------------------------ */
               case "createNote": {
                 const args = Schema.decodeUnknownSync(CreateNoteMutationArgs)(
                   mutation.args,
@@ -101,19 +130,31 @@ export const handlePush = (
                     "Mutation user_id does not match authenticated user.",
                   );
                 }
+
                 const newNote: NewNote = {
                   id: args.id,
                   title: args.title,
                   content: args.content,
                   user_id: args.user_id,
                 };
-                await trx.insertInto("note").values(newNote).execute();
+
+                // Fix #3: idempotent insert
+                await trx
+                  .insertInto("note")
+                  .values(newNote)
+                  .onConflict((oc) => oc.column("id").doNothing())
+                  .execute();
                 break;
               }
+
+              /* ------------------------------------------------------------ */
+              /* updateNote — skips work if note not present (duplicate‑safe) */
+              /* ------------------------------------------------------------ */
               case "updateNote": {
                 const args = Schema.decodeUnknownSync(UpdateNoteMutationArgs)(
                   mutation.args,
                 );
+
                 const parentNote = await trx
                   .updateTable("note")
                   .set({
@@ -124,11 +165,19 @@ export const handlePush = (
                   .where("id", "=", args.id)
                   .where("user_id", "=", userId)
                   .returningAll()
-                  .executeTakeFirstOrThrow();
+                  .executeTakeFirst();
+
+                // Fix #4: note didn't exist yet – skip child processing
+                if (!parentNote) {
+                  break;
+                }
+
+                // Replace block-level data
                 await trx
                   .deleteFrom("block")
                   .where("note_id", "=", args.id)
                   .execute();
+
                 const childBlocks = await Effect.runPromise(
                   parseMarkdownToBlocks(
                     args.content,
@@ -137,6 +186,7 @@ export const handlePush = (
                     args.id,
                   ),
                 );
+
                 if (childBlocks.length > 0) {
                   await trx.insertInto("block").values(childBlocks).execute();
                 }
@@ -145,6 +195,9 @@ export const handlePush = (
             }
           }
 
+          /* --------------------------------------------------------------- */
+          /* Replicache bookkeeping                                          */
+          /* --------------------------------------------------------------- */
           await trx
             .insertInto("replicache_client")
             .values({
@@ -189,5 +242,8 @@ export const handlePush = (
       ),
     );
 
+    /* -------------------------------------------------------------------- */
+    /* Notify subscribers                                                    */
+    /* -------------------------------------------------------------------- */
     yield* pokeService.poke();
   });
