@@ -15,7 +15,7 @@
 
 # Build Artifacts & Generated Files
 # This project uses a concat.sh script that creates a 'g' file for sharing.
-/g.txt
+/a.txt
 
 # Logs
 # Ignore log files, which can be verbose and environment-specific.

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Define the name for the output file
-OUTPUT_FILE="g.txt"
+OUTPUT_FILE="a.txt"
 
 # Inform the user that the script is starting
 echo "📦 Bundling project files into $OUTPUT_FILE..."
@@ -9,9 +9,13 @@ echo "📦 Bundling project files into $OUTPUT_FILE..."
 # Start with an empty file
 > "$OUTPUT_FILE"
 
-# Find all files, excluding specified directories and the output file itself.
-# Then, for each file found, append its name and content to the output file.
-find . -path './node_modules' -prune -o -path './dist' -prune -o -path './.git' -prune -o -name "$OUTPUT_FILE" -prune -o -type f -print | while IFS= read -r file; do
+# Find all files, excluding specified directories and .eslintcache.
+# Then, filter out the OUTPUT_FILE itself before processing.
+find . -path './node_modules' -prune -o \
+     -path './dist' -prune -o \
+     -path './.git' -prune -o \
+     -name ".eslintcache" -prune -o \
+     -type f -print | grep -vF "$OUTPUT_FILE" | while IFS= read -r file; do
     # Append the file path as a header to the output file
     echo "File: $file" >> "$OUTPUT_FILE"
     
