@@ -3,9 +3,11 @@
 // Idempotent `createNote` mutation handler for Replicache
 // ---------------------------------------------------------------------------
 // Fix:  note.id is optional in `NewNote`, but the SELECT that fetches the
-// existing row requires a non‑null value.  We now assert it is defined via
+// existing row requires a non‑null value.
+// We now assert it is defined via
 // `note.id!` *and* add a runtime guard that throws a validation error if it is
-// missing.  This eliminates the TypeScript "undefined not assignable" compile
+// missing.
+// This eliminates the TypeScript "undefined not assignable" compile
 // error while still protecting runtime correctness.
 // ---------------------------------------------------------------------------
 
@@ -113,7 +115,7 @@ export const createNote = (
       ),
 
       // -------------------------------------------------------------------
-      // 3. Side‑effects: log success, bump CVR & poke clients
+      // 3. Side‑effects: log success and poke clients
       // -------------------------------------------------------------------
       Effect.tap((createdNote) =>
         pipe(
@@ -123,25 +125,16 @@ export const createNote = (
             validatedUserId,
             "CreateNote",
           ),
-          // After creating / retrieving the note, update CVR and poke clients
+          // MODIFICATION: The CVR version bump has been removed.
+          // Poking clients is now the primary responsibility, which tells them
+          // to pull from the new append-only log.
           Effect.andThen(
             serverLog(
               "info",
-              `Incrementing CVR and poking clients for user ${validatedUserId}`,
+              `Poking clients for user ${validatedUserId}`,
               validatedUserId,
               "CreateNote:Replicache",
             ),
-          ),
-          Effect.andThen(
-            Effect.tryPromise({
-              try: () =>
-                db
-                  .updateTable("replicache_client_group")
-                  .set((eb) => ({ cvr_version: eb("cvr_version", "+", 1) }))
-                  .where("user_id", "=", validatedUserId)
-                  .execute(),
-              catch: (e) => new NoteDatabaseError({ cause: e }),
-            }),
           ),
           Effect.andThen(pokeService.poke()),
         ),
@@ -162,6 +155,5 @@ export const createNote = (
         ),
       ),
     );
-
     return result;
   });

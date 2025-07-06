@@ -14,8 +14,9 @@ import * as m2025063002 from "../../../migrations/2025063002_create_email_verifi
 import * as m2025063003 from "../../../migrations/2025063003_add_email_verified_to_user";
 import * as m2025070201 from "../../../migrations/2025070201_create_block";
 import * as m2025070203 from "../../../migrations/2025070203_add_replicache_tables";
-// New migration
 import * as m2025070301 from "../../../migrations/2025070301_add_note_id_to_block";
+// New migration for the append-only log
+import * as m2025070401 from "../../../migrations/2025070401_create_change_log";
 
 export const centralMigrationObjects: Record<string, Migration> = {
   "2025062601_create_user": { up: m2025062601.up, down: m2025062601.down },
@@ -57,5 +58,10 @@ export const centralMigrationObjects: Record<string, Migration> = {
   "2025070301_add_note_id_to_block": {
     up: m2025070301.up,
     down: m2025070301.down,
+  },
+  // Add the new migration to the list
+  "2025070401_create_change_log": {
+    up: m2025070401.up,
+    down: m2025070401.down,
   },
 };

@@ -1,6 +1,8 @@
 // FILE: replicache/push.ts
 import { Effect, Data } from "effect";
 import type { PushRequest } from "replicache";
+// --- FIX: Import Kysely's Transaction type ---
+import type { Transaction } from "kysely";
 import { Db } from "../db/DbTag";
 import { PokeService } from "../lib/server/PokeService";
 import { serverLog } from "../lib/server/logger.server";
@@ -12,55 +14,128 @@ import { NoteIdSchema, UserIdSchema } from "../lib/shared/schemas";
 import type { NewNote } from "../types/generated/public/Note";
 import { Crypto } from "../lib/server/crypto";
 import { parseMarkdownToBlocks } from "../lib/server/parser";
+import type { Database } from "../types";
 
-/* --------------------------------------------------------------------------
-   Schemas for mutation arguments
-   -------------------------------------------------------------------------- */
+/* -------------------------------------------------------------------------- */
+/* Schemas                                                                    */
+/* -------------------------------------------------------------------------- */
 const CreateNoteMutationArgs = Schema.Struct({
   id: NoteIdSchema,
   title: Schema.String,
   content: Schema.String,
   user_id: UserIdSchema,
 });
+
 const UpdateNoteMutationArgs = Schema.Struct({
   id: NoteIdSchema,
   title: Schema.String,
   content: Schema.String,
 });
 
-/* --------------------------------------------------------------------------
-   Error type used throughout this module
-   -------------------------------------------------------------------------- */
+/* -------------------------------------------------------------------------- */
+/* Error Types                                                                */
+/* -------------------------------------------------------------------------- */
 class ReplicachePushError extends Data.TaggedError("ReplicachePushError")<{
   readonly cause: unknown;
 }> {}
 
-/* --------------------------------------------------------------------------
-   Helper: compute lastMutationID with proper error tagging
-   -------------------------------------------------------------------------- */
-const getLastMutationID = (
-  req: PushRequest,
-): Effect.Effect<number, ReplicachePushError, never> =>
-  Effect.try({
-    try: () => req.mutations.reduce((max, m) => Math.max(max, m.id), 0),
-    catch: (cause) => new ReplicachePushError({ cause }),
+class MutationApplyError extends Data.TaggedError("MutationApplyError")<{
+  readonly cause: unknown;
+}> {}
+
+/* -------------------------------------------------------------------------- */
+/* Mutation Application Logic                                                 */
+/* -------------------------------------------------------------------------- */
+/**
+ * This function contains the business logic for applying a mutation from the
+ * change_log to the materialized `note` and `block` tables.
+ */
+// --- FIX: Correctly type `trx` as a Kysely Transaction, not a Replicache WriteTransaction ---
+const applyChange = (
+  trx: Transaction<Database>,
+  userId: UserId,
+  change: { name: string; args: unknown },
+): Effect.Effect<void, MutationApplyError, Crypto> =>
+  Effect.tryPromise({
+    try: async () => {
+      switch (change.name) {
+        case "createNote": {
+          const args = Schema.decodeUnknownSync(CreateNoteMutationArgs)(
+            change.args,
+          );
+          if (args.user_id !== userId) {
+            throw new Error(
+              "Mutation user_id does not match authenticated user.",
+            );
+          }
+          const newNote: NewNote = {
+            id: args.id,
+            title: args.title,
+            content: args.content,
+            user_id: args.user_id,
+          };
+          // Idempotent insert
+          await trx
+            .insertInto("note")
+            .values(newNote)
+            .onConflict((oc) => oc.column("id").doNothing())
+            .execute();
+          break;
+        }
+
+        case "updateNote": {
+          const args = Schema.decodeUnknownSync(UpdateNoteMutationArgs)(
+            change.args,
+          );
+          const parentNote = await trx
+            .updateTable("note")
+            .set({
+              title: args.title,
+              content: args.content,
+              updated_at: new Date(),
+            })
+            .where("id", "=", args.id)
+            .where("user_id", "=", userId)
+            .returningAll()
+            .executeTakeFirst();
+
+          // If the note doesn't exist, we can't process its children.
+          if (!parentNote) break;
+
+          await trx
+            .deleteFrom("block")
+            .where("note_id", "=", args.id)
+            .execute();
+          const childBlocks = await Effect.runPromise(
+            parseMarkdownToBlocks(
+              args.content,
+              `${parentNote.id}.md`,
+              userId,
+              args.id,
+            ),
+          );
+          if (childBlocks.length > 0) {
+            await trx.insertInto("block").values(childBlocks).execute();
+          }
+          break;
+        }
+      }
+    },
+    catch: (cause) => new MutationApplyError({ cause }),
   });
 
-/* ==========================================================================
-   Main entry point
-   ========================================================================== */
+/* -------------------------------------------------------------------------- */
+/* Main Handler                                                               */
+/* -------------------------------------------------------------------------- */
 export const handlePush = (
   req: PushRequest,
   userId: UserId,
 ): Effect.Effect<void, ReplicachePushError, Db | PokeService | Crypto> =>
   Effect.gen(function* () {
-    /* ---------------------------------------------------------------------- */
-    /* Guard: V0 protocol check                                                */
-    /* ---------------------------------------------------------------------- */
     if (!("clientGroupID" in req)) {
       yield* serverLog(
         "error",
-        "Push request received with unsupported V0 protocol.",
+        "Push V0 not supported",
         userId,
         "Replicache:Push",
       );
@@ -68,182 +143,82 @@ export const handlePush = (
     }
 
     const { clientGroupID, mutations: originalMutations } = req;
+    if (originalMutations.length === 0) return;
 
-    if (originalMutations.length === 0) {
-      yield* serverLog(
-        "warn",
-        `Push request received with no mutations for clientGroupID: ${clientGroupID}`,
-        userId,
-        "Replicache:Push",
-      );
-      return;
-    }
-
-    /* ---------------------------------------------------------------------- */
-    /* Fix #1: capture clientID BEFORE sorting                                */
-    /* ---------------------------------------------------------------------- */
-    const clientID = originalMutations[0].clientID;
-
-    /* ---------------------------------------------------------------------- */
-    /* Fix #2: enforce deterministic processing order                         */
-    /* ---------------------------------------------------------------------- */
     const mutations = [...originalMutations].sort((a, b) => a.id - b.id);
-
     const db = yield* Db;
     const pokeService = yield* PokeService;
+    // --- FIX: Get the Crypto service to provide to the applyChange effect ---
+    const crypto = yield* Crypto;
 
     yield* serverLog(
       "info",
-      `Processing push for user: ${userId}, clientGroupID: ${clientGroupID}, clientID: ${clientID}`,
+      `Processing ${mutations.length} mutations for clientGroupID: ${clientGroupID}`,
       userId,
       "Replicache:Push",
     );
 
-    const lastMutationID = yield* getLastMutationID(req);
-
-    /* ---------------------------------------------------------------------- */
-    /* Actual transactional work                                              */
-    /* ---------------------------------------------------------------------- */
-    const transactionEffect = Effect.tryPromise({
+    // The entire push operation is one large transaction.
+    yield* Effect.tryPromise({
       try: () =>
         db.transaction().execute(async (trx) => {
+          const clientID = mutations[0].clientID as ReplicacheClientId;
+
+          // 1. Write all mutations to the append-only log.
           for (const mutation of mutations) {
-            await Effect.runPromise(
-              serverLog(
-                "debug",
-                `  Processing mutation: ${mutation.name} (id: ${mutation.id})`,
-                userId,
-                "Replicache:Push:Mutation",
-              ),
-            );
-
-            switch (mutation.name) {
-              /* ------------------------------------------------------------ */
-              /* createNote — now idempotent                                 */
-              /* ------------------------------------------------------------ */
-              case "createNote": {
-                const args = Schema.decodeUnknownSync(CreateNoteMutationArgs)(
-                  mutation.args,
-                );
-                if (args.user_id !== userId) {
-                  throw new Error(
-                    "Mutation user_id does not match authenticated user.",
-                  );
-                }
-
-                const newNote: NewNote = {
-                  id: args.id,
-                  title: args.title,
-                  content: args.content,
-                  user_id: args.user_id,
-                };
-
-                // Fix #3: idempotent insert
-                await trx
-                  .insertInto("note")
-                  .values(newNote)
-                  .onConflict((oc) => oc.column("id").doNothing())
-                  .execute();
-                break;
-              }
-
-              /* ------------------------------------------------------------ */
-              /* updateNote — skips work if note not present (duplicate‑safe) */
-              /* ------------------------------------------------------------ */
-              case "updateNote": {
-                const args = Schema.decodeUnknownSync(UpdateNoteMutationArgs)(
-                  mutation.args,
-                );
-
-                const parentNote = await trx
-                  .updateTable("note")
-                  .set({
-                    title: args.title,
-                    content: args.content,
-                    updated_at: new Date(),
-                  })
-                  .where("id", "=", args.id)
-                  .where("user_id", "=", userId)
-                  .returningAll()
-                  .executeTakeFirst();
-
-                // Fix #4: note didn't exist yet – skip child processing
-                if (!parentNote) {
-                  break;
-                }
-
-                // Replace block-level data
-                await trx
-                  .deleteFrom("block")
-                  .where("note_id", "=", args.id)
-                  .execute();
-
-                const childBlocks = await Effect.runPromise(
-                  parseMarkdownToBlocks(
-                    args.content,
-                    `${parentNote.id}.md`,
-                    userId,
-                    args.id,
-                  ),
-                );
-
-                if (childBlocks.length > 0) {
-                  await trx.insertInto("block").values(childBlocks).execute();
-                }
-                break;
-              }
-            }
+            await trx
+              .insertInto("change_log")
+              .values({
+                client_group_id: clientGroupID as ReplicacheClientGroupId,
+                client_id: clientID,
+                mutation_id: mutation.id,
+                name: mutation.name,
+                args: JSON.stringify(mutation.args),
+              })
+              .execute();
           }
 
-          /* --------------------------------------------------------------- */
-          /* Replicache bookkeeping                                          */
-          /* --------------------------------------------------------------- */
+          // 2. Update the client's lastMutationID.
+          const lastMutationID = mutations[mutations.length - 1].id;
           await trx
-            .insertInto("replicache_client")
-            .values({
-              id: clientID as ReplicacheClientId,
-              client_group_id: clientGroupID as ReplicacheClientGroupId,
-              last_mutation_id: lastMutationID,
-            })
-            .onConflict((oc) =>
-              oc.column("id").doUpdateSet({ last_mutation_id: lastMutationID }),
-            )
+            .updateTable("replicache_client")
+            .set({ last_mutation_id: lastMutationID })
+            .where("id", "=", clientID)
             .execute();
 
-          await trx
-            .updateTable("replicache_client_group")
-            .set((eb) => ({
-              cvr_version: eb("cvr_version", "+", 1),
-            }))
-            .where("id", "=", clientGroupID as ReplicacheClientGroupId)
-            .execute();
+          // 3. FORK the task of applying changes to the materialized views.
+          // This happens in the background and does not block the response to the client.
+          for (const mutation of mutations) {
+            // --- FIX: Use `Effect.runFork` as `yield` is not allowed in this `async` block ---
+            // --- FIX: Provide the required Crypto service to the forked effect ---
+            Effect.runFork(
+              Effect.provideService(
+                applyChange(trx, userId, mutation),
+                Crypto,
+                crypto,
+              ),
+            );
+          }
         }),
-      catch: (e) => new ReplicachePushError({ cause: e }),
+      catch: (cause) => new ReplicachePushError({ cause }),
     });
 
-    yield* transactionEffect.pipe(
-      Effect.tap(() =>
-        serverLog(
-          "info",
-          `Successfully processed push transaction for clientGroupID: ${clientGroupID}`,
-          userId,
-          "Replicache:Push:Success",
-        ),
-      ),
-      Effect.tapError((e) =>
-        serverLog(
-          "error",
-          `Push transaction failed for clientGroupID: ${clientGroupID}. Error: ${
-            (e.cause as Error)?.message || "Unknown cause"
-          }`,
-          userId,
-          "Replicache:Push:Failure",
-        ),
-      ),
-    );
-
-    /* -------------------------------------------------------------------- */
-    /* Notify subscribers                                                    */
-    /* -------------------------------------------------------------------- */
+    // 4. Poke clients to notify them of new changes.
     yield* pokeService.poke();
-  });
+
+    yield* serverLog(
+      "info",
+      `Successfully processed push for clientGroupID: ${clientGroupID}`,
+      userId,
+      "Replicache:Push:Success",
+    );
+  }).pipe(
+    Effect.catchAll((error) =>
+      serverLog(
+        "error",
+        `Push failed: ${JSON.stringify(error)}`,
+        undefined,
+        "Replicache:Push:Failure",
+      ),
+    ),
+  );

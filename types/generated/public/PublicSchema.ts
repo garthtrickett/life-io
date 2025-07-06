@@ -9,6 +9,7 @@ import type { default as ReplicacheClientTable } from './ReplicacheClient';
 import type { default as KyselyMigrationLockTable } from './KyselyMigrationLock';
 import type { default as EmailVerificationTokenTable } from './EmailVerificationToken';
 import type { default as SessionTable } from './Session';
+import type { default as ChangeLogTable } from './ChangeLog';
 import type { default as NoteTable } from './Note';
 import type { default as KyselyMigrationTable } from './KyselyMigration';
 import type { default as NoteTagTable } from './NoteTag';
@@ -30,6 +31,8 @@ export default interface PublicSchema {
   email_verification_token: EmailVerificationTokenTable;
 
   session: SessionTable;
+
+  change_log: ChangeLogTable;
 
   note: NoteTable;
 
