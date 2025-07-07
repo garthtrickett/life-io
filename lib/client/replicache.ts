@@ -11,10 +11,9 @@ import { formatErrorSync } from "@effect/schema/TreeFormatter";
 import { BlockSchema, NoteSchema } from "../shared/schemas";
 import type { BlockUpdate } from "../../types/generated/public/Block";
 import { clientLog } from "./logger.client";
-import { runClientPromise } from "./runtime";
+import { runClientPromise, runClientUnscoped } from "./runtime";
 import type { NewNote } from "../../types/generated/public/Note";
 import { toError } from "../shared/toError";
-
 /* ───────────────────────────── Types ───────────────────────────────────── */
 
 type Mutators = {
@@ -32,7 +31,6 @@ type Mutators = {
 /* ────────────────────────── Global Instance ───────────────────────────── */
 
 export let rep: Replicache<Mutators> | null = null;
-
 /**
  * Clear the exported `rep` reference.
  * Called from the auth store after we’ve closed the instance on logout.
@@ -41,12 +39,12 @@ export const nullifyReplicache = (): Effect.Effect<void> =>
   Effect.sync(() => {
     rep = null;
   });
-
 /* ──────────────────────────── Helpers ─────────────────────────────────── */
 
 /** Safely stringify anything for logging so we avoid @typescript-eslint/no-base-to-string */
 function stringifyForLog(value: unknown): string {
-  if (value == null) return ""; // null | undefined
+  if (value == null) return "";
+  // null | undefined
   if (typeof value === "string") return value;
   if (typeof value === "number" || typeof value === "boolean")
     return String(value);
@@ -80,6 +78,8 @@ export const initReplicache = (
       licenseKey: "l10f93d37bcd041beba8d111a72da0031",
       pushURL: "/api/replicache/push",
       pullURL: "/api/replicache/pull",
+      pushDelay: 200,
+      pullInterval: 60_000,
 
       /* ──────────────── Mutators ──────────────── */
       mutators: {
@@ -226,7 +226,6 @@ export const initReplicache = (
               version: block.version + 1,
               updated_at: new Date(),
             };
-
             const validated = yield* Schema.decodeUnknown(BlockSchema)(
               updated,
             ).pipe(
@@ -279,7 +278,6 @@ export const initReplicache = (
       ).pipe(Effect.andThen(Effect.die(err))),
     ),
   );
-
 /* ──────────────────────────── WebSocket ───────────────────────────────── */
 
 function setupWebSocket() {
@@ -288,15 +286,40 @@ function setupWebSocket() {
       window.location.host
     }/ws`,
   );
-  ws.onmessage = (event) => {
-    if (event.data === "poke" && rep) {
-      void clientLog(
+
+  // ======================== START OF FIX ========================
+  // The onmessage handler must be async and must await the rep.pull() call.
+  ws.onmessage = async (event) => {
+    runClientUnscoped(
+      clientLog(
         "info",
-        "Poke received, pulling changes…",
+        `Received WebSocket message with data: "${String(event.data)}"`,
         undefined,
         "Replicache:WS",
+      ),
+    );
+
+    if (event.data === "poke" && rep) {
+      runClientUnscoped(
+        clientLog(
+          "info",
+          "Poke received, triggering pull...",
+          undefined,
+          "Replicache:WS",
+        ),
       );
-      void rep.pull();
+      try {
+        // Awaiting the pull is critical to prevent the "out of scope" error.
+        await rep.pull();
+      } catch (e) {
+        runClientUnscoped(
+          clientLog(
+            "error",
+            `Error executing pull after poke: ${toError(e).message}`,
+          ),
+        );
+      }
     }
   };
+  // ========================= END OF FIX =========================
 }

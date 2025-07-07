@@ -5,10 +5,8 @@ import { Db } from "../db/DbTag";
 import { serverLog } from "../lib/server/logger.server";
 import type { Block } from "../types/generated/public/Block";
 import type { Note, NoteId } from "../types/generated/public/Note";
-import type { ReplicacheClientGroupId } from "../types/generated/public/ReplicacheClientGroup";
 import type { UserId } from "../types/generated/public/User";
 import type { ChangeLogId } from "../types/generated/public/ChangeLog";
-
 class PullError extends Data.TaggedError("PullError")<{
   readonly cause: unknown;
 }> {}
@@ -24,28 +22,20 @@ type PullResponse = {
   patch: PatchOperation[];
 };
 
-// --- FIX START: Use the type guard *before* destructuring ---
-
-// Type guard to differentiate a Block from a Note at runtime.
 function isBlock(record: Note | Block): record is Block {
   return "file_path" in record;
 }
 
-// Helper to convert DB records to JSON-safe objects
 const toJSONSafe = (record: Note | Block): ReadonlyJSONValue => {
   if (isBlock(record)) {
-    // Inside this block, TypeScript knows `record` is a `Block`.
-    // It's now safe to destructure the 'fields' property.
     const { fields, ...rest } = record;
     return {
       ...rest,
       created_at: record.created_at.toISOString(),
       updated_at: record.updated_at.toISOString(),
-      // Add the 'fields' property back in, correctly cast for Replicache.
       fields: fields as ReadonlyJSONValue,
     };
   } else {
-    // Inside this block, `record` is a `Note` and has no 'fields' property.
     return {
       ...record,
       created_at: record.created_at.toISOString(),
@@ -53,7 +43,6 @@ const toJSONSafe = (record: Note | Block): ReadonlyJSONValue => {
     };
   }
 };
-// --- FIX END ---
 
 export const handlePull = (
   userId: UserId,
@@ -84,26 +73,9 @@ export const handlePull = (
       ? parseInt(String(serverVersionResult.max_id), 10)
       : 0;
 
-    const clients = yield* Effect.tryPromise({
-      try: () =>
-        db
-          .selectFrom("replicache_client")
-          .where(
-            "client_group_id",
-            "=",
-            clientGroupID as ReplicacheClientGroupId,
-          )
-          .select(["id", "last_mutation_id as lastMutationID"])
-          .execute(),
-      catch: (cause) => new PullError({ cause }),
-    });
-    const lastMutationIDChanges = clients.reduce<Record<string, number>>(
-      (acc, client) => {
-        acc[client.id] = client.lastMutationID;
-        return acc;
-      },
-      {},
-    );
+    // --- START OF FIX ---
+
+    // If the client is already up-to-date, return an empty changes map.
     if (lastSeenVersion === serverVersion) {
       yield* serverLog(
         "info",
@@ -111,8 +83,38 @@ export const handlePull = (
         userId,
         "Replicache:Pull",
       );
-      return { lastMutationIDChanges, cookie: serverVersion, patch: [] };
+      return { lastMutationIDChanges: {}, cookie: serverVersion, patch: [] };
     }
+
+    // This logic now only runs if the client is behind the server.
+    const clients = yield* Effect.tryPromise({
+      try: () =>
+        db
+          .selectFrom("replicache_client")
+          // Correctly join to find all clients for the current USER, not just the current client group.
+          .innerJoin(
+            "replicache_client_group",
+            "replicache_client.client_group_id",
+            "replicache_client_group.id",
+          )
+          .where("replicache_client_group.user_id", "=", userId)
+          .select([
+            "replicache_client.id",
+            "replicache_client.last_mutation_id as lastMutationID",
+          ])
+          .execute(),
+      catch: (cause) => new PullError({ cause }),
+    });
+
+    const lastMutationIDChanges = clients.reduce<Record<string, number>>(
+      (acc, client) => {
+        acc[client.id] = client.lastMutationID;
+        return acc;
+      },
+      {},
+    );
+
+    // --- END OF FIX ---
 
     const patch: PullResponse["patch"] = [];
     if (lastSeenVersion === 0) {
@@ -170,17 +172,11 @@ export const handlePull = (
             .selectFrom("change_log")
             .where("id", ">", String(lastSeenVersion) as ChangeLogId)
             .where("id", "<=", String(serverVersion) as ChangeLogId)
-            .where(
-              "client_group_id",
-              "=",
-              clientGroupID as ReplicacheClientGroupId,
-            )
             .orderBy("id", "asc")
             .selectAll()
             .execute(),
         catch: (cause) => new PullError({ cause }),
       });
-
       for (const change of changes) {
         const args = change.args as {
           id: string;

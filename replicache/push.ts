@@ -1,7 +1,6 @@
-// FILE: replicache/push.ts
+// replicache/push.ts
 import { Effect, Data } from "effect";
 import type { PushRequest } from "replicache";
-// --- FIX: Import Kysely's Transaction type ---
 import type { Transaction } from "kysely";
 import { Db } from "../db/DbTag";
 import { PokeService } from "../lib/server/PokeService";
@@ -15,7 +14,7 @@ import type { NewNote } from "../types/generated/public/Note";
 import { Crypto } from "../lib/server/crypto";
 import { parseMarkdownToBlocks } from "../lib/server/parser";
 import type { Database } from "../types";
-
+import { toError } from "../lib/shared/toError";
 /* -------------------------------------------------------------------------- */
 /* Schemas                                                                    */
 /* -------------------------------------------------------------------------- */
@@ -25,13 +24,11 @@ const CreateNoteMutationArgs = Schema.Struct({
   content: Schema.String,
   user_id: UserIdSchema,
 });
-
 const UpdateNoteMutationArgs = Schema.Struct({
   id: NoteIdSchema,
   title: Schema.String,
   content: Schema.String,
 });
-
 /* -------------------------------------------------------------------------- */
 /* Error Types                                                                */
 /* -------------------------------------------------------------------------- */
@@ -50,7 +47,6 @@ class MutationApplyError extends Data.TaggedError("MutationApplyError")<{
  * This function contains the business logic for applying a mutation from the
  * change_log to the materialized `note` and `block` tables.
  */
-// --- FIX: Correctly type `trx` as a Kysely Transaction, not a Replicache WriteTransaction ---
 const applyChange = (
   trx: Transaction<Database>,
   userId: UserId,
@@ -98,10 +94,7 @@ const applyChange = (
             .where("user_id", "=", userId)
             .returningAll()
             .executeTakeFirst();
-
-          // If the note doesn't exist, we can't process its children.
           if (!parentNote) break;
-
           await trx
             .deleteFrom("block")
             .where("note_id", "=", args.id)
@@ -123,7 +116,6 @@ const applyChange = (
     },
     catch: (cause) => new MutationApplyError({ cause }),
   });
-
 /* -------------------------------------------------------------------------- */
 /* Main Handler                                                               */
 /* -------------------------------------------------------------------------- */
@@ -148,7 +140,6 @@ export const handlePush = (
     const mutations = [...originalMutations].sort((a, b) => a.id - b.id);
     const db = yield* Db;
     const pokeService = yield* PokeService;
-    // --- FIX: Get the Crypto service to provide to the applyChange effect ---
     const crypto = yield* Crypto;
 
     yield* serverLog(
@@ -164,8 +155,25 @@ export const handlePush = (
         db.transaction().execute(async (trx) => {
           const clientID = mutations[0].clientID as ReplicacheClientId;
 
-          // 1. Write all mutations to the append-only log.
+          await trx
+            .insertInto("replicache_client_group")
+            .values({
+              id: clientGroupID as ReplicacheClientGroupId,
+              user_id: userId,
+            })
+            .onConflict((oc) => oc.doNothing())
+            .execute();
+          await trx
+            .insertInto("replicache_client")
+            .values({
+              id: clientID,
+              client_group_id: clientGroupID as ReplicacheClientGroupId,
+            })
+            .onConflict((oc) => oc.doNothing())
+            .execute();
+
           for (const mutation of mutations) {
+            // 1. Write to the append-only log.
             await trx
               .insertInto("change_log")
               .values({
@@ -176,36 +184,42 @@ export const handlePush = (
                 args: JSON.stringify(mutation.args),
               })
               .execute();
-          }
 
-          // 2. Update the client's lastMutationID.
-          const lastMutationID = mutations[mutations.length - 1].id;
-          await trx
-            .updateTable("replicache_client")
-            .set({ last_mutation_id: lastMutationID })
-            .where("id", "=", clientID)
-            .execute();
-
-          // 3. FORK the task of applying changes to the materialized views.
-          // This happens in the background and does not block the response to the client.
-          for (const mutation of mutations) {
-            // --- FIX: Use `Effect.runFork` as `yield` is not allowed in this `async` block ---
-            // --- FIX: Provide the required Crypto service to the forked effect ---
-            Effect.runFork(
+            // ======================== START OF FIX ========================
+            // 2. Apply the change to the materialized view synchronously.
+            //    Use `await` here because we are inside a native `async` function.
+            await Effect.runPromise(
               Effect.provideService(
                 applyChange(trx, userId, mutation),
                 Crypto,
                 crypto,
               ),
             );
+            // ========================= END OF FIX =========================
           }
+
+          const lastMutationID = mutations[mutations.length - 1].id;
+          await trx
+            .updateTable("replicache_client")
+            .set({ last_mutation_id: lastMutationID })
+            .where("id", "=", clientID)
+            .execute();
         }),
       catch: (cause) => new ReplicachePushError({ cause }),
     });
 
-    // 4. Poke clients to notify them of new changes.
-    yield* pokeService.poke();
-
+    // 5. Poke clients to notify them of new changes.
+    yield* pokeService.poke().pipe(
+      Effect.catchAllDefect((defect) => {
+        const error = toError(defect);
+        return serverLog(
+          "error",
+          `Failed to send poke after push: ${error.message}`,
+          userId,
+          "Replicache:Push:Poke",
+        );
+      }),
+    );
     yield* serverLog(
       "info",
       `Successfully processed push for clientGroupID: ${clientGroupID}`,
