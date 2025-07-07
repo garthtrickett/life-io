@@ -1,11 +1,13 @@
 // FILE: ./elysia.ts
-import { Cause, Effect, Exit, Schedule, Duration, pipe } from "effect";
+import { Cause, Effect, Schedule, Duration, pipe } from "effect";
 import { makeApp } from "./elysia/routes";
+// --- START OF DEFINITIVE FIX: Use the singleton runtime for the main app startup ---
 import {
-  ServerLive,
   runServerPromise,
   runServerUnscoped,
+  shutdownServer,
 } from "./lib/server/runtime";
+// --- END OF DEFINITIVE FIX ---
 import { serverLog } from "./lib/server/logger.server";
 import {
   cleanupExpiredTokensEffect,
@@ -15,11 +17,7 @@ import {
 const setupApp = Effect.gen(function* () {
   const app = yield* makeApp;
 
-  // This is the global error handler for the entire Elysia app.
   app.onError(({ code, error, set }) => {
-    // --- START OF DEFINITIVE FIX ---
-
-    // 1. Safely get a descriptive message for both logging and the client.
     let descriptiveMessage: string;
     if (error instanceof Error) {
       descriptiveMessage = error.message;
@@ -28,28 +26,24 @@ const setupApp = Effect.gen(function* () {
       error !== null &&
       "message" in error
     ) {
-      // Handle objects with a 'message' property
       descriptiveMessage = String((error as { message: unknown }).message);
-    } else if (typeof error === "object" && error !== null) {
-      // For any other object, stringify it to avoid "[object Object]".
-      descriptiveMessage =
-        "An object was thrown as an error. See server logs for details.";
     } else {
-      // For primitives, String() is safe.
       descriptiveMessage = String(error);
     }
 
-    // 2. Log the detailed error information on the server.
-    runServerUnscoped(
+    void runServerUnscoped(
       serverLog(
         "error",
-        `[Elysia onError] Caught a ${code} error: ${JSON.stringify(error, null, 2)}`,
+        `[Elysia onError] Caught a ${code} error: ${JSON.stringify(
+          error,
+          null,
+          2,
+        )}`,
         undefined,
         "Elysia:GlobalError",
       ),
     );
 
-    // 3. Check if the error is the specific `ApiError` from our `effectHandler`.
     if (
       typeof error === "object" &&
       error !== null &&
@@ -59,7 +53,6 @@ const setupApp = Effect.gen(function* () {
       const apiError = error as { message: string; cause?: unknown };
       let originalErrorTag = "UnknownCause";
 
-      // 4. Safely check the *cause* of the ApiError to find the original error's tag.
       const cause = apiError.cause;
       if (
         typeof cause === "object" &&
@@ -70,52 +63,42 @@ const setupApp = Effect.gen(function* () {
         originalErrorTag = (cause as { _tag: string })._tag;
       }
 
-      // 5. Set the HTTP status code based on the original error's tag.
       switch (originalErrorTag) {
         case "AuthError":
-          set.status = 401; // Unauthorized
+          set.status = 401;
           break;
         case "FileError":
         case "InvalidPullRequestError":
         case "NoteValidationError":
-          set.status = 400; // Bad Request
+          set.status = 400;
           break;
         case "NoteNotFoundError":
-          set.status = 404; // Not Found
+          set.status = 404;
           break;
-        // All other specific, but internal, errors default to 500.
-        case "ReplicachePushError":
-        case "PullError":
-        case "NoteDatabaseError":
         default:
-          set.status = 500; // Internal Server Error
+          set.status = 500;
           break;
       }
 
-      // 6. Return a structured JSON response to the client.
       return {
         error: {
           type: originalErrorTag,
-          message: apiError.message, // This is the detailed message we want.
+          message: apiError.message,
         },
       };
     }
 
-    // 7. If it wasn't an ApiError, it's something else from the framework.
-    //    Return a more descriptive (but still safe) response.
     set.status = 500;
     return {
       error: {
         type: "UnknownServerError",
-        message: descriptiveMessage, // Use the more descriptive message.
+        message: descriptiveMessage,
       },
     };
-    // --- END OF DEFINITIVE FIX ---
   });
 
-  // Request logger
   app.onBeforeHandle(({ request }) => {
-    runServerUnscoped(
+    void runServerUnscoped(
       serverLog(
         "debug",
         `[SERVER IN] ${request.method} ${new URL(request.url).pathname}`,
@@ -126,7 +109,7 @@ const setupApp = Effect.gen(function* () {
   });
 
   // Scheduled Jobs
-  yield* Effect.forkDaemon(
+  void runServerUnscoped(
     pipe(
       cleanupExpiredTokensEffect,
       Effect.repeat(Schedule.spaced(Duration.hours(24))),
@@ -141,7 +124,7 @@ const setupApp = Effect.gen(function* () {
     ),
   );
 
-  yield* Effect.forkDaemon(
+  void runServerUnscoped(
     pipe(
       retryFailedEmailsEffect,
       Effect.repeat(
@@ -165,13 +148,13 @@ const setupApp = Effect.gen(function* () {
 });
 
 // --- Application Entry Point ---
-const program = Effect.provide(setupApp, ServerLive);
-
-void Effect.runPromiseExit(program).then((exit) => {
-  if (Exit.isSuccess(exit)) {
-    const app = exit.value;
+// --- START OF DEFINITIVE FIX: The main program is now run with our singleton runtime ---
+// We no longer use Effect.provide here, as the runtime handles it.
+// `runServerPromise` returns a native Promise, simplifying the .then/.catch chain.
+runServerPromise(setupApp)
+  .then((app) => {
     const server = app.listen(42069, () => {
-      runServerUnscoped(
+      void runServerUnscoped(
         serverLog(
           "info",
           `🦊 Elysia server with tRPC listening on http://localhost:42069`,
@@ -184,17 +167,19 @@ void Effect.runPromiseExit(program).then((exit) => {
     const gracefulShutdown = async (signal: string) => {
       console.info(`\nReceived ${signal}. Shutting down gracefully...`);
       await server.stop();
-      await runServerPromise(
-        serverLog("info", "Graceful shutdown complete. Exiting."),
-      );
+      // This will now properly release all resources (DB connections, PubSub, etc.)
+      await shutdownServer();
+      console.log("Graceful shutdown complete. Exiting.");
       process.exit(0);
     };
 
     process.on("SIGINT", () => void gracefulShutdown("SIGINT"));
     process.on("SIGTERM", () => void gracefulShutdown("SIGTERM"));
-  } else {
+  })
+  .catch((err) => {
     console.error("\n❌ Server setup failed. Details below:\n");
-    console.error(Cause.pretty(exit.cause));
+    const cause = Cause.isCause(err) ? err : Cause.die(err);
+    console.error(Cause.pretty(cause));
     process.exit(1);
-  }
-});
+  });
+// --- END OF DEFINITIVE FIX ---

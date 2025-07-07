@@ -44,7 +44,7 @@ export const NoteDetailView = (id: string): ViewResult => {
       Effect.tap((m) =>
         clientLog(
           "debug",
-          `Rendering NoteDetailView with state: ${JSON.stringify({
+          `Rendering NoteDetailView with state:
             ...m,
             saveFiber: m.saveFiber ? "FIBER_EXISTS" : null,
           })}`,

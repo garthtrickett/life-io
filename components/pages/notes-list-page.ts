@@ -46,7 +46,7 @@ export const NotesView = (): ViewResult => {
       Effect.tap((m) =>
         clientLog(
           "debug",
-          `Rendering NotesView with state: ${JSON.stringify(m)}`,
+          `Rendering NotesView with state:`,
           undefined,
           "NotesView:render",
         ),

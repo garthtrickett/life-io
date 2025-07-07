@@ -43,8 +43,7 @@ export const nullifyReplicache = (): Effect.Effect<void> =>
 
 /** Safely stringify anything for logging so we avoid @typescript-eslint/no-base-to-string */
 function stringifyForLog(value: unknown): string {
-  if (value == null) return "";
-  // null | undefined
+  if (value == null) return ""; // null | undefined
   if (typeof value === "string") return value;
   if (typeof value === "number" || typeof value === "boolean")
     return String(value);
@@ -287,39 +286,62 @@ function setupWebSocket() {
     }/ws`,
   );
 
-  // ======================== START OF FIX ========================
-  // The onmessage handler must be async and must await the rep.pull() call.
-  ws.onmessage = async (event) => {
+  ws.onopen = () => {
     runClientUnscoped(
       clientLog(
         "info",
-        `Received WebSocket message with data: "${String(event.data)}"`,
+        "[POKE DEBUG] WebSocket connection opened.",
         undefined,
         "Replicache:WS",
       ),
     );
+  };
 
+  ws.onerror = (event) => {
+    runClientUnscoped(
+      clientLog(
+        "error",
+        `[POKE DEBUG] WebSocket error. Event: ${JSON.stringify(event)}`,
+        undefined,
+        "Replicache:WS",
+      ),
+    );
+  };
+
+  // The onmessage handler is now a regular synchronous function.
+  ws.onmessage = (event) => {
     if (event.data === "poke" && rep) {
-      runClientUnscoped(
-        clientLog(
-          "info",
-          "Poke received, triggering pull...",
-          undefined,
-          "Replicache:WS",
-        ),
-      );
-      try {
-        // Awaiting the pull is critical to prevent the "out of scope" error.
-        await rep.pull();
-      } catch (e) {
-        runClientUnscoped(
-          clientLog(
-            "error",
-            `Error executing pull after poke: ${toError(e).message}`,
-          ),
-        );
-      }
+      // We wrap the async logic in a self-executing async function.
+      // This makes the onmessage handler return `void` immediately,
+      // while the async pull runs independently.
+      (async () => {
+        try {
+          runClientUnscoped(
+            clientLog(
+              "info",
+              "[POKE DEBUG] Poke received, awaiting rep.pull()...",
+              undefined,
+              "Replicache:WS",
+            ),
+          );
+          await rep.pull();
+          runClientUnscoped(
+            clientLog(
+              "info",
+              "[POKE DEBUG] rep.pull() completed successfully after poke.",
+              undefined,
+              "Replicache:WS",
+            ),
+          );
+        } catch (e) {
+          runClientUnscoped(
+            clientLog(
+              "error",
+              `[POKE DEBUG] Error executing pull after poke: ${toError(e).message}`,
+            ),
+          );
+        }
+      })();
     }
   };
-  // ========================= END OF FIX =========================
 }

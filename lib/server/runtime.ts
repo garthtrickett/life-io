@@ -1,5 +1,5 @@
-// lib/server/runtime.ts
-import { Effect, Layer } from "effect";
+// FILE: lib/server/runtime.ts
+import { Effect, Layer, Runtime, Scope, Exit } from "effect";
 import type { ConfigError } from "effect/ConfigError";
 import type { Db } from "../../db/DbTag";
 import { DbLayer } from "../../db/DbLayer";
@@ -17,8 +17,7 @@ const ServerServices = Layer.mergeAll(
   PokeServiceLive,
 );
 
-// 2. This is the "recipe" for building all our services.
-//    It now includes robust error handling for configuration issues.
+// 2. Define the full application layer.
 export const ServerLive = ServerServices.pipe(
   Layer.provide(ConfigLive),
   Layer.catchAll((error: ConfigError) => {
@@ -33,33 +32,41 @@ export const ServerLive = ServerServices.pipe(
 // Define the context type that our server effects will require.
 export type ServerContext = Db | S3 | Crypto | PokeService;
 
+// --- START OF DEFINITIVE FIX ---
+
+// 3. Create a single scope for the application's entire lifecycle.
+const appScope = Effect.runSync(Scope.make());
+
+// 4. Build the layer within that scope to create the singleton runtime.
+const AppRuntime = Effect.runSync(
+  Scope.extend(Layer.toRuntime(ServerLive), appScope),
+);
+
 /**
- * Executes a server-side Effect and returns a Promise of its result.
- * This function takes an effect that requires services from our application,
- * provides the live implementations via `ServerLive`, and then runs it.
+ * The singleton runtime containing all live services for the application.
+ */
+export const serverRuntime = AppRuntime;
+
+/**
+ * Executes a server-side Effect and returns a Promise, using the shared singleton runtime.
  */
 export const runServerPromise = <A, E>(
   effect: Effect.Effect<A, E, ServerContext>,
-) => {
-  const providedEffect: Effect.Effect<A, E, never> = Effect.provide(
-    effect,
-    ServerLive,
-  );
-
-  return Effect.runPromise(providedEffect);
-};
+) => Runtime.runPromise(serverRuntime)(effect);
 
 /**
- * Executes a server-side Effect in a "fire-and-forget" manner.
- * This function takes an effect, provides its required services,
- * and then forks it into the background.
+ * Executes a server-side Effect in a "fire-and-forget" manner, using the shared singleton runtime.
  */
 export const runServerUnscoped = <A, E>(
   effect: Effect.Effect<A, E, ServerContext>,
-) => {
-  const providedEffect: Effect.Effect<A, E, never> = Effect.provide(
-    effect,
-    ServerLive,
-  );
-  return Effect.runFork(providedEffect);
-};
+) => Runtime.runFork(serverRuntime)(effect);
+
+/**
+ * A dedicated function to gracefully shut down the application's runtime.
+ * It closes the application's scope, which releases all resources (like DB connections and PubSub).
+ * The exit type is corrected to use `Exit.succeed(undefined)`.
+ */
+export const shutdownServer = () =>
+  Effect.runPromise(Scope.close(appScope, Exit.succeed(undefined)));
+
+// --- END OF DEFINITIVE FIX ---
