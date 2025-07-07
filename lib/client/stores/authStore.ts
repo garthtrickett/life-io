@@ -5,7 +5,7 @@ import { trpc } from "../../../lib/client/trpc";
 import type { User } from "../../../types/generated/public/User";
 import { runClientUnscoped } from "../runtime";
 import { clientLog } from "../logger.client";
-import { rep, initReplicache, nullifyReplicache } from "../replicache";
+import { rep, initReplicache, nullifyReplicache } from "../replicache/index";
 import { makeIDBName, dropDatabase } from "replicache";
 // --- START OF FIX: Import the toError utility ---
 import { toError } from "../../../lib/shared/toError";

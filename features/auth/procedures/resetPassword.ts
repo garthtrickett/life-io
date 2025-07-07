@@ -1,5 +1,5 @@
 // features/auth/procedures/resetPassword.ts
-import { Effect, pipe } from "effect";
+import { Effect } from "effect";
 import { publicProcedure } from "../../../trpc/trpc";
 import { sResetPasswordInput } from "../schemas";
 import { Db } from "../../../db/DbTag";
@@ -19,78 +19,62 @@ export const resetPasswordProcedure = publicProcedure
   .input(sResetPasswordInput)
   .mutation(({ input }) => {
     const { token, password } = input;
-    const program = pipe(
-      Db,
-      Effect.flatMap((db) =>
-        Effect.tryPromise({
+
+    const program = Effect.gen(function* () {
+      const db = yield* Db;
+
+      const storedToken = yield* Effect.tryPromise({
+        try: () =>
+          db
+            .selectFrom("password_reset_token")
+            .selectAll()
+            .where("id", "=", token as PasswordResetTokenId)
+            .executeTakeFirst(),
+        catch: (cause) => new AuthDatabaseError({ cause }),
+      });
+
+      // --- CORRECTED FIX ---
+      // Check for a valid and non-expired token. The rest of the logic is nested
+      // inside this block, guaranteeing `storedToken` is defined and valid.
+      if (storedToken && isWithinExpirationDate(storedToken.expires_at)) {
+        // Now, all subsequent uses of `storedToken` are safe.
+        yield* Effect.tryPromise({
           try: () =>
             db
-              .selectFrom("password_reset_token")
-              .selectAll()
-              .where("id", "=", token as PasswordResetTokenId)
-              .executeTakeFirst(),
+              .deleteFrom("password_reset_token")
+              .where("id", "=", storedToken.id)
+              .execute(),
           catch: (cause) => new AuthDatabaseError({ cause }),
-        }),
-      ),
-      Effect.flatMap((storedToken) =>
-        pipe(
-          Effect.sync(() => storedToken),
-          Effect.filterOrFail(
-            (t): t is NonNullable<typeof t> =>
-              !!t && isWithinExpirationDate(t.expires_at),
-            () => new TokenInvalidError(),
-          ),
-          Effect.tap((validToken) =>
-            pipe(
-              Db,
-              Effect.flatMap((db) =>
-                Effect.tryPromise({
-                  try: () =>
-                    db
-                      .deleteFrom("password_reset_token")
-                      .where("id", "=", validToken.id)
-                      .execute(),
-                  catch: (cause) => new AuthDatabaseError({ cause }),
-                }),
-              ),
-            ),
-          ),
-        ),
-      ),
-      Effect.flatMap((storedToken) =>
-        pipe(
-          Effect.tryPromise({
-            try: () => argon2id.hash(password),
-            catch: (cause) => new PasswordHashingError({ cause }),
-          }),
-          Effect.flatMap((passwordHash) =>
-            pipe(
-              Db,
-              Effect.flatMap((db) =>
-                Effect.tryPromise({
-                  try: () =>
-                    db
-                      .updateTable("user")
-                      .set({ password_hash: passwordHash })
-                      .where("id", "=", storedToken.user_id)
-                      .execute(),
-                  catch: (cause) => new AuthDatabaseError({ cause }),
-                }),
-              ),
-              Effect.tap(() =>
-                serverLog(
-                  "info",
-                  `Password reset successfully for user ${storedToken.user_id}`,
-                  storedToken.user_id,
-                  "auth:resetPassword",
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-      Effect.map(() => ({ success: true })),
-    ).pipe(
+        });
+
+        const newPasswordHash = yield* Effect.tryPromise({
+          try: () => argon2id.hash(password),
+          catch: (cause) => new PasswordHashingError({ cause }),
+        });
+
+        yield* Effect.tryPromise({
+          try: () =>
+            db
+              .updateTable("user")
+              .set({ password_hash: newPasswordHash })
+              .where("id", "=", storedToken.user_id)
+              .execute(),
+          catch: (cause) => new AuthDatabaseError({ cause }),
+        });
+
+        yield* serverLog(
+          "info",
+          `Password reset successfully for user ${storedToken.user_id}`,
+          storedToken.user_id,
+          "auth:resetPassword",
+        );
+
+        return { success: true };
+      } else {
+        // If the token is invalid or expired, fail the Effect.
+        yield* Effect.fail(new TokenInvalidError());
+      }
+    }).pipe(
       Effect.catchTags({
         TokenInvalidError: () =>
           Effect.fail(
