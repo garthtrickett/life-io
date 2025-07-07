@@ -41,7 +41,7 @@ export const NoteDetailView = (id: string): ViewResult => {
 
     const renderEffect = Ref.get(model).pipe(
       Effect.tap((m) => renderView(container, m, propose)),
-      Effect.tap((m) =>
+      Effect.tap(() =>
         clientLog(
           "debug",
           `Rendering NoteDetailView with state:

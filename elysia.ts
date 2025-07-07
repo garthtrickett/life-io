@@ -1,13 +1,11 @@
 // FILE: ./elysia.ts
 import { Cause, Effect, Schedule, Duration, pipe } from "effect";
 import { makeApp } from "./elysia/routes";
-// --- START OF DEFINITIVE FIX: Use the singleton runtime for the main app startup ---
 import {
   runServerPromise,
   runServerUnscoped,
   shutdownServer,
 } from "./lib/server/runtime";
-// --- END OF DEFINITIVE FIX ---
 import { serverLog } from "./lib/server/logger.server";
 import {
   cleanupExpiredTokensEffect,
@@ -19,6 +17,7 @@ const setupApp = Effect.gen(function* () {
 
   app.onError(({ code, error, set }) => {
     let descriptiveMessage: string;
+    // --- START OF FIX 1: Use a helper or JSON.stringify for better error logging ---
     if (error instanceof Error) {
       descriptiveMessage = error.message;
     } else if (
@@ -28,17 +27,15 @@ const setupApp = Effect.gen(function* () {
     ) {
       descriptiveMessage = String((error as { message: unknown }).message);
     } else {
-      descriptiveMessage = String(error);
+      // For any other type, stringify it safely.
+      descriptiveMessage = JSON.stringify(error, null, 2);
     }
+    // --- END OF FIX 1 ---
 
     void runServerUnscoped(
       serverLog(
         "error",
-        `[Elysia onError] Caught a ${code} error: ${JSON.stringify(
-          error,
-          null,
-          2,
-        )}`,
+        `[Elysia onError] Caught a ${code} error: ${descriptiveMessage}`,
         undefined,
         "Elysia:GlobalError",
       ),
@@ -58,7 +55,7 @@ const setupApp = Effect.gen(function* () {
         typeof cause === "object" &&
         cause !== null &&
         "_tag" in cause &&
-        typeof (cause as { _tag: unknown })._tag === "string"
+        typeof (cause as { _tag: string })._tag === "string"
       ) {
         originalErrorTag = (cause as { _tag: string })._tag;
       }
@@ -107,7 +104,6 @@ const setupApp = Effect.gen(function* () {
       ),
     );
   });
-
   // Scheduled Jobs
   void runServerUnscoped(
     pipe(
@@ -143,14 +139,10 @@ const setupApp = Effect.gen(function* () {
       ),
     ),
   );
-
   return app;
 });
 
 // --- Application Entry Point ---
-// --- START OF DEFINITIVE FIX: The main program is now run with our singleton runtime ---
-// We no longer use Effect.provide here, as the runtime handles it.
-// `runServerPromise` returns a native Promise, simplifying the .then/.catch chain.
 runServerPromise(setupApp)
   .then((app) => {
     const server = app.listen(42069, () => {
@@ -165,11 +157,19 @@ runServerPromise(setupApp)
     });
 
     const gracefulShutdown = async (signal: string) => {
-      console.info(`\nReceived ${signal}. Shutting down gracefully...`);
+      // --- START OF FIX 2: Replace console.info with a server log ---
+      await runServerPromise(
+        serverLog(
+          "info",
+          `Received ${signal}. Shutting down gracefully...`,
+          undefined,
+          "Shutdown",
+        ),
+      );
+      // --- END OF FIX 2 ---
       await server.stop();
-      // This will now properly release all resources (DB connections, PubSub, etc.)
       await shutdownServer();
-      console.log("Graceful shutdown complete. Exiting.");
+      console.warn("Graceful shutdown complete. Exiting.");
       process.exit(0);
     };
 
@@ -182,4 +182,3 @@ runServerPromise(setupApp)
     console.error(Cause.pretty(cause));
     process.exit(1);
   });
-// --- END OF DEFINITIVE FIX ---

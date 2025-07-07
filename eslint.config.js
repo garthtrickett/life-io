@@ -14,7 +14,7 @@ export default tseslint.config(
       "g.txt",
       "types/generated/",
       "*.cjs",
-      "llm-context/",
+      "llm/",
       "vite.config.ts",
       "postcss.config.js",
       "tailwind.config.js",

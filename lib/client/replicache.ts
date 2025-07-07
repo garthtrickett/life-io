@@ -126,7 +126,9 @@ export const initReplicache = (
             }),
           );
 
+          // --- START OF FIX: Return the promise from runClientPromise ---
           return runClientPromise(handled);
+          // --- END OF FIX ---
         },
 
         /* ---------------- updateNote ---------------- */
@@ -314,7 +316,7 @@ function setupWebSocket() {
       // We wrap the async logic in a self-executing async function.
       // This makes the onmessage handler return `void` immediately,
       // while the async pull runs independently.
-      (async () => {
+      void (async () => {
         try {
           runClientUnscoped(
             clientLog(
