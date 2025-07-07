@@ -1,66 +1,53 @@
-// FILE: features/notes/getNotes.ts
 import { Effect, pipe } from "effect";
 import { Db } from "../../db/DbTag";
-import { serverLog } from "../../lib/server/logger.server";
 import { validateUserId } from "../../lib/shared/domain";
 import { NoteDatabaseError, NoteValidationError } from "./Errors";
 import { Schema } from "@effect/schema";
 import { NotesSchema } from "../../lib/shared/schemas";
+import type { Note } from "../../types/generated/public/Note";
+import { withGetNotesLogging } from "./wrappers";
 
-export const getNotes = (userId: string) =>
+/**
+ * Core business logic for fetching *all* notes for a user.
+ * Returns a **readonly** array – the natural shape from Kysely and the schema.
+ */
+const getNotesEffect = (
+  userId: string,
+): Effect.Effect<
+  readonly Note[],
+  NoteDatabaseError | NoteValidationError,
+  Db
+> =>
   Effect.gen(function* () {
-    const validatedUserId = yield* validateUserId(userId);
+    // 1. Validate inputs
+    const validatedUserId = yield* validateUserId(userId).pipe(
+      Effect.mapError((cause) => new NoteValidationError({ cause })),
+    );
+
+    // 2. Get dependencies
     const db = yield* Db;
 
-    yield* Effect.forkDaemon(
-      serverLog(
-        "info",
-        `Attempting to fetch all notes for user ID: "${validatedUserId}"`,
-        validatedUserId,
-        "GetNotes",
-      ),
-    );
+    // 3. Perform the main operation
+    const rows = yield* Effect.tryPromise({
+      try: () =>
+        db
+          .selectFrom("note")
+          .selectAll()
+          .where("user_id", "=", validatedUserId)
+          .orderBy("updated_at", "desc")
+          .execute(), // ← returns readonly Note[]
+      catch: (cause) => new NoteDatabaseError({ cause }),
+    });
 
-    const result = yield* pipe(
-      Effect.tryPromise({
-        try: () =>
-          db
-            .selectFrom("note")
-            .selectAll()
-            .where("user_id", "=", validatedUserId)
-            .orderBy("updated_at", "desc")
-            .execute(),
-        catch: (error) => new NoteDatabaseError({ cause: error }),
-      }),
-      // --- FIX: Wrap the schema validation in flatMap ---
-      Effect.flatMap((notes) =>
-        Schema.decodeUnknown(NotesSchema)(notes).pipe(
-          Effect.mapError((cause) => new NoteValidationError({ cause })),
-        ),
-      ),
-      Effect.tap((notes) =>
-        Effect.forkDaemon(
-          serverLog(
-            "info",
-            `Successfully fetched ${notes.length} notes.`,
-            validatedUserId,
-            "GetNotes",
-          ),
-        ),
-      ),
-      Effect.catchAll((error) =>
-        pipe(
-          Effect.forkDaemon(
-            serverLog(
-              "error",
-              `Failed to fetch notes: ${error._tag}`,
-              validatedUserId,
-              "GetNotes",
-            ),
-          ),
-          Effect.andThen(() => Effect.fail(error)),
-        ),
-      ),
+    // 4. Decode and return the final result (still readonly)
+    return yield* Schema.decodeUnknown(NotesSchema)(rows).pipe(
+      Effect.mapError((cause) => new NoteValidationError({ cause })),
     );
-    return result;
   });
+
+/**
+ * Public-facing feature.
+ * Composes the core logic with logging in a shallow pipe.
+ */
+export const getNotes = (userId: string) =>
+  pipe(getNotesEffect(userId), withGetNotesLogging(userId));

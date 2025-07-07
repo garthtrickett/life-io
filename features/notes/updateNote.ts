@@ -1,4 +1,6 @@
 // FILE: features/notes/updateNote.ts
+// ---------------------------------------------------------------------------
+
 import { Effect, pipe } from "effect";
 import { Db } from "../../db/DbTag";
 import type { Note } from "../../types/generated/public/Note";
@@ -12,52 +14,56 @@ import {
 import { Schema } from "@effect/schema";
 import { NoteSchema } from "../../lib/shared/schemas";
 import { parseMarkdownToBlocks } from "../../lib/server/parser";
-// FIX: Changed from 'import type' to a value import
 import { Crypto } from "../../lib/server/crypto";
+import { PokeService } from "../../lib/server/PokeService"; // ⬅️ NEW
+import { withUpdateNoteLogging } from "./wrappers";
 
 interface NoteUpdatePayload {
   title: string;
-  content: string; // This will be the raw markdown
+  content: string; // raw markdown
 }
 
-export const updateNote = (
+/**
+ * Core business logic for updating a note and its blocks.
+ */
+const updateNoteEffect = (
   noteId: string,
   userId: string,
   noteUpdate: NoteUpdatePayload,
 ): Effect.Effect<
   Note,
   NoteDatabaseError | NoteNotFoundError | NoteValidationError,
-  Db | Crypto // This effect now correctly requires Crypto
+  Db | Crypto | PokeService // ⬅️ NEW
 > =>
   Effect.gen(function* () {
+    // 1. Validate inputs
     const validatedNoteId = yield* validateNoteId(noteId).pipe(
       Effect.mapError((cause) => new NoteValidationError({ cause })),
     );
     const validatedUserId = yield* validateUserId(userId).pipe(
       Effect.mapError((cause) => new NoteValidationError({ cause })),
     );
-    const db = yield* Db;
-    // Get the crypto service from the context to be used inside the transaction
-    const crypto = yield* Crypto;
 
+    // 2. Get dependencies
+    const db = yield* Db;
+    const crypto = yield* Crypto;
+    const pokeService = yield* PokeService; // ⬅️ NEW
+
+    // 3. Log intent (fire-and-forget)
     yield* Effect.forkDaemon(
       serverLog(
         "info",
-        `[updateNote] Parsing and updating note. ID: "${validatedNoteId}"`,
+        `[UpdateNote] Starting update for note ID: "${validatedNoteId}"`,
         validatedUserId,
-        "UpdateNote",
+        "UpdateNote:Attempt",
       ),
     );
 
-    // This effect encapsulates the entire database transaction.
-    // We use `Effect.tryPromise` to correctly handle the async nature of Kysely's transaction.
+    // 4. Perform the main operation inside a transaction
     const result = yield* Effect.tryPromise({
       try: () =>
         db.transaction().execute(async (trx) => {
           // --- TRANSACTION LOGIC BEGINS ---
-          // Inside this async block, we can use `await`.
-
-          // 1. Update the parent note's title and markdown content
           const parentNote = await trx
             .updateTable("note")
             .set({
@@ -70,30 +76,25 @@ export const updateNote = (
             .returningAll()
             .executeTakeFirstOrThrow();
 
-          // 2. Delete all existing child blocks for this note
           await trx
             .deleteFrom("block")
             .where("note_id", "=", validatedNoteId)
             .execute();
 
-          // 3. Parse the new markdown content into new child blocks.
-          // We must run the `parseMarkdownToBlocks` Effect here.
           const childBlocks = await Effect.runPromise(
-            // Provide the required Crypto service to the parser effect
             Effect.provideService(
               Crypto,
               crypto,
             )(
               parseMarkdownToBlocks(
                 noteUpdate.content,
-                `${parentNote.id}.md`, // Use note ID for file path
+                `${parentNote.id}.md`,
                 validatedUserId,
-                validatedNoteId, // Pass the note ID
+                validatedNoteId,
               ),
             ),
           );
 
-          // 4. Insert the new child blocks if there are any
           if (childBlocks.length > 0) {
             await trx.insertInto("block").values(childBlocks).execute();
           }
@@ -104,32 +105,29 @@ export const updateNote = (
       catch: (cause) => new NoteDatabaseError({ cause }),
     });
 
-    // Validate the final result from the transaction against the NoteSchema
-    return yield* pipe(
-      Schema.decodeUnknown(NoteSchema)(result),
+    // 5. Decode against the schema
+    const updatedNote = yield* Schema.decodeUnknown(NoteSchema)(result).pipe(
       Effect.mapError((cause) => new NoteValidationError({ cause })),
-      Effect.tap((updatedNote) =>
-        Effect.forkDaemon(
-          serverLog(
-            "info",
-            `[updateNote] Successfully updated note and reparsed blocks for ID: ${updatedNote.id}`,
-            validatedUserId,
-            "UpdateNote",
-          ),
-        ),
-      ),
-      Effect.catchAll((error) =>
-        pipe(
-          Effect.forkDaemon(
-            serverLog(
-              "error",
-              `[updateNote] Failed to update note: ${error._tag}`,
-              validatedUserId,
-              "UpdateNote",
-            ),
-          ),
-          Effect.andThen(() => Effect.fail(error)),
-        ),
-      ),
     );
+
+    // 6. Poke clients so they pull fresh data              // ⬅️ NEW
+    yield* pokeService
+      .poke()
+      .pipe(Effect.mapError((cause) => new NoteDatabaseError({ cause })));
+
+    // 7. Return the updated note
+    return updatedNote;
   });
+
+/**
+ * Public-facing feature.
+ */
+export const updateNote = (
+  noteId: string,
+  userId: string,
+  noteUpdate: NoteUpdatePayload,
+) =>
+  pipe(
+    updateNoteEffect(noteId, userId, noteUpdate),
+    withUpdateNoteLogging(noteId, userId),
+  );
