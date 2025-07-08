@@ -1,5 +1,5 @@
 // FILE: replicache/push.ts
-import { Effect, Data, pipe } from "effect";
+import { Effect, Data } from "effect";
 import type { PushRequest } from "replicache";
 import { Db } from "../db/DbTag";
 import { PokeService } from "../lib/server/PokeService";
