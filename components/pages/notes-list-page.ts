@@ -9,7 +9,6 @@ import { rep } from "../../lib/client/replicache";
 import { clientLog } from "../../lib/client/logger.client";
 import { NoteSchema } from "../../lib/shared/schemas";
 import type { Note } from "../../types/generated/public/Note";
-
 import { handleAction } from "./notes/list/actions";
 import { renderView } from "./notes/list/view";
 import type { ViewResult, Model, Action } from "./notes/list/types";
@@ -17,7 +16,6 @@ import type { ViewResult, Model, Action } from "./notes/list/types";
 // --- View Entry Point ---
 export const NotesView = (): ViewResult => {
   const container = document.createElement("div");
-
   const componentProgram = Effect.gen(function* () {
     const model = yield* Ref.make<Model>({
       notes: [],
@@ -75,12 +73,14 @@ export const NotesView = (): ViewResult => {
     );
 
     const replicacheStream = Stream.async<Note[], string>((emit) => {
-      // --- START OF FIX: Add a null check for the `rep` instance ---
       if (!rep) {
         void emit.fail("Replicache is not initialized.");
         return;
       }
-      // --- END OF FIX ---
+
+      // Use a simple local flag to track the very first onData call
+      let isInitialCall = true;
+
       const unsubscribe = rep.subscribe(
         async (tx) => {
           const noteJSONs = await tx
@@ -110,16 +110,21 @@ export const NotesView = (): ViewResult => {
         },
         {
           onData: (data: Note[]) => {
-            void clientLog(
-              "debug",
-              `Replicache onData received for notes list. Notes: ${data.length}`,
-              undefined,
-              "NotesView:onData",
-            );
+            // If it's the first call AND the data is empty, we ignore it.
+            // This is the state where the cache is empty and we're waiting for the network.
+            if (isInitialCall && data.length === 0) {
+              isInitialCall = false; // Mark that we've seen the initial empty call
+              return; // Do not emit, preventing the "flash"
+            }
+
+            // If it's a subsequent call, or the first call already has data (from a warm cache),
+            // we can proceed.
+            isInitialCall = false;
             void emit.single(data);
           },
         },
       );
+
       return Effect.sync(unsubscribe);
     });
 
@@ -152,7 +157,6 @@ export const NotesView = (): ViewResult => {
         ),
       ),
     );
-
     yield* mainLoop;
   });
 
