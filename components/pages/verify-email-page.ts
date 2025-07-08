@@ -1,4 +1,4 @@
-// File: ./components/pages/verify-email-page.ts
+// FILE: ./components/pages/verify-email-page.ts
 import { render, html, type TemplateResult } from "lit-html";
 import { pipe, Effect, Data, Ref, Queue, Fiber } from "effect";
 import { trpc } from "../../lib/client/trpc";
@@ -7,6 +7,7 @@ import { proposeAuthAction } from "../../lib/client/stores/authStore";
 import { navigate } from "../../lib/client/router";
 import type { User } from "../../types/generated/public/User";
 import { clientLog } from "../../lib/client/logger.client";
+import { tryTrpc } from "../../lib/client/trpc/tryTrpc";
 
 // --- Custom Error Types ---
 class InvalidTokenError extends Data.TaggedError("InvalidTokenError") {}
@@ -57,7 +58,7 @@ export const VerifyEmailView = (token: string): ViewResult => {
             undefined,
             "VerifyEmailView:propose",
           ),
-          Effect.andThen(() => Queue.offer(actionQueue, action)),
+          Effect.andThen(Queue.offer(actionQueue, action)),
         ),
       );
 
@@ -74,21 +75,15 @@ export const VerifyEmailView = (token: string): ViewResult => {
                 message: "Verifying your email...",
               }),
             );
+
+            // --- REFACTORED with tryTrpc helper ---
             const verifyEffect = pipe(
-              Effect.tryPromise({
-                try: () => trpc.auth.verifyEmail.mutate({ token }),
-                catch: (err) => {
-                  if (
-                    typeof err === "object" &&
-                    err !== null &&
-                    "data" in err &&
-                    (err.data as { code?: string }).code === "BAD_REQUEST"
-                  ) {
-                    return new InvalidTokenError();
-                  }
-                  return new UnknownVerificationError({ cause: err });
-                },
+              tryTrpc(() => trpc.auth.verifyEmail.mutate({ token }), {
+                BAD_REQUEST: () => new InvalidTokenError(),
               }),
+              Effect.catchTag("UnknownTrpcError", (e) =>
+                Effect.fail(new UnknownVerificationError({ cause: e.cause })),
+              ),
               Effect.match({
                 onSuccess: (result) => {
                   propose({
@@ -101,6 +96,8 @@ export const VerifyEmailView = (token: string): ViewResult => {
                 },
               }),
             );
+            // --- END OF REFACTOR ---
+
             yield* Effect.fork(verifyEffect);
             break;
           }
@@ -141,6 +138,7 @@ export const VerifyEmailView = (token: string): ViewResult => {
           }
         }
       });
+
     // --- Render ---
     const renderView = (currentModel: Model) => {
       const renderContent = () => {
@@ -192,6 +190,7 @@ export const VerifyEmailView = (token: string): ViewResult => {
         ),
       ),
     );
+
     // --- Main Loop ---
     propose({ type: "VERIFY_START" }); // Initial action
 
@@ -201,12 +200,13 @@ export const VerifyEmailView = (token: string): ViewResult => {
       Effect.catchAllDefect((defect) =>
         clientLog(
           "error",
-          `[FATAL] Uncaught defect in VerifyEmailView main loop: ${String(defect)}`,
+          `[FATAL] Uncaught defect in VerifyEmailView main loop: ${String(
+            defect,
+          )}`,
         ),
       ),
       Effect.forever,
     );
-
     yield* mainLoop;
   });
 

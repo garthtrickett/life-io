@@ -1,5 +1,4 @@
 // FILE: ./components/pages/reset-password-page.ts
-// File: ./components/pages/reset-password-page.ts
 import { render, html, type TemplateResult, nothing } from "lit-html";
 import { pipe, Effect, Data, Ref, Queue, Fiber } from "effect";
 import { trpc } from "../../lib/client/trpc";
@@ -8,6 +7,7 @@ import { NotionButton } from "../ui/notion-button";
 import { runClientUnscoped } from "../../lib/client/runtime";
 import { clientLog } from "../../lib/client/logger.client";
 import type { LocationService } from "../../lib/client/LocationService";
+import { tryTrpc } from "../../lib/client/trpc/tryTrpc";
 
 // --- Custom Error Types ---
 class InvalidTokenError extends Data.TaggedError("InvalidTokenError") {}
@@ -33,7 +33,6 @@ type Action =
 
 export const ResetPasswordView = (token: string): ViewResult => {
   const container = document.createElement("div");
-
   const componentProgram = Effect.gen(function* () {
     const model = yield* Ref.make<Model>({
       password: "",
@@ -53,11 +52,9 @@ export const ResetPasswordView = (token: string): ViewResult => {
         ),
       );
 
-    // --- START OF FIX: Declare the LocationService requirement in the function's return type ---
     const handleAction = (
       action: Action,
     ): Effect.Effect<void, never, LocationService> =>
-      // --- END OF FIX ---
       Effect.gen(function* () {
         const currentModel = yield* Ref.get(model);
         switch (action.type) {
@@ -77,31 +74,30 @@ export const ResetPasswordView = (token: string): ViewResult => {
               model,
               (m): Model => ({ ...m, status: "loading", message: null }),
             );
+
+            // --- REFACTORED with tryTrpc helper ---
             const resetEffect = pipe(
-              Effect.tryPromise({
-                try: () =>
+              tryTrpc(
+                () =>
                   trpc.auth.resetPassword.mutate({
                     token,
                     password: currentModel.password,
                   }),
-                catch: (err) => {
-                  if (
-                    typeof err === "object" &&
-                    err !== null &&
-                    "data" in err &&
-                    (err.data as { code?: string }).code === "BAD_REQUEST"
-                  ) {
-                    return new InvalidTokenError();
-                  }
-                  return new PasswordResetError({ cause: err });
+                {
+                  BAD_REQUEST: () => new InvalidTokenError(),
                 },
-              }),
+              ),
+              Effect.catchTag("UnknownTrpcError", (e) =>
+                Effect.fail(new PasswordResetError({ cause: e.cause })),
+              ),
               Effect.match({
                 onSuccess: () => propose({ type: "RESET_SUCCESS" }),
                 onFailure: (error) =>
                   propose({ type: "RESET_ERROR", payload: error }),
               }),
             );
+            // --- END OF REFACTOR ---
+
             yield* Effect.fork(resetEffect);
             break;
           }
@@ -143,7 +139,6 @@ export const ResetPasswordView = (token: string): ViewResult => {
         if (currentModel.status === "loading") return;
         propose({ type: "RESET_START" });
       };
-
       const template = html`
         <div class="flex min-h-screen items-center justify-center bg-gray-100">
           <div class="w-full max-w-md rounded-lg bg-white p-8 shadow-md">
@@ -199,7 +194,6 @@ export const ResetPasswordView = (token: string): ViewResult => {
 
     // Initial render
     yield* renderEffect;
-
     // Main loop
     yield* Queue.take(actionQueue).pipe(
       Effect.flatMap(handleAction),

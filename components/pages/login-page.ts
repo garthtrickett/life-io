@@ -1,4 +1,4 @@
-// File: ./components/pages/login-page.ts (Fully Effect-Driven with Logging)
+// FILE: ./components/pages/login-page.ts
 import { render, html, type TemplateResult, nothing } from "lit-html";
 import { pipe, Effect, Queue, Ref, Fiber, Data } from "effect";
 import { trpc } from "../../lib/client/trpc";
@@ -8,8 +8,9 @@ import { runClientUnscoped } from "../../lib/client/runtime";
 import { navigate } from "../../lib/client/router";
 import type { User } from "../../types/generated/public/User";
 import { clientLog } from "../../lib/client/logger.client";
+import { tryTrpc } from "../../lib/client/trpc/tryTrpc";
 
-// --- START OF FIX: Define specific, tagged errors for different login failures ---
+// --- Custom Error Types ---
 class LoginInvalidCredentialsError extends Data.TaggedError(
   "LoginInvalidCredentialsError",
 ) {}
@@ -19,7 +20,6 @@ class LoginEmailNotVerifiedError extends Data.TaggedError(
 class UnknownLoginError extends Data.TaggedError("UnknownLoginError")<{
   readonly cause: unknown;
 }> {}
-// --- END OF FIX ---
 
 // --- Types ---
 interface ViewResult {
@@ -39,7 +39,6 @@ interface LoginSuccessPayload {
   user: User;
 }
 
-// --- FIX: Update Action type to use the new tagged errors ---
 type Action =
   | { type: "UPDATE_EMAIL"; payload: string }
   | { type: "UPDATE_PASSWORD"; payload: string }
@@ -64,6 +63,7 @@ export const LoginView = (): ViewResult => {
       "LoginView",
     ),
   );
+
   const componentProgram = Effect.gen(function* () {
     yield* clientLog(
       "debug",
@@ -81,7 +81,6 @@ export const LoginView = (): ViewResult => {
     const actionQueue = yield* Queue.unbounded<Action>();
 
     const propose = (action: Action) => {
-      // Log the action being proposed by the user
       runClientUnscoped(
         clientLog(
           "debug",
@@ -93,7 +92,6 @@ export const LoginView = (): ViewResult => {
       return Effect.runFork(Queue.offer(actionQueue, action));
     };
 
-    // A
     const renderView = (currentModel: Model) => {
       const handleLoginSubmit = (e: Event) => {
         e.preventDefault();
@@ -221,32 +219,22 @@ export const LoginView = (): ViewResult => {
               isLoading: true,
               error: null,
             });
+
             const loginEffect = pipe(
-              Effect.tryPromise({
-                try: () =>
+              tryTrpc(
+                () =>
                   trpc.auth.login.mutate({
                     email: currentModel.email,
                     password: currentModel.password,
                   }),
-                catch: (err) => {
-                  // Check if the error has the shape of a tRPC client error
-                  if (
-                    typeof err === "object" &&
-                    err !== null &&
-                    "data" in err
-                  ) {
-                    const code = (err.data as { code?: string }).code;
-                    if (code === "UNAUTHORIZED") {
-                      return new LoginInvalidCredentialsError();
-                    }
-                    if (code === "FORBIDDEN") {
-                      return new LoginEmailNotVerifiedError();
-                    }
-                  }
-                  // For all other errors, wrap them in a generic login error
-                  return new UnknownLoginError({ cause: err });
+                {
+                  UNAUTHORIZED: () => new LoginInvalidCredentialsError(),
+                  FORBIDDEN: () => new LoginEmailNotVerifiedError(),
                 },
-              }),
+              ),
+              Effect.catchTag("UnknownTrpcError", (e) =>
+                Effect.fail(new UnknownLoginError({ cause: e.cause })),
+              ),
               Effect.match({
                 onSuccess: (result) =>
                   propose({
@@ -298,7 +286,6 @@ export const LoginView = (): ViewResult => {
               undefined,
               "LoginView:handleAction",
             );
-
             yield* Ref.set(model, {
               ...currentModel,
               isLoading: false,
@@ -309,7 +296,6 @@ export const LoginView = (): ViewResult => {
         }
       });
 
-    // An effect that gets the current state and triggers a render
     const renderEffect = Ref.get(model).pipe(
       Effect.tap((m) =>
         clientLog(
@@ -340,11 +326,9 @@ export const LoginView = (): ViewResult => {
     yield* mainLoop;
   });
 
-  // Fork the component's main program and get the fiber
   const fiber = runClientUnscoped(componentProgram);
   return {
     template: html`${container}`,
-    // The cleanup function interrupts the fiber, ensuring all resources are released.
     cleanup: () => {
       runClientUnscoped(
         clientLog(

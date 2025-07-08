@@ -1,4 +1,5 @@
 // File: ./components/pages/signup-page.ts
+import { tryTrpc } from "../../lib/client/trpc/tryTrpc";
 import { render, html, type TemplateResult, nothing } from "lit-html";
 import { pipe, Effect, Data, Ref, Queue, Fiber } from "effect";
 import { trpc } from "../../lib/client/trpc";
@@ -173,24 +174,19 @@ export const SignupView = (): ViewResult => {
               error: null,
             }));
             const signupEffect = pipe(
-              Effect.tryPromise({
-                try: () =>
+              tryTrpc(
+                () =>
                   trpc.auth.signup.mutate({
                     email: currentModel.email,
                     password: currentModel.password,
                   }),
-                catch: (err) => {
-                  if (
-                    typeof err === "object" &&
-                    err !== null &&
-                    "data" in err &&
-                    (err.data as { code?: string }).code === "CONFLICT"
-                  ) {
-                    return new EmailInUseError();
-                  }
-                  return new UnknownSignupError({ cause: err });
+                {
+                  CONFLICT: () => new EmailInUseError(),
                 },
-              }),
+              ),
+              Effect.catchTag("UnknownTrpcError", (e) =>
+                Effect.fail(new UnknownSignupError({ cause: e.cause })),
+              ),
               Effect.matchEffect({
                 onSuccess: (value) =>
                   propose({ type: "SIGNUP_SUCCESS", payload: value }),

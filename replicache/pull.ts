@@ -103,6 +103,7 @@ const createInitialSnapshot = (
  * Creates a patch of changes that have occurred since the client's last pull.
  */
 const createDeltaPatch = (
+  userId: UserId,
   lastSeenVersion: number,
   serverVersion: number,
 ): Effect.Effect<PatchOperation[], PullError, Db> =>
@@ -114,10 +115,18 @@ const createDeltaPatch = (
       try: () =>
         db
           .selectFrom("change_log")
-          .where("id", ">", String(lastSeenVersion) as ChangeLogId)
-          .where("id", "<=", String(serverVersion) as ChangeLogId)
-          .orderBy("id", "asc")
-          .selectAll()
+          .innerJoin(
+            "replicache_client_group",
+            "replicache_client_group.id",
+            "change_log.client_group_id",
+          )
+          // This "where" clause is the critical fix.
+          .where("replicache_client_group.user_id", "=", userId)
+          .where("change_log.id", ">", String(lastSeenVersion) as ChangeLogId)
+          .where("change_log.id", "<=", String(serverVersion) as ChangeLogId)
+          .orderBy("change_log.id", "asc")
+          // Explicitly select columns from change_log to avoid ambiguity.
+          .selectAll("change_log")
           .execute(),
       catch: (cause) => new PullError({ cause }),
     });
@@ -200,7 +209,6 @@ export const handlePull = (
       {},
     );
 
-    // --- START OF FIX ---
     const patch = yield* Effect.if(lastSeenVersion === 0, {
       onTrue: () =>
         Effect.gen(function* () {
@@ -229,10 +237,13 @@ export const handlePull = (
             userId,
             "Replicache:Pull",
           );
-          return yield* createDeltaPatch(lastSeenVersion, serverVersion);
+          return yield* createDeltaPatch(
+            userId,
+            lastSeenVersion,
+            serverVersion,
+          );
         }),
     });
-    // --- END OF FIX ---
 
     return { lastMutationIDChanges, cookie: serverVersion, patch };
   });

@@ -1,4 +1,5 @@
 // File: ./components/pages/profile-page.ts
+import { tryTrpc } from "../../lib/client/trpc/tryTrpc";
 import { render, html, nothing, type TemplateResult } from "lit-html";
 import {
   authState,
@@ -252,25 +253,21 @@ export const ProfileView = (): ViewResult => {
               }),
             );
             // --- START OF FIX: The `catch` block now inspects the TRPC error ---
+
             const changePasswordEffect = pipe(
-              Effect.tryPromise({
-                try: () =>
+              tryTrpc(
+                () =>
                   trpc.auth.changePassword.mutate({
                     oldPassword: currentModel.oldPassword,
                     newPassword: currentModel.newPassword,
                   }),
-                catch: (err) => {
-                  if (
-                    typeof err === "object" &&
-                    err !== null &&
-                    "data" in err &&
-                    (err.data as { code?: string }).code === "BAD_REQUEST"
-                  ) {
-                    return new ChangePasswordIncorrectPasswordError();
-                  }
-                  return new UnknownChangePasswordError({ cause: err });
+                {
+                  BAD_REQUEST: () => new ChangePasswordIncorrectPasswordError(),
                 },
-              }),
+              ),
+              Effect.catchTag("UnknownTrpcError", (e) =>
+                Effect.fail(new UnknownChangePasswordError({ cause: e.cause })),
+              ),
               Effect.match({
                 onSuccess: () =>
                   propose({
