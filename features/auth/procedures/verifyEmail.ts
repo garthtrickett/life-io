@@ -1,4 +1,4 @@
-// features/auth/procedures/verifyEmail.ts
+// FILE: features/auth/procedures/verifyEmail.ts
 import { Effect } from "effect";
 import { publicProcedure } from "../../../trpc/trpc";
 import { sVerifyEmailInput } from "../schemas";
@@ -8,8 +8,7 @@ import { isWithinExpirationDate } from "oslo";
 import { AuthDatabaseError, TokenInvalidError } from "../Errors";
 import { serverLog } from "../../../lib/server/logger.server";
 import { createSessionEffect } from "../../../lib/server/auth";
-import { runServerPromise } from "../../../lib/server/runtime";
-import { TRPCError } from "@trpc/server";
+import { handleTrpcProcedure } from "../../../lib/server/runtime";
 
 export const verifyEmailProcedure = publicProcedure
   .input(sVerifyEmailInput)
@@ -29,11 +28,7 @@ export const verifyEmailProcedure = publicProcedure
         catch: (cause) => new AuthDatabaseError({ cause }),
       });
 
-      // --- CORRECTED FIX ---
-      // Validate the token exists and is not expired.
-      // All subsequent logic is nested in this block to guarantee type safety.
       if (storedToken && isWithinExpirationDate(storedToken.expires_at)) {
-        // `storedToken` is now guaranteed to be defined.
         const user = yield* Effect.tryPromise({
           try: () =>
             db
@@ -44,39 +39,19 @@ export const verifyEmailProcedure = publicProcedure
               .executeTakeFirstOrThrow(),
           catch: (cause) => new AuthDatabaseError({ cause }),
         });
-
         yield* serverLog(
           "info",
           `Email verified for user ${user.id}`,
           user.id,
           "auth:verifyEmail",
         );
-
         const sessionId = yield* createSessionEffect(user.id);
 
         return { user, sessionId };
       } else {
-        // If the token is invalid or expired, fail the Effect.
         yield* Effect.fail(new TokenInvalidError());
       }
-    }).pipe(
-      Effect.catchTags({
-        TokenInvalidError: () =>
-          Effect.fail(
-            new TRPCError({
-              code: "BAD_REQUEST",
-              message: "Token is invalid or has expired.",
-            }),
-          ),
-        AuthDatabaseError: (e) =>
-          Effect.fail(
-            new TRPCError({
-              code: "INTERNAL_SERVER_ERROR",
-              message: "A database error occurred.",
-              cause: e.cause,
-            }),
-          ),
-      }),
-    );
-    return runServerPromise(program);
+    });
+
+    return handleTrpcProcedure(program);
   });

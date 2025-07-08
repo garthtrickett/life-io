@@ -221,7 +221,6 @@ export const LoginView = (): ViewResult => {
               isLoading: true,
               error: null,
             });
-            // --- START OF FIX: The `catch` block now inspects the TRPC error ---
             const loginEffect = pipe(
               Effect.tryPromise({
                 try: () =>
@@ -258,7 +257,6 @@ export const LoginView = (): ViewResult => {
                   propose({ type: "LOGIN_ERROR", payload: error }),
               }),
             );
-            // --- END OF FIX ---
             yield* Effect.fork(loginEffect);
             break;
           }
@@ -278,7 +276,6 @@ export const LoginView = (): ViewResult => {
             proposeAuthAction({ type: "SET_AUTHENTICATED", payload: user });
             break;
           }
-          // --- START OF FIX: Handle specific tagged errors to show the correct message ---
           case "LOGIN_ERROR": {
             let errorMessage: string;
             switch (action.payload._tag) {
@@ -309,7 +306,6 @@ export const LoginView = (): ViewResult => {
             });
             break;
           }
-          // --- END OF FIX ---
         }
       });
 

@@ -1,5 +1,5 @@
 // FILE: lib/server/runtime.ts
-import { Effect, Layer, Runtime, Scope, Exit } from "effect";
+import { Effect, Layer, Runtime, Scope, Exit, Cause } from "effect";
 import type { ConfigError } from "effect/ConfigError";
 import type { Db } from "../../db/DbTag";
 import { DbLayer } from "../../db/DbLayer";
@@ -8,6 +8,7 @@ import { S3Live } from "./s3";
 import { CryptoLive, type Crypto } from "./crypto";
 import { ConfigLive } from "./Config";
 import { PokeService, PokeServiceLive } from "./PokeService";
+import { TRPCError } from "@trpc/server";
 
 // 1. Combine the core service layers.
 const ServerServices = Layer.mergeAll(
@@ -32,12 +33,9 @@ export const ServerLive = ServerServices.pipe(
 // Define the context type that our server effects will require.
 export type ServerContext = Db | S3 | Crypto | PokeService;
 
-// --- START OF DEFINITIVE FIX ---
+// --- Runtime Setup ---
 
-// 3. Create a single scope for the application's entire lifecycle.
 const appScope = Effect.runSync(Scope.make());
-
-// 4. Build the layer within that scope to create the singleton runtime.
 const AppRuntime = Effect.runSync(
   Scope.extend(Layer.toRuntime(ServerLive), appScope),
 );
@@ -63,10 +61,74 @@ export const runServerUnscoped = <A, E>(
 
 /**
  * A dedicated function to gracefully shut down the application's runtime.
- * It closes the application's scope, which releases all resources (like DB connections and PubSub).
- * The exit type is corrected to use `Exit.succeed(undefined)`.
  */
 export const shutdownServer = () =>
   Effect.runPromise(Scope.close(appScope, Exit.succeed(undefined)));
 
-// --- END OF DEFINITIVE FIX ---
+/**
+ * A dedicated runner for tRPC procedures that correctly handles Effect's
+ * `FiberFailure` and maps domain errors to `TRPCError`s.
+ */
+export const handleTrpcProcedure = async <A, E>(
+  effect: Effect.Effect<A, E, ServerContext>,
+): Promise<A> => {
+  const exit = await Runtime.runPromiseExit(serverRuntime)(effect);
+
+  if (Exit.isSuccess(exit)) {
+    return exit.value;
+  }
+
+  // `Cause.squash` finds the "most important" error, prioritizing a typed
+  // failure (from Effect.fail) over a defect (from a thrown error).
+  const error = Cause.squash(exit.cause);
+
+  const tag = (error as { _tag?: string })?._tag;
+
+  switch (tag) {
+    case "InvalidCredentialsError":
+      throw new TRPCError({
+        code: "UNAUTHORIZED",
+        message: "Incorrect email or password.",
+        cause: error,
+      });
+    case "EmailNotVerifiedError":
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: "Please verify your email address before logging in.",
+        cause: error,
+      });
+    case "EmailInUseError":
+      throw new TRPCError({
+        code: "CONFLICT",
+        message: "An account with this email already exists.",
+        cause: error,
+      });
+    case "TokenInvalidError":
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "Token is invalid or has expired.",
+        cause: error,
+      });
+    case "PasswordHashingError":
+      throw new TRPCError({
+        code: "INTERNAL_SERVER_ERROR",
+        message: "Could not process password.",
+        cause: error,
+      });
+    case "AuthDatabaseError":
+    case "TokenCreationError":
+    case "EmailSendError":
+      throw new TRPCError({
+        code: "INTERNAL_SERVER_ERROR",
+        message: "An internal server error occurred.",
+        cause: error,
+      });
+    default:
+      // For any other unexpected errors.
+      throw new TRPCError({
+        code: "INTERNAL_SERVER_ERROR",
+        message: "An unexpected error occurred.",
+        cause: exit.cause, // Log the entire cause for unknown errors
+      });
+  }
+};

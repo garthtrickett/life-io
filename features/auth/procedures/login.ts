@@ -1,4 +1,4 @@
-// features/auth/procedures/login.ts
+// FILE: features/auth/procedures/login.ts
 import { Effect, Option } from "effect";
 import { publicProcedure } from "../../../trpc/trpc";
 import { sLoginInput } from "../schemas";
@@ -11,8 +11,7 @@ import {
   EmailNotVerifiedError,
   PasswordHashingError,
 } from "../Errors";
-import { runServerPromise } from "../../../lib/server/runtime";
-import { TRPCError } from "@trpc/server";
+import { handleTrpcProcedure } from "../../../lib/server/runtime";
 
 export const loginProcedure = publicProcedure
   .input(sLoginInput)
@@ -61,6 +60,7 @@ export const loginProcedure = publicProcedure
         try: () => argon2id.verify(user.password_hash, password),
         catch: (cause) => new PasswordHashingError({ cause }),
       });
+
       if (!isValidPassword) {
         yield* Effect.fail(new InvalidCredentialsError());
       }
@@ -68,6 +68,7 @@ export const loginProcedure = publicProcedure
       const sessionId = yield* createSessionEffect(user.id).pipe(
         Effect.mapError((cause) => new AuthDatabaseError({ cause })),
       );
+
       yield* serverLog(
         "info",
         `Login successful for user: ${user.id}`,
@@ -77,40 +78,6 @@ export const loginProcedure = publicProcedure
       return { sessionId, user };
     });
 
-    return runServerPromise(
-      program.pipe(
-        Effect.catchTags({
-          AuthDatabaseError: (e) =>
-            Effect.fail(
-              new TRPCError({
-                code: "INTERNAL_SERVER_ERROR",
-                message: "A database error occurred.",
-                cause: e.cause,
-              }),
-            ),
-          InvalidCredentialsError: () =>
-            Effect.fail(
-              new TRPCError({
-                code: "UNAUTHORIZED",
-                message: "Incorrect email or password.",
-              }),
-            ),
-          EmailNotVerifiedError: () =>
-            Effect.fail(
-              new TRPCError({
-                code: "FORBIDDEN",
-                message: "Please verify your email address before logging in.",
-              }),
-            ),
-          PasswordHashingError: (e) =>
-            Effect.fail(
-              new TRPCError({
-                code: "INTERNAL_SERVER_ERROR",
-                message: "Could not process password.",
-                cause: e.cause,
-              }),
-            ),
-        }),
-      ),
-    );
+    // The new helper function handles execution and error translation.
+    return handleTrpcProcedure(program);
   });

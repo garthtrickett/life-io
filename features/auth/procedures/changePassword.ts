@@ -1,4 +1,4 @@
-// features/auth/procedures/changePassword.ts
+// FILE: features/auth/procedures/changePassword.ts
 import { Effect } from "effect";
 import { loggedInProcedure } from "../../../trpc/trpc";
 import { sChangePasswordInput } from "../schemas";
@@ -10,8 +10,7 @@ import {
   PasswordHashingError,
 } from "../Errors";
 import { argon2id } from "../../../lib/server/auth";
-import { runServerPromise } from "../../../lib/server/runtime";
-import { TRPCError } from "@trpc/server";
+import { handleTrpcProcedure } from "../../../lib/server/runtime";
 
 export const changePasswordProcedure = loggedInProcedure
   .input(sChangePasswordInput)
@@ -73,32 +72,7 @@ export const changePasswordProcedure = loggedInProcedure
         "auth:changePassword",
       );
       return { success: true };
-    }).pipe(
-      Effect.catchTags({
-        AuthDatabaseError: (e) =>
-          Effect.fail(
-            new TRPCError({
-              code: "INTERNAL_SERVER_ERROR",
-              message: "A database error occurred.",
-              cause: e.cause,
-            }),
-          ),
-        PasswordHashingError: (e) =>
-          Effect.fail(
-            new TRPCError({
-              code: "INTERNAL_SERVER_ERROR",
-              message: "Could not process password.",
-              cause: e.cause,
-            }),
-          ),
-        InvalidCredentialsError: () =>
-          Effect.fail(
-            new TRPCError({
-              code: "BAD_REQUEST",
-              message: "Incorrect old password provided.",
-            }),
-          ),
-      }),
-    );
-    return runServerPromise(program);
+    });
+
+    return handleTrpcProcedure(program);
   });

@@ -205,13 +205,6 @@ export const handlePush = (
         }),
       catch: (cause) => new ReplicachePushError({ cause }),
     });
-    // --- DEBUG-F ---
-    yield* serverLog(
-      "debug",
-      `[DEBUG-F] Push transaction complete for ${clientGroupID}. About to call poke service.`,
-      userId,
-      "Replicache:Push:PokeDebug",
-    );
 
     // 5. Poke clients to notify them of new changes.
     yield* pokeService.poke().pipe(

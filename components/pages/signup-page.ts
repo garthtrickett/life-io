@@ -6,6 +6,7 @@ import { clientLog } from "../../lib/client/logger.client";
 import { NotionButton } from "../ui/notion-button";
 import { runClientUnscoped } from "../../lib/client/runtime";
 import { navigate } from "../../lib/client/router";
+import type { LocationService } from "../../lib/client/LocationService";
 
 // --- Custom Error Types ---
 class EmailInUseError extends Data.TaggedError("EmailInUseError") {}
@@ -142,7 +143,11 @@ export const SignupView = (): ViewResult => {
     };
 
     // --- Action Handler ---
-    const handleAction = (action: Action): Effect.Effect<void> =>
+    // --- START OF FIX: Declare the LocationService requirement in the function's return type ---
+    const handleAction = (
+      action: Action,
+    ): Effect.Effect<void, never, LocationService> =>
+      // --- END OF FIX ---
       Effect.gen(function* () {
         const currentModel = yield* Ref.get(model);
 
@@ -186,13 +191,11 @@ export const SignupView = (): ViewResult => {
                   return new UnknownSignupError({ cause: err });
                 },
               }),
-              Effect.match({
-                onSuccess: (value) => {
-                  propose({ type: "SIGNUP_SUCCESS", payload: value });
-                },
-                onFailure: (error) => {
-                  propose({ type: "SIGNUP_ERROR", payload: error });
-                },
+              Effect.matchEffect({
+                onSuccess: (value) =>
+                  propose({ type: "SIGNUP_SUCCESS", payload: value }),
+                onFailure: (error) =>
+                  propose({ type: "SIGNUP_ERROR", payload: error }),
               }),
             );
             yield* Effect.fork(signupEffect);
@@ -206,7 +209,7 @@ export const SignupView = (): ViewResult => {
               undefined,
               "SignupView:handleAction",
             );
-            navigate("/check-email");
+            yield* navigate("/check-email");
             break;
           case "SIGNUP_ERROR": {
             let errorMessage = "An unknown error occurred. Please try again.";
@@ -235,7 +238,8 @@ export const SignupView = (): ViewResult => {
       ),
     );
     // --- Main Loop ---
-    yield* renderEffect; // Initial render
+    yield* renderEffect;
+    // Initial render
 
     const mainLoop = Queue.take(actionQueue).pipe(
       Effect.flatMap(handleAction),
@@ -248,7 +252,6 @@ export const SignupView = (): ViewResult => {
       ),
       Effect.forever,
     );
-
     yield* mainLoop;
   });
 

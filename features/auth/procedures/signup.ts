@@ -1,4 +1,4 @@
-// features/auth/procedures/signup.ts
+// FILE: features/auth/procedures/signup.ts
 import { Effect } from "effect";
 import { publicProcedure } from "../../../trpc/trpc";
 import { sSignupInput } from "../schemas";
@@ -17,8 +17,7 @@ import { perms } from "../../../lib/shared/permissions";
 import type { EmailVerificationTokenId } from "../../../types/generated/public/EmailVerificationToken";
 import { createDate, TimeSpan } from "oslo";
 import { sendEmail } from "../../../lib/server/email";
-import { runServerPromise } from "../../../lib/server/runtime";
-import { TRPCError } from "@trpc/server";
+import { handleTrpcProcedure } from "../../../lib/server/runtime";
 
 export const signupProcedure = publicProcedure
   .input(sSignupInput)
@@ -86,41 +85,7 @@ export const signupProcedure = publicProcedure
         "auth:signup",
       );
       return { success: true, email: user.email };
-    }).pipe(
-      Effect.catchTags({
-        PasswordHashingError: (e) =>
-          Effect.fail(
-            new TRPCError({
-              code: "INTERNAL_SERVER_ERROR",
-              message: "Could not hash password",
-              cause: e.cause,
-            }),
-          ),
-        EmailInUseError: (e) =>
-          Effect.fail(
-            new TRPCError({
-              code: "CONFLICT",
-              message: "An account with this email already exists.",
-              cause: e.cause,
-            }),
-          ),
-        TokenCreationError: (e) =>
-          Effect.fail(
-            new TRPCError({
-              code: "INTERNAL_SERVER_ERROR",
-              message: "Could not create verification token.",
-              cause: e.cause,
-            }),
-          ),
-        EmailSendError: (e) =>
-          Effect.fail(
-            new TRPCError({
-              code: "INTERNAL_SERVER_ERROR",
-              message: "Could not send verification email.",
-              cause: e.cause,
-            }),
-          ),
-      }),
-    );
-    return runServerPromise(program);
+    });
+
+    return handleTrpcProcedure(program);
   });

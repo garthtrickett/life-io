@@ -1,4 +1,4 @@
-// features/auth/procedures/requestPasswordReset.ts
+// FILE: features/auth/procedures/requestPasswordReset.ts
 import { Effect } from "effect";
 import { publicProcedure } from "../../../trpc/trpc";
 import { sRequestPasswordResetInput } from "../schemas";
@@ -8,20 +8,18 @@ import { generateId } from "../../../lib/server/utils";
 import { createDate, TimeSpan } from "oslo";
 import type { PasswordResetTokenId } from "../../../types/generated/public/PasswordResetToken";
 import { sendEmail } from "../../../lib/server/email";
-// --- START OF FIX: Import the necessary tagged errors ---
 import {
   EmailSendError,
   TokenCreationError,
   AuthDatabaseError,
 } from "../Errors";
-// --- END OF FIX ---
-import { runServerPromise } from "../../../lib/server/runtime";
-import { TRPCError } from "@trpc/server";
+import { handleTrpcProcedure } from "../../../lib/server/runtime";
 
 export const requestPasswordResetProcedure = publicProcedure
   .input(sRequestPasswordResetInput)
   .mutation(({ input }) => {
     const { email } = input;
+
     const program = Effect.gen(function* () {
       const db = yield* Db;
       yield* serverLog(
@@ -31,7 +29,6 @@ export const requestPasswordResetProcedure = publicProcedure
         "auth:requestPasswordReset",
       );
 
-      // --- START OF FIX: The catch block now fails with a specific error ---
       const user = yield* Effect.tryPromise({
         try: () =>
           db
@@ -41,7 +38,6 @@ export const requestPasswordResetProcedure = publicProcedure
             .executeTakeFirst(),
         catch: (cause) => new AuthDatabaseError({ cause }),
       });
-      // --- END OF FIX ---
 
       if (user) {
         const tokenId = yield* generateId(40);
@@ -86,35 +82,7 @@ export const requestPasswordResetProcedure = publicProcedure
         );
       }
       return { success: true };
-    }).pipe(
-      // --- START OF FIX: Add a handler for the new AuthDatabaseError ---
-      Effect.catchTags({
-        AuthDatabaseError: (e) =>
-          Effect.fail(
-            new TRPCError({
-              code: "INTERNAL_SERVER_ERROR",
-              message: "A database error occurred.",
-              cause: e.cause,
-            }),
-          ),
-        TokenCreationError: (e) =>
-          Effect.fail(
-            new TRPCError({
-              code: "INTERNAL_SERVER_ERROR",
-              message: "Could not create reset token.",
-              cause: e.cause,
-            }),
-          ),
-        EmailSendError: (e) =>
-          Effect.fail(
-            new TRPCError({
-              code: "INTERNAL_SERVER_ERROR",
-              message: "Could not send reset email.",
-              cause: e.cause,
-            }),
-          ),
-      }),
-      // --- END OF FIX ---
-    );
-    return runServerPromise(program);
+    });
+
+    return handleTrpcProcedure(program);
   });

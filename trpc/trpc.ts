@@ -3,54 +3,58 @@ import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
 import type { Context } from "./context";
 import { serverLog } from "../lib/server/logger.server";
-import { runServerPromise } from "../lib/server/runtime";
-import { Effect } from "effect";
-import { toError } from "../lib/shared/toError"; // <-- Add this import
+import { runServerUnscoped } from "../lib/server/runtime";
 
 const t = initTRPC.context<Context>().create({
   transformer: superjson,
 });
 
-const loggerMiddleware = t.middleware(({ ctx, path, type, next }) => {
-  const program = Effect.gen(function* () {
-    const userId = ctx.user?.id;
+const loggerMiddleware = t.middleware(async ({ ctx, path, type, next }) => {
+  const userId = ctx.user?.id;
 
-    // Don't log the logger's own operations to avoid noise.
-    if (path !== "log.log") {
-      yield* Effect.forkDaemon(
-        serverLog("info", `tRPC → [${type}] ${path}`, userId, "tRPC:req"),
-      );
-    }
+  // Don't log the logger's own operations to avoid noise.
+  if (path !== "log.log") {
+    // Fire-and-forget the request log
+    runServerUnscoped(
+      serverLog("info", `tRPC → [${type}] ${path}`, userId, "tRPC:req"),
+    );
+  }
 
-    // --- START OF FIX: Use toError for safe error conversion ---
-    const result = yield* Effect.tryPromise({
-      try: () => next({ ctx }),
-      catch: (e) => toError(e),
-    });
-    // --- END OF FIX ---
+  // Await the result of the next middleware/procedure. This promise resolves
+  // with a result object, it does not reject on application-level errors.
+  const result = await next({ ctx });
 
-    const status = result.ok && !("error" in result) ? "OK" : "ERR";
+  // Determine status based on the resolved result.
+  const status = result.ok ? "OK" : "ERR";
 
-    // Apply the same check to the response log.
-    if (path !== "log.log") {
-      yield* Effect.forkDaemon(
-        serverLog(
-          "info",
-          `tRPC ← [${type}] ${path} (${status})`,
-          userId,
-          "tRPC:res",
-        ),
-      );
-    }
+  if (path !== "log.log") {
+    // Fire-and-forget the response log
+    runServerUnscoped(
+      serverLog(
+        "info",
+        `tRPC ← [${type}] ${path} (${status})`,
+        userId,
+        "tRPC:res",
+      ),
+    );
+  }
 
-    if (!result.ok && "error" in result) {
-      return yield* Effect.fail(result.error);
-    }
+  // If the result contains a tRPC error, log its details.
+  if (!result.ok) {
+    const trpcError = result.error;
+    runServerUnscoped(
+      serverLog(
+        "error",
+        `tRPC Error on ${path}: Code=${trpcError.code}, Message=${trpcError.message}`,
+        userId,
+        "tRPC:Error",
+      ),
+    );
+  }
 
-    return result;
-  });
-
-  return runServerPromise(program);
+  // IMPORTANT: Always return the original result object from `next()`.
+  // This is crucial for preserving the error code and other metadata for the client.
+  return result;
 });
 
 export const router = t.router;

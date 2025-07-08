@@ -2,7 +2,7 @@
 import { Effect } from "effect";
 import { loggedInProcedure } from "../../../trpc/trpc";
 import { deleteSessionEffect } from "../../../lib/server/auth";
-import { runServerPromise } from "../../../lib/server/runtime";
+import { handleTrpcProcedure } from "../../../lib/server/runtime";
 import { serverLog } from "../../../lib/server/logger.server";
 
 export const logoutProcedure = loggedInProcedure.mutation(({ ctx }) => {
@@ -16,5 +16,5 @@ export const logoutProcedure = loggedInProcedure.mutation(({ ctx }) => {
     yield* deleteSessionEffect(ctx.session.id);
     return { success: true };
   });
-  return runServerPromise(program);
+  return handleTrpcProcedure(program);
 });
