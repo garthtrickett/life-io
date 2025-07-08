@@ -7,9 +7,7 @@ import { Argon2id } from "oslo/password";
 import { Effect, Cause, Exit, pipe } from "effect";
 import { DbLayer } from "../db/DbLayer";
 import { Db } from "../db/DbTag";
-// --- START OF FIX: Import the toError utility ---
 import { toError } from "../lib/shared/toError";
-// --- END OF FIX ---
 
 const TEST_USER_PASSWORD = "password123";
 const seedProgram = Effect.gen(function* () {
@@ -23,12 +21,10 @@ const seedProgram = Effect.gen(function* () {
   );
 
   const argon2id = new Argon2id();
-  // --- START OF FIX #1: Use toError for safe error conversion ---
   const hashedPassword = yield* Effect.tryPromise({
     try: () => argon2id.hash(TEST_USER_PASSWORD),
     catch: (e) => toError(e),
   });
-  // --- END OF FIX #1 ---
 
   const TEST_USER = {
     id: "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11" as UserId,
@@ -41,7 +37,6 @@ const seedProgram = Effect.gen(function* () {
   const db = yield* Db;
 
   yield* pipe(
-    // --- START OF FIX #2: Use toError for safe error conversion ---
     Effect.tryPromise({
       try: () =>
         db
@@ -59,7 +54,6 @@ const seedProgram = Effect.gen(function* () {
           .executeTakeFirst(),
       catch: (e) => toError(e),
     }),
-    // --- END OF FIX #2 ---
     Effect.tap(() =>
       Effect.forkDaemon(
         serverLog(

@@ -96,7 +96,6 @@ export const VerifyEmailView = (token: string): ViewResult => {
                 },
               }),
             );
-            // --- END OF REFACTOR ---
 
             yield* Effect.fork(verifyEffect);
             break;

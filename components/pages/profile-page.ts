@@ -19,7 +19,6 @@ interface ViewResult {
   cleanup?: () => void;
 }
 
-// --- START OF FIX: Define specific tagged errors for different failures ---
 class AvatarUploadError extends Data.TaggedError("AvatarUploadError")<{
   readonly message: string;
 }> {}
@@ -31,7 +30,6 @@ class UnknownChangePasswordError extends Data.TaggedError(
 )<{
   readonly cause: unknown;
 }> {}
-// --- END OF FIX ---
 
 // --- Model ---
 interface Model {
@@ -252,7 +250,6 @@ export const ProfileView = (): ViewResult => {
                 message: null,
               }),
             );
-            // --- START OF FIX: The `catch` block now inspects the TRPC error ---
 
             const changePasswordEffect = pipe(
               tryTrpc(
@@ -281,7 +278,6 @@ export const ProfileView = (): ViewResult => {
                   }),
               }),
             );
-            // --- END OF FIX ---
             yield* Effect.fork(changePasswordEffect);
             break;
           }
@@ -302,7 +298,6 @@ export const ProfileView = (): ViewResult => {
             );
             break;
 
-          // --- START OF FIX: Handle specific tagged errors to show the correct message ---
           case "CHANGE_PASSWORD_ERROR": {
             let errorMessage: string;
             switch (action.payload._tag) {
@@ -325,7 +320,6 @@ export const ProfileView = (): ViewResult => {
             );
             break;
           }
-          // --- END OF FIX ---
         }
       });
 

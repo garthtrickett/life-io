@@ -108,7 +108,6 @@ export const handleTrpcProcedure = async <A, E>(
         message: "Could not process password.",
         cause: error,
       });
-    // START OF FIX: Separated cases for specific internal errors
     case "AuthDatabaseError":
       throw new TRPCError({
         code: "INTERNAL_SERVER_ERROR",
@@ -127,7 +126,6 @@ export const handleTrpcProcedure = async <A, E>(
         message: "There was a problem sending an email.",
         cause: error,
       });
-    // END OF FIX
     default:
       // For any other unexpected errors.
       throw new TRPCError({

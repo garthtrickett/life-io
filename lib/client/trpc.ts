@@ -12,9 +12,7 @@ export const trpc = createTRPCProxyClient<AppRouter>({
   links: [
     loggingLink<AppRouter>(),
     httpBatchLink({
-      // --- START OF FIX ---
       url: "/api/trpc", // All tRPC calls now go through /api/trpc
-      // --- END OF FIX ---
       transformer: superjson,
     }),
   ],

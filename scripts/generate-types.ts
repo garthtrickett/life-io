@@ -6,8 +6,6 @@ import { config } from "dotenv";
 import { Effect, Cause, Exit, Data } from "effect";
 // Import Data
 import { serverLog } from "../lib/server/logger.server";
-// --- START OF FIX: Import the toError utility ---
-// --- END OF FIX ---
 
 config({ path: ".env" });
 
@@ -42,7 +40,6 @@ const generateTypes = Effect.gen(function* () {
   yield* serverLog("info", "✅ Type generation completed successfully!");
 });
 
-// --- START OF FIX: Execution logic simplified to only use runPromiseExit ---
 // The .catch() block was removed as runPromiseExit never rejects.
 // All failures, including defects, are handled within the Exit.isFailure block.
 void Effect.runPromiseExit(generateTypes).then((exit) => {
@@ -54,4 +51,3 @@ void Effect.runPromiseExit(generateTypes).then((exit) => {
     process.exit(1);
   }
 });
-// --- END OF FIX ---

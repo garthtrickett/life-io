@@ -105,7 +105,6 @@ const sendPasswordResetEmailDaemon = (
       ),
     ),
     Effect.mapError((cause) => new EmailSendError({ cause })),
-    // START OF FIX: Use toError to preserve stack trace and message
     Effect.catchAll((error) =>
       serverLog(
         "error",
@@ -116,7 +115,6 @@ const sendPasswordResetEmailDaemon = (
         "auth:requestPasswordReset:email",
       ),
     ),
-    // END OF FIX
   );
   return Effect.forkDaemon(emailEffect);
 };

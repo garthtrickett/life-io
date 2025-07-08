@@ -29,7 +29,6 @@ export const cleanupExpiredTokensEffect: Effect.Effect<void, Error, Db> =
           .deleteFrom("email_verification_token")
           .where("expires_at", "<", now)
           .execute(),
-      // START OF FIX: Preserve the original error in the 'cause' property
       catch: (cause) =>
         new Error(
           `Failed to delete expired email verification tokens: ${String(
@@ -37,7 +36,6 @@ export const cleanupExpiredTokensEffect: Effect.Effect<void, Error, Db> =
           )}`,
           { cause },
         ),
-      // END OF FIX
     });
 
     // FIX: Access the first element for numDeletedRows
@@ -57,13 +55,11 @@ export const cleanupExpiredTokensEffect: Effect.Effect<void, Error, Db> =
           .deleteFrom("password_reset_token")
           .where("expires_at", "<", now)
           .execute(),
-      // START OF FIX: Preserve the original error in the 'cause' property
       catch: (cause) =>
         new Error(
           `Failed to delete expired password reset tokens: ${String(cause)}`,
           { cause },
         ),
-      // END OF FIX
     });
 
     // FIX: Access the first element for numDeletedRows

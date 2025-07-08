@@ -88,7 +88,6 @@ export const ForgotPasswordView = (): ViewResult => {
                   `Password reset requested for ${currentModel.email}.`,
                 ),
               ),
-              // --- START OF FIX: Log the full error object, not a stringified cause ---
               Effect.catchAll((error) =>
                 clientLog(
                   "error",
@@ -96,7 +95,6 @@ export const ForgotPasswordView = (): ViewResult => {
                   error.cause, // Pass the full error object for interactive logging
                 ),
               ),
-              // --- END OF FIX ---
               Effect.andThen(() => propose({ type: "REQUEST_COMPLETE" })),
             );
             yield* Effect.fork(requestEffect);

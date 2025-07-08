@@ -17,7 +17,6 @@ const setupApp = Effect.gen(function* () {
 
   app.onError(({ code, error, set }) => {
     let descriptiveMessage: string;
-    // --- START OF FIX 1: Use a helper or JSON.stringify for better error logging ---
     if (error instanceof Error) {
       descriptiveMessage = error.message;
     } else if (
@@ -30,7 +29,6 @@ const setupApp = Effect.gen(function* () {
       // For any other type, stringify it safely.
       descriptiveMessage = JSON.stringify(error, null, 2);
     }
-    // --- END OF FIX 1 ---
 
     void runServerUnscoped(
       serverLog(
@@ -85,7 +83,6 @@ const setupApp = Effect.gen(function* () {
       };
     }
 
-    // --- START OF FIX: Handle other structured errors, like those from tRPC ---
     if (typeof error === "object" && error !== null) {
       if (
         "code" in error &&
@@ -120,7 +117,6 @@ const setupApp = Effect.gen(function* () {
         };
       }
     }
-    // --- END OF FIX ---
 
     set.status = 500;
     return {
@@ -196,7 +192,6 @@ runServerPromise(setupApp)
     });
 
     const gracefulShutdown = async (signal: string) => {
-      // --- START OF FIX 2: Replace console.info with a server log ---
       await runServerPromise(
         serverLog(
           "info",
@@ -205,7 +200,6 @@ runServerPromise(setupApp)
           "Shutdown",
         ),
       );
-      // --- END OF FIX 2 ---
       await server.stop();
       await shutdownServer();
       console.warn("Graceful shutdown complete. Exiting.");

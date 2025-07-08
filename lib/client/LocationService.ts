@@ -31,8 +31,6 @@ export const LocationLive: Layer.Layer<LocationService> = Layer.sync(
     // This object is the concrete implementation of ILocationService
     const implementation: ILocationService = {
       pathname: Stream.async<string>((emit) => {
-        // --- START OF FIX ---
-        // Void the promise returned by `emit` to fix floating promise errors.
         const emitPath = () =>
           void emit(Effect.succeed(Chunk.of(window.location.pathname)));
 
@@ -48,7 +46,6 @@ export const LocationLive: Layer.Layer<LocationService> = Layer.sync(
           );
           emitPath();
         };
-        // --- END OF FIX ---
 
         window.addEventListener("popstate", emitPath);
         window.addEventListener("location-changed", locationChangedHandler);

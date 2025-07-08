@@ -96,7 +96,6 @@ export const ResetPasswordView = (token: string): ViewResult => {
                   propose({ type: "RESET_ERROR", payload: error }),
               }),
             );
-            // --- END OF REFACTOR ---
 
             yield* Effect.fork(resetEffect);
             break;

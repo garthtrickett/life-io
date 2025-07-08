@@ -74,7 +74,6 @@ export function setupWebSocket(rep: Replicache<Mutators> | null) {
             ),
           );
         } catch (e) {
-          // --- START OF FIX: Log the full error object, not just the message ---
           runClientUnscoped(
             clientLog(
               "error",
@@ -82,7 +81,6 @@ export function setupWebSocket(rep: Replicache<Mutators> | null) {
               toError(e),
             ),
           );
-          // --- END OF FIX ---
         }
       })();
     } else if (event.data === '{"error":"authentication_failed"}') {

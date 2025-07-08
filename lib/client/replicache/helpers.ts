@@ -12,9 +12,7 @@ export const withMutatorLogging =
   (self: Effect.Effect<A, E, R>): Effect.Effect<A | void, never, R> =>
     pipe(
       self,
-      // START OF FIX: The catchAll block now logs the full error object.
       Effect.catchAll((err) =>
         clientLog("error", `Error in ${name} mutator:`, err),
       ),
-      // END OF FIX
     );

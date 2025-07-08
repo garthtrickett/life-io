@@ -58,12 +58,10 @@ export const NoteDetailView = (id: string): ViewResult => {
       { note: Note | null; blocks: Block[] },
       string
     > = Stream.async((emit) => {
-      // --- START OF FIX: Add a null check for the `rep` instance ---
       if (!rep) {
         void emit.fail("Replicache is not initialized.");
         return;
       }
-      // --- END OF FIX ---
 
       let isInitialLoad = true;
       const unsubscribe = rep.subscribe(

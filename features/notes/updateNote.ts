@@ -55,7 +55,6 @@ const updateNoteEffect = (
     const result = yield* Effect.tryPromise({
       try: () =>
         db.transaction().execute(async (trx) => {
-          // START OF FIX: Do not use OrThrow, manually check for existence
           const parentNote = await trx
             .updateTable("note")
             .set({
@@ -75,7 +74,6 @@ const updateNoteEffect = (
               userId: validatedUserId,
             });
           }
-          // END OF FIX
 
           await trx
             .deleteFrom("block")
@@ -102,14 +100,12 @@ const updateNoteEffect = (
 
           return parentNote;
         }),
-      // START OF FIX: Catch our specific error and propagate it, wrapping others
       catch: (cause) => {
         if (cause instanceof NoteNotFoundError) {
           return cause;
         }
         return new NoteDatabaseError({ cause });
       },
-      // END OF FIX
     });
 
     const updatedNote = yield* Schema.decodeUnknown(NoteSchema)(result).pipe(

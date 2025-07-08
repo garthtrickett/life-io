@@ -49,7 +49,6 @@ const createNoteEffect = (
             .returningAll()
             .executeTakeFirst();
 
-          // START OF FIX: Replace OrThrow with a manual check and specific error
           const record =
             maybeInserted ??
             (await trx
@@ -64,7 +63,6 @@ const createNoteEffect = (
               `Failed to find note with ID ${note.id} after conflict.`,
             );
           }
-          // END OF FIX
 
           const childBlocks = await Effect.runPromise(
             Effect.provideService(

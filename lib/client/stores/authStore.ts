@@ -61,8 +61,6 @@ const expireCookieEffect = (name: string): Effect.Effect<void> =>
     );
   });
 
-// --- START OF DURABLE CLEANUP LOGIC ---
-
 /** Sets a flag in localStorage to indicate a user's DB needs cleanup. */
 const setCleanupFlag = (userId: UserId): Effect.Effect<void> =>
   Effect.sync(() => {
@@ -177,8 +175,6 @@ const checkAndRunPendingCleanup = (): Effect.Effect<void> =>
       );
     }
   });
-
-// --- END OF DURABLE CLEANUP LOGIC ---
 
 /* ─────────────────────────── Model & Actions ─────────────────────────── */
 
@@ -354,7 +350,6 @@ const handleAuthAction = (action: AuthAction): Effect.Effect<void, never> =>
         // Fork the entire robust logout process.
         yield* Effect.fork(fullLogoutProcess);
 
-        // --- START OF FIX: Remove the redundant constant and simplify ---
         // Separately, set the cleanup flag and fork the non-critical cleanup.
         yield* setCleanupFlag(userId);
         yield* Effect.fork(
@@ -370,7 +365,6 @@ const handleAuthAction = (action: AuthAction): Effect.Effect<void, never> =>
             ),
           ),
         );
-        // --- END OF FIX ---
 
         break;
       }

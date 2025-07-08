@@ -144,11 +144,9 @@ export const SignupView = (): ViewResult => {
     };
 
     // --- Action Handler ---
-    // --- START OF FIX: Declare the LocationService requirement in the function's return type ---
     const handleAction = (
       action: Action,
     ): Effect.Effect<void, never, LocationService> =>
-      // --- END OF FIX ---
       Effect.gen(function* () {
         const currentModel = yield* Ref.get(model);
 
