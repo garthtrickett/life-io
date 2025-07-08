@@ -1,7 +1,6 @@
 // FILE: replicache/push.ts
 import { Effect, Data, pipe } from "effect";
 import type { PushRequest } from "replicache";
-import type { Transaction } from "kysely";
 import { Db } from "../db/DbTag";
 import { PokeService } from "../lib/server/PokeService";
 import { serverLog } from "../lib/server/logger.server";
@@ -10,11 +9,10 @@ import type { ReplicacheClientGroupId } from "../types/generated/public/Replicac
 import type { UserId } from "../types/generated/public/User";
 import { Schema } from "@effect/schema";
 import { NoteIdSchema, UserIdSchema } from "../lib/shared/schemas";
-import type { NewNote } from "../types/generated/public/Note";
-import { Crypto } from "../lib/server/crypto"; // Re-added this import
-import { parseMarkdownToBlocks } from "../lib/server/parser";
-import type { Database } from "../types";
+import { Crypto } from "../lib/server/crypto";
 import { toError } from "../lib/shared/toError";
+import { createNote } from "../features/notes/createNote"; // ⬅️ NEW
+import { updateNote } from "../features/notes/updateNote"; // ⬅️ NEW
 
 /* -------------------------------------------------------------------------- */
 /* Schemas                                                                    */
@@ -25,6 +23,7 @@ const CreateNoteMutationArgs = Schema.Struct({
   content: Schema.String,
   user_id: UserIdSchema,
 });
+
 const UpdateNoteMutationArgs = Schema.Struct({
   id: NoteIdSchema,
   title: Schema.String,
@@ -43,13 +42,13 @@ class MutationApplyError extends Data.TaggedError("MutationApplyError")<{
 }> {}
 
 /* -------------------------------------------------------------------------- */
-/* Mutation Application Logic (Reverted to Effect-based)                      */
+/* Mutation Application Logic (Now calling features)                          */
 /* -------------------------------------------------------------------------- */
 const applyChange = (
-  trx: Transaction<Database>,
   userId: UserId,
   change: { name: string; args: unknown },
-): Effect.Effect<void, MutationApplyError, never> => {
+): Effect.Effect<void, MutationApplyError, Db | Crypto | PokeService> => {
+  // ⬅️ MODIFIED
   switch (change.name) {
     case "createNote": {
       return Effect.gen(function* () {
@@ -65,43 +64,10 @@ const applyChange = (
           );
         }
 
-        const newNote: NewNote = {
-          id: args.id,
-          title: args.title,
-          content: args.content,
-          user_id: args.user_id,
-        };
-
-        yield* Effect.tryPromise({
-          try: () =>
-            trx
-              .insertInto("note")
-              .values(newNote)
-              .onConflict((oc) => oc.column("id").doNothing())
-              .execute(),
-          catch: (cause) => new MutationApplyError({ cause }),
-        });
-
-        // ======================== START OF FIX ========================
-        const childBlocks = yield* parseMarkdownToBlocks(
-          args.content,
-          `${args.id}.md`,
-          userId,
-          args.id,
+        // ⬅️ DELEGATE TO THE FEATURE
+        yield* createNote(args).pipe(
+          Effect.mapError((cause) => new MutationApplyError({ cause })),
         );
-
-        if (childBlocks.length > 0) {
-          yield* Effect.tryPromise({
-            try: () =>
-              trx
-                .insertInto("block")
-                .values(childBlocks)
-                .onConflict((oc) => oc.doNothing())
-                .execute(),
-            catch: (cause) => new MutationApplyError({ cause }),
-          });
-        }
-        // ========================= END OF FIX =========================
       });
     }
 
@@ -111,43 +77,10 @@ const applyChange = (
           change.args,
         ).pipe(Effect.mapError((cause) => new MutationApplyError({ cause })));
 
-        const parentNote = yield* Effect.tryPromise({
-          try: () =>
-            trx
-              .updateTable("note")
-              .set({
-                title: args.title,
-                content: args.content,
-                updated_at: new Date(),
-              })
-              .where("id", "=", args.id)
-              .where("user_id", "=", userId)
-              .returningAll()
-              .executeTakeFirst(),
-          catch: (cause) => new MutationApplyError({ cause }),
-        });
-
-        if (!parentNote) return;
-
-        yield* Effect.tryPromise({
-          try: () =>
-            trx.deleteFrom("block").where("note_id", "=", args.id).execute(),
-          catch: (cause) => new MutationApplyError({ cause }),
-        });
-
-        const childBlocks = yield* parseMarkdownToBlocks(
-          args.content,
-          `${parentNote.id}.md`,
-          userId,
-          args.id,
+        // ⬅️ DELEGATE TO THE FEATURE
+        yield* updateNote(args.id, userId, args).pipe(
+          Effect.mapError((cause) => new MutationApplyError({ cause })),
         );
-
-        if (childBlocks.length > 0) {
-          yield* Effect.tryPromise({
-            try: () => trx.insertInto("block").values(childBlocks).execute(),
-            catch: (cause) => new MutationApplyError({ cause }),
-          });
-        }
       });
     }
 
@@ -157,7 +90,7 @@ const applyChange = (
 };
 
 /* -------------------------------------------------------------------------- */
-/* Main Handler (Reverted to original structure)                              */
+/* Main Handler (Simplified transaction handling)                             */
 /* -------------------------------------------------------------------------- */
 export const handlePush = (
   req: PushRequest,
@@ -180,7 +113,6 @@ export const handlePush = (
     const mutations = [...originalMutations].sort((a, b) => a.id - b.id);
     const db = yield* Db;
     const pokeService = yield* PokeService;
-    const crypto = yield* Crypto;
 
     yield* serverLog(
       "info",
@@ -189,31 +121,40 @@ export const handlePush = (
       "Replicache:Push",
     );
 
-    yield* Effect.tryPromise({
-      try: () =>
-        db.transaction().execute(async (trx) => {
-          const clientID = mutations[0].clientID as ReplicacheClientId;
+    // ⬇️ MODIFIED: Transaction is removed, operations are now sequential effects.
+    try {
+      const clientID = mutations[0].clientID as ReplicacheClientId;
 
-          await trx
+      yield* Effect.tryPromise({
+        try: () =>
+          db
             .insertInto("replicache_client_group")
             .values({
               id: clientGroupID as ReplicacheClientGroupId,
               user_id: userId,
             })
             .onConflict((oc) => oc.doNothing())
-            .execute();
+            .execute(),
+        catch: (cause) => new ReplicachePushError({ cause }),
+      });
 
-          await trx
+      yield* Effect.tryPromise({
+        try: () =>
+          db
             .insertInto("replicache_client")
             .values({
               id: clientID,
               client_group_id: clientGroupID as ReplicacheClientGroupId,
             })
             .onConflict((oc) => oc.doNothing())
-            .execute();
+            .execute(),
+        catch: (cause) => new ReplicachePushError({ cause }),
+      });
 
-          for (const mutation of mutations) {
-            await trx
+      for (const mutation of mutations) {
+        yield* Effect.tryPromise({
+          try: () =>
+            db
               .insertInto("change_log")
               .values({
                 client_group_id: clientGroupID as ReplicacheClientGroupId,
@@ -222,25 +163,29 @@ export const handlePush = (
                 name: mutation.name,
                 args: JSON.stringify(mutation.args),
               })
-              .execute();
+              .execute(),
+          catch: (cause) => new ReplicachePushError({ cause }),
+        });
 
-            await Effect.runPromise(
-              pipe(
-                applyChange(trx, userId, mutation),
-                Effect.provideService(Crypto, crypto), // Provide the crypto service
-              ),
-            );
-          }
+        // This effect now calls the centralized features and
+        // requires their dependencies.
+        yield* applyChange(userId, mutation);
+      }
 
-          const lastMutationID = mutations[mutations.length - 1].id;
-          await trx
+      const lastMutationID = mutations[mutations.length - 1].id;
+      yield* Effect.tryPromise({
+        try: () =>
+          db
             .updateTable("replicache_client")
             .set({ last_mutation_id: lastMutationID })
             .where("id", "=", clientID)
-            .execute();
-        }),
-      catch: (cause) => new ReplicachePushError({ cause }),
-    });
+            .execute(),
+        catch: (cause) => new ReplicachePushError({ cause }),
+      });
+    } catch (e) {
+      // Catch any error from the sequence and wrap it.
+      yield* Effect.fail(new ReplicachePushError({ cause: e }));
+    }
 
     yield* pokeService.poke().pipe(
       Effect.catchAllDefect((defect) => {

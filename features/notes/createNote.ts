@@ -1,3 +1,4 @@
+// FILE: features/notes/createNote.ts
 // ---------------------------------------------------------------------------
 // Idempotent `createNote` mutation handler for Replicache
 // ---------------------------------------------------------------------------
@@ -15,6 +16,9 @@ import { Schema } from "@effect/schema";
 import { NoteSchema } from "../../lib/shared/schemas";
 import { PokeService } from "../../lib/server/PokeService";
 import { withCreateNoteLogging } from "./wrappers";
+import { Crypto } from "../../lib/server/crypto"; // ⬅️ NEW
+import { parseMarkdownToBlocks } from "../../lib/server/parser"; // ⬅️ NEW
+import { NoteId } from "../../types/generated/public/Note";
 
 /**
  * Core business logic for creating a note idempotently.
@@ -24,7 +28,7 @@ const createNoteEffect = (
 ): Effect.Effect<
   Note,
   NoteDatabaseError | NoteValidationError,
-  Db | PokeService
+  Db | PokeService | Crypto // ⬅️ MODIFIED
 > =>
   Effect.gen(function* () {
     // 1. Validate inputs
@@ -35,6 +39,7 @@ const createNoteEffect = (
     // 2. Get dependencies
     const db = yield* Db;
     const pokeService = yield* PokeService;
+    const crypto = yield* Crypto; // ⬅️ NEW
 
     // 3. Log the attempt (fire-and-forget)
     yield* Effect.forkDaemon(
@@ -46,64 +51,59 @@ const createNoteEffect = (
       ),
     );
 
-    // 4. Try to insert (idempotent)
-    const maybeInserted = yield* Effect.tryPromise({
+    // 4. Perform main operation in a transaction
+    const dbRecord = yield* Effect.tryPromise({
       try: () =>
-        db
-          .insertInto("note")
-          .values(note)
-          .onConflict((oc) => oc.column("id").doNothing())
-          .returningAll()
-          .executeTakeFirst(),
+        db.transaction().execute(async (trx) => {
+          const maybeInserted = await trx
+            .insertInto("note")
+            .values(note)
+            .onConflict((oc) => oc.column("id").doNothing())
+            .returningAll()
+            .executeTakeFirst();
+
+          const record =
+            maybeInserted ??
+            (await trx
+              .selectFrom("note")
+              .selectAll()
+              .where("id", "=", note.id as NoteId)
+              .executeTakeFirstOrThrow());
+
+          // --- BLOCK PARSING LOGIC ---
+          const childBlocks = await Effect.runPromise(
+            Effect.provideService(
+              Crypto,
+              crypto,
+            )(
+              parseMarkdownToBlocks(
+                record.content,
+                `${record.id}.md`,
+                validatedUserId,
+                record.id,
+              ),
+            ),
+          );
+
+          if (childBlocks.length > 0) {
+            await trx.insertInto("block").values(childBlocks).execute();
+          }
+          // --- END BLOCK PARSING ---
+
+          return record;
+        }),
       catch: (cause) => new NoteDatabaseError({ cause }),
     });
 
-    // 5. If insert was skipped (conflict), fetch existing
-    const dbRecord =
-      maybeInserted ??
-      (yield* Effect.gen(function* () {
-        if (note.id === undefined) {
-          return yield* Effect.fail(
-            new NoteValidationError({
-              cause: "note.id is required for idempotent creation",
-            }),
-          );
-        }
-
-        // Narrow to a guaranteed, non-nullable id for the query
-        const noteId = note.id as NonNullable<NewNote["id"]>;
-
-        const maybeExisting = yield* Effect.tryPromise({
-          try: () =>
-            db
-              .selectFrom("note")
-              .selectAll()
-              .where("id", "=", noteId) // safe: noteId is definitely defined
-              .executeTakeFirst(),
-          catch: (cause) => new NoteDatabaseError({ cause }),
-        });
-
-        if (maybeExisting === undefined) {
-          return yield* Effect.fail(
-            new NoteDatabaseError({
-              cause: "DB did not return created nor existing note record",
-            }),
-          );
-        }
-        return maybeExisting;
-      }));
-
-    // 6. Decode to ensure we have a valid Note
+    // 5. Decode to ensure we have a valid Note
     const createdNote = yield* Schema.decodeUnknown(NoteSchema)(dbRecord).pipe(
       Effect.mapError((cause) => new NoteValidationError({ cause })),
     );
-
-    // 7. Poke clients, mapping any raw Error into a NoteDatabaseError
+    // 6. Poke clients
     yield* pokeService
       .poke()
       .pipe(Effect.mapError((cause) => new NoteDatabaseError({ cause })));
-
-    // 8. Return the final note
+    // 7. Return the final note
     return createdNote;
   });
 
