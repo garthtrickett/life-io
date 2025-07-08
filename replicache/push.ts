@@ -11,8 +11,8 @@ import { Schema } from "@effect/schema";
 import { NoteIdSchema, UserIdSchema } from "../lib/shared/schemas";
 import { Crypto } from "../lib/server/crypto";
 import { toError } from "../lib/shared/toError";
-import { createNote } from "../features/notes/createNote"; // ⬅️ NEW
-import { updateNote } from "../features/notes/updateNote"; // ⬅️ NEW
+import { createNote } from "../features/notes/createNote";
+import { updateNote } from "../features/notes/updateNote";
 
 /* -------------------------------------------------------------------------- */
 /* Schemas                                                                    */
@@ -23,13 +23,11 @@ const CreateNoteMutationArgs = Schema.Struct({
   content: Schema.String,
   user_id: UserIdSchema,
 });
-
 const UpdateNoteMutationArgs = Schema.Struct({
   id: NoteIdSchema,
   title: Schema.String,
   content: Schema.String,
 });
-
 /* -------------------------------------------------------------------------- */
 /* Error Types                                                                */
 /* -------------------------------------------------------------------------- */
@@ -48,7 +46,6 @@ const applyChange = (
   userId: UserId,
   change: { name: string; args: unknown },
 ): Effect.Effect<void, MutationApplyError, Db | Crypto | PokeService> => {
-  // ⬅️ MODIFIED
   switch (change.name) {
     case "createNote": {
       return Effect.gen(function* () {
@@ -64,7 +61,6 @@ const applyChange = (
           );
         }
 
-        // ⬅️ DELEGATE TO THE FEATURE
         yield* createNote(args).pipe(
           Effect.mapError((cause) => new MutationApplyError({ cause })),
         );
@@ -77,7 +73,6 @@ const applyChange = (
           change.args,
         ).pipe(Effect.mapError((cause) => new MutationApplyError({ cause })));
 
-        // ⬅️ DELEGATE TO THE FEATURE
         yield* updateNote(args.id, userId, args).pipe(
           Effect.mapError((cause) => new MutationApplyError({ cause })),
         );
@@ -88,7 +83,6 @@ const applyChange = (
       return Effect.void;
   }
 };
-
 /* -------------------------------------------------------------------------- */
 /* Main Handler (Simplified transaction handling)                             */
 /* -------------------------------------------------------------------------- */
@@ -121,7 +115,6 @@ export const handlePush = (
       "Replicache:Push",
     );
 
-    // ⬇️ MODIFIED: Transaction is removed, operations are now sequential effects.
     try {
       const clientID = mutations[0].clientID as ReplicacheClientId;
 
@@ -137,7 +130,6 @@ export const handlePush = (
             .execute(),
         catch: (cause) => new ReplicachePushError({ cause }),
       });
-
       yield* Effect.tryPromise({
         try: () =>
           db
@@ -150,7 +142,6 @@ export const handlePush = (
             .execute(),
         catch: (cause) => new ReplicachePushError({ cause }),
       });
-
       for (const mutation of mutations) {
         yield* Effect.tryPromise({
           try: () =>
@@ -167,8 +158,6 @@ export const handlePush = (
           catch: (cause) => new ReplicachePushError({ cause }),
         });
 
-        // This effect now calls the centralized features and
-        // requires their dependencies.
         yield* applyChange(userId, mutation);
       }
 
@@ -183,11 +172,10 @@ export const handlePush = (
         catch: (cause) => new ReplicachePushError({ cause }),
       });
     } catch (e) {
-      // Catch any error from the sequence and wrap it.
       yield* Effect.fail(new ReplicachePushError({ cause: e }));
     }
 
-    yield* pokeService.poke().pipe(
+    yield* pokeService.poke(userId).pipe(
       Effect.catchAllDefect((defect) => {
         const error = toError(defect);
         return serverLog(

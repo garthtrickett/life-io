@@ -1,4 +1,5 @@
 // FILE: elysia/routes.ts
+
 import { Elysia, t } from "elysia";
 import { Effect, Fiber, Stream } from "effect";
 import { staticPlugin } from "@elysiajs/static";
@@ -19,18 +20,16 @@ import { authenticateRequestEffect } from "./auth";
 import { runServerUnscoped } from "../lib/server/runtime";
 import { serverLog } from "../lib/server/logger.server";
 import { effectHandler } from "./effectHandler";
+import { validateSessionEffect } from "../lib/server/auth";
 
-type WsSender = { id: string; send: (message: string) => void };
 export const makeApp = Effect.gen(function* () {
   const isProduction = process.env.NODE_ENV === "production";
   const pokeService = yield* PokeService;
   const wsConnections = new Map<string, Fiber.RuntimeFiber<void, unknown>>();
 
   const app = new Elysia()
-    /* ---------- API ---------- */
     .group("/api", (group) =>
       group
-        /* tRPC */
         .all("/trpc/*", ({ request }) =>
           fetchRequestHandler({
             endpoint: "/api/trpc",
@@ -65,43 +64,67 @@ export const makeApp = Effect.gen(function* () {
           { body: t.Object({ avatar: t.File() }) },
         ),
     )
-
-    /* ---------- WebSocket ---------- */
     .ws("/ws", {
-      open(ws: WsSender) {
+      query: t.Object({
+        sessionId: t.Optional(t.String()),
+      }),
+      open(ws) {
         runServerUnscoped(
-          serverLog(
-            "info",
-            `WebSocket opened: ${ws.id}. Subscribing to poke service.`,
-            undefined,
-            "WS:Lifecycle",
-          ),
+          Effect.gen(function* () {
+            const sessionId = ws.data.query.sessionId;
+            if (!sessionId) {
+              yield* serverLog(
+                "warn",
+                `WS Connection ${ws.id} closed: No session ID provided.`,
+              );
+              ws.send(JSON.stringify({ error: "authentication_failed" }));
+              return ws.close();
+            }
+
+            const { user } = yield* validateSessionEffect(sessionId).pipe(
+              Effect.catchAll((e) => {
+                return serverLog(
+                  "warn",
+                  `WS Auth failed for session ${sessionId}: ${e._tag}`,
+                ).pipe(Effect.andThen(Effect.fail(e)));
+              }),
+            );
+
+            if (!user) {
+              yield* serverLog(
+                "warn",
+                `WS Connection ${ws.id} closed: Invalid session.`,
+              );
+              ws.send(JSON.stringify({ error: "authentication_failed" }));
+              return ws.close();
+            }
+
+            yield* serverLog(
+              "info",
+              `WebSocket opened and authenticated for user ${user.id} (conn: ${ws.id}). Subscribing to poke service.`,
+              user.id,
+              "WS:Lifecycle",
+            );
+
+            const streamProcessingEffect = pokeService
+              .subscribe(user.id)
+              .pipe(
+                Stream.runForEach((msg) =>
+                  serverLog(
+                    "info",
+                    `Sending poke message "${msg}" to client: ${ws.id}`,
+                    user.id,
+                    "WS:PokeSend",
+                  ).pipe(Effect.andThen(Effect.sync(() => ws.send(msg)))),
+                ),
+              );
+
+            const fiber = runServerUnscoped(streamProcessingEffect);
+            wsConnections.set(ws.id, fiber);
+          }),
         );
-
-        // --- START OF FIX: Use runServerUnscoped and simplify the stream handler ---
-        // The original `Effect.runFork` did not provide the necessary `ServerContext`
-        // required by the `serverLog` inside the stream, causing a silent failure.
-        // Using `runServerUnscoped` correctly provides the context.
-        // The inner logic is also simplified to be a single, cleaner Effect.
-        const streamProcessingEffect = pokeService
-          .subscribe()
-          .pipe(
-            Stream.runForEach((msg) =>
-              serverLog(
-                "info",
-                `Sending poke message "${msg}" to client: ${ws.id}`,
-                undefined,
-                "WS:PokeSend",
-              ).pipe(Effect.andThen(Effect.sync(() => ws.send(msg)))),
-            ),
-          );
-
-        const fiber = runServerUnscoped(streamProcessingEffect);
-        // --- END OF FIX ---
-
-        wsConnections.set(ws.id, fiber);
       },
-      close(ws: WsSender) {
+      close(ws) {
         runServerUnscoped(
           serverLog(
             "info",
@@ -118,7 +141,6 @@ export const makeApp = Effect.gen(function* () {
       },
     });
 
-  /* ---------- Static files ---------- */
   if (isProduction) {
     yield* Effect.forkDaemon(
       serverLog("info", "Production mode: Setting up static file serving."),

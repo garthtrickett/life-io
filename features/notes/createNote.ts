@@ -1,10 +1,4 @@
 // FILE: features/notes/createNote.ts
-// ---------------------------------------------------------------------------
-// Idempotent `createNote` mutation handler for Replicache
-// ---------------------------------------------------------------------------
-// Uses Effect.gen for clear, step-by-step business logic.
-// Logging is handled by the withCreateNoteLogging wrapper.
-// ---------------------------------------------------------------------------
 
 import { Effect, pipe } from "effect";
 import { Db } from "../../db/DbTag";
@@ -16,32 +10,26 @@ import { Schema } from "@effect/schema";
 import { NoteSchema } from "../../lib/shared/schemas";
 import { PokeService } from "../../lib/server/PokeService";
 import { withCreateNoteLogging } from "./wrappers";
-import { Crypto } from "../../lib/server/crypto"; // ⬅️ NEW
-import { parseMarkdownToBlocks } from "../../lib/server/parser"; // ⬅️ NEW
+import { Crypto } from "../../lib/server/crypto";
+import { parseMarkdownToBlocks } from "../../lib/server/parser";
 import { NoteId } from "../../types/generated/public/Note";
 
-/**
- * Core business logic for creating a note idempotently.
- */
 const createNoteEffect = (
   note: NewNote,
 ): Effect.Effect<
   Note,
   NoteDatabaseError | NoteValidationError,
-  Db | PokeService | Crypto // ⬅️ MODIFIED
+  Db | PokeService | Crypto
 > =>
   Effect.gen(function* () {
-    // 1. Validate inputs
     const validatedUserId = yield* validateUserId(note.user_id).pipe(
       Effect.mapError((cause) => new NoteValidationError({ cause })),
     );
 
-    // 2. Get dependencies
     const db = yield* Db;
     const pokeService = yield* PokeService;
-    const crypto = yield* Crypto; // ⬅️ NEW
+    const crypto = yield* Crypto;
 
-    // 3. Log the attempt (fire-and-forget)
     yield* Effect.forkDaemon(
       serverLog(
         "info",
@@ -51,7 +39,6 @@ const createNoteEffect = (
       ),
     );
 
-    // 4. Perform main operation in a transaction
     const dbRecord = yield* Effect.tryPromise({
       try: () =>
         db.transaction().execute(async (trx) => {
@@ -70,7 +57,6 @@ const createNoteEffect = (
               .where("id", "=", note.id as NoteId)
               .executeTakeFirstOrThrow());
 
-          // --- BLOCK PARSING LOGIC ---
           const childBlocks = await Effect.runPromise(
             Effect.provideService(
               Crypto,
@@ -84,31 +70,25 @@ const createNoteEffect = (
               ),
             ),
           );
-
           if (childBlocks.length > 0) {
             await trx.insertInto("block").values(childBlocks).execute();
           }
-          // --- END BLOCK PARSING ---
 
           return record;
         }),
       catch: (cause) => new NoteDatabaseError({ cause }),
     });
 
-    // 5. Decode to ensure we have a valid Note
     const createdNote = yield* Schema.decodeUnknown(NoteSchema)(dbRecord).pipe(
       Effect.mapError((cause) => new NoteValidationError({ cause })),
     );
-    // 6. Poke clients
+
     yield* pokeService
-      .poke()
+      .poke(createdNote.user_id)
       .pipe(Effect.mapError((cause) => new NoteDatabaseError({ cause })));
-    // 7. Return the final note
+
     return createdNote;
   });
 
-/**
- * Public-facing feature.
- */
 export const createNote = (note: NewNote) =>
   pipe(createNoteEffect(note), withCreateNoteLogging(note.user_id, note.title));

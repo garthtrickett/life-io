@@ -1,5 +1,4 @@
 // FILE: features/notes/updateNote.ts
-// ---------------------------------------------------------------------------
 
 import { Effect, pipe } from "effect";
 import { Db } from "../../db/DbTag";
@@ -15,17 +14,14 @@ import { Schema } from "@effect/schema";
 import { NoteSchema } from "../../lib/shared/schemas";
 import { parseMarkdownToBlocks } from "../../lib/server/parser";
 import { Crypto } from "../../lib/server/crypto";
-import { PokeService } from "../../lib/server/PokeService"; // ⬅️ NEW
+import { PokeService } from "../../lib/server/PokeService";
 import { withUpdateNoteLogging } from "./wrappers";
 
 interface NoteUpdatePayload {
   title: string;
-  content: string; // raw markdown
+  content: string;
 }
 
-/**
- * Core business logic for updating a note and its blocks.
- */
 const updateNoteEffect = (
   noteId: string,
   userId: string,
@@ -33,10 +29,9 @@ const updateNoteEffect = (
 ): Effect.Effect<
   Note,
   NoteDatabaseError | NoteNotFoundError | NoteValidationError,
-  Db | Crypto | PokeService // ⬅️ NEW
+  Db | Crypto | PokeService
 > =>
   Effect.gen(function* () {
-    // 1. Validate inputs
     const validatedNoteId = yield* validateNoteId(noteId).pipe(
       Effect.mapError((cause) => new NoteValidationError({ cause })),
     );
@@ -44,12 +39,10 @@ const updateNoteEffect = (
       Effect.mapError((cause) => new NoteValidationError({ cause })),
     );
 
-    // 2. Get dependencies
     const db = yield* Db;
     const crypto = yield* Crypto;
-    const pokeService = yield* PokeService; // ⬅️ NEW
+    const pokeService = yield* PokeService;
 
-    // 3. Log intent (fire-and-forget)
     yield* Effect.forkDaemon(
       serverLog(
         "info",
@@ -59,11 +52,9 @@ const updateNoteEffect = (
       ),
     );
 
-    // 4. Perform the main operation inside a transaction
     const result = yield* Effect.tryPromise({
       try: () =>
         db.transaction().execute(async (trx) => {
-          // --- TRANSACTION LOGIC BEGINS ---
           const parentNote = await trx
             .updateTable("note")
             .set({
@@ -94,34 +85,26 @@ const updateNoteEffect = (
               ),
             ),
           );
-
           if (childBlocks.length > 0) {
             await trx.insertInto("block").values(childBlocks).execute();
           }
 
           return parentNote;
-          // --- TRANSACTION LOGIC ENDS ---
         }),
       catch: (cause) => new NoteDatabaseError({ cause }),
     });
 
-    // 5. Decode against the schema
     const updatedNote = yield* Schema.decodeUnknown(NoteSchema)(result).pipe(
       Effect.mapError((cause) => new NoteValidationError({ cause })),
     );
 
-    // 6. Poke clients so they pull fresh data              // ⬅️ NEW
     yield* pokeService
-      .poke()
+      .poke(updatedNote.user_id)
       .pipe(Effect.mapError((cause) => new NoteDatabaseError({ cause })));
 
-    // 7. Return the updated note
     return updatedNote;
   });
 
-/**
- * Public-facing feature.
- */
 export const updateNote = (
   noteId: string,
   userId: string,

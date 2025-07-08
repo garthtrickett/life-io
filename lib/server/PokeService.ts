@@ -1,54 +1,112 @@
-// ./lib/server/PokeService.ts
-import { Context, Effect, Layer, PubSub, Stream, pipe, Console } from "effect";
+// FILE: lib/server/PokeService.ts
+
+import { Context, Effect, Layer, PubSub, Stream, Console, Ref } from "effect";
 import { serverLog } from "./logger.server";
+import type { UserId } from "../../types/generated/public/User";
 
-// ... interface and class definition are the same ...
-// eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
-export interface PokeService {
-  readonly poke: () => Effect.Effect<void>;
-  readonly subscribe: () => Stream.Stream<string>;
-}
-
-// eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
+/**
+ * The service definition and Tag remain unchanged.
+ * We've added the method signatures to the second generic parameter
+ * to make the service's "shape" clear.
+ */
 export class PokeService extends Context.Tag("PokeService")<
   PokeService,
-  PokeService
+  {
+    readonly poke: (userId: UserId) => Effect.Effect<void>;
+    readonly subscribe: (userId: UserId) => Stream.Stream<string>;
+  }
 >() {}
 
-// --- START OF FIX: Use Layer.scoped to create a true singleton ---
+/**
+ * The live implementation of the PokeService.
+ */
 export const PokeServiceLive = Layer.scoped(
   PokeService,
   Effect.gen(function* () {
-    const pubsub = yield* PubSub.unbounded<string>();
-    // This log runs during runtime construction, so it must be synchronous.
-    // The original `serverLog` is async and caused the FiberFailure.
-    // We now use the synchronous `Console.log` for this initialization step.
-    yield* Console.log(
-      "INFO: Singleton PokeService created with new PubSub. [Context: PokeService:Lifecycle]",
+    // This stateful part is the same
+    const userPubSubs = yield* Ref.make(
+      new Map<UserId, PubSub.PubSub<string>>(),
     );
 
-    const poke = () =>
-      pipe(
-        serverLog(
+    yield* Console.log(
+      "INFO: Singleton PokeService created. [Context: PokeService:Lifecycle]",
+    );
+
+    // The implementation logic is also the same
+    const poke = (userId: UserId) =>
+      Effect.gen(function* () {
+        yield* serverLog(
           "info",
-          "PokeService.poke() called. Publishing 'poke' message.",
-          undefined,
+          `PokeService.poke() called for user ${userId}.`,
+          userId,
           "PokeService:poke",
-        ),
-        Effect.andThen(PubSub.publish(pubsub, "poke")),
-        Effect.asVoid,
+        );
+        const pubSubsMap = yield* Ref.get(userPubSubs);
+        const userPubSub = pubSubsMap.get(userId);
+
+        if (userPubSub) {
+          yield* PubSub.publish(userPubSub, "poke");
+        } else {
+          yield* serverLog(
+            "debug",
+            `No active poke subscriptions for user ${userId}. Poke ignored.`,
+            userId,
+            "PokeService:poke",
+          );
+        }
+      });
+
+    const subscribe = (userId: UserId) =>
+      Stream.unwrap(
+        Effect.gen(function* () {
+          const pubSubsMap = yield* Ref.get(userPubSubs);
+          let userPubSub = pubSubsMap.get(userId);
+
+          if (!userPubSub) {
+            yield* serverLog(
+              "debug",
+              `Creating new PubSub for user: ${userId}`,
+              userId,
+              "PokeService:subscribe",
+            );
+            userPubSub = yield* PubSub.unbounded<string>();
+            yield* Ref.update(userPubSubs, (map) =>
+              map.set(userId, userPubSub!),
+            );
+          }
+
+          return Stream.fromPubSub(userPubSub).pipe(
+            Stream.ensuring(
+              Effect.gen(function* () {
+                const currentPubSub = (yield* Ref.get(userPubSubs)).get(userId);
+                if (
+                  currentPubSub &&
+                  (yield* PubSub.size(currentPubSub)) === 0
+                ) {
+                  yield* serverLog(
+                    "debug",
+                    `All subscriptions closed for user ${userId}. Removing PubSub.`,
+                    userId,
+                    "PokeService:unsubscribe",
+                  );
+                  yield* Ref.update(userPubSubs, (map) => {
+                    map.delete(userId);
+                    return map;
+                  });
+                }
+              }),
+            ),
+          );
+        }),
       );
 
-    const subscribe = () =>
-      Stream.tap(Stream.fromPubSub(pubsub), () =>
-        serverLog(
-          "debug",
-          "New subscription to PokeService PubSub.",
-          undefined,
-          "PokeService:subscribe",
-        ),
-      );
-
-    return PokeService.of({ poke, subscribe } as PokeService);
+    // ⬇️ THE FIX ⬇️
+    // Create an object that inherits from PokeService.prototype,
+    // making it a valid 'instance' of PokeService for TypeScript.
+    // Then, assign our implemented methods to it.
+    return Object.assign(Object.create(PokeService.prototype), {
+      poke,
+      subscribe,
+    });
   }),
 );
