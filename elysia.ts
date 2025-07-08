@@ -85,6 +85,43 @@ const setupApp = Effect.gen(function* () {
       };
     }
 
+    // --- START OF FIX: Handle other structured errors, like those from tRPC ---
+    if (typeof error === "object" && error !== null) {
+      if (
+        "code" in error &&
+        typeof (error as { code: unknown }).code === "string"
+      ) {
+        const errorCode = (error as { code: string }).code;
+        switch (errorCode) {
+          case "UNAUTHORIZED":
+            set.status = 401;
+            break;
+          case "FORBIDDEN":
+            set.status = 403;
+            break;
+          case "NOT_FOUND":
+            set.status = 404;
+            break;
+          case "CONFLICT":
+            set.status = 409;
+            break;
+          case "BAD_REQUEST":
+            set.status = 400;
+            break;
+          default:
+            set.status = 500;
+            break;
+        }
+        return {
+          error: {
+            type: errorCode,
+            message: descriptiveMessage,
+          },
+        };
+      }
+    }
+    // --- END OF FIX ---
+
     set.status = 500;
     return {
       error: {
@@ -104,6 +141,7 @@ const setupApp = Effect.gen(function* () {
       ),
     );
   });
+
   // Scheduled Jobs
   void runServerUnscoped(
     pipe(
@@ -139,6 +177,7 @@ const setupApp = Effect.gen(function* () {
       ),
     ),
   );
+
   return app;
 });
 

@@ -86,21 +86,14 @@ export const ForgotPasswordView = (): ViewResult => {
                 clientLog(
                   "info",
                   `Password reset requested for ${currentModel.email}.`,
-                  undefined,
-                  "ForgotPassword",
                 ),
               ),
-              // --- START OF FIX: Use JSON.stringify for more detailed error logging ---
+              // --- START OF FIX: Log the full error object, not a stringified cause ---
               Effect.catchAll((error) =>
                 clientLog(
                   "error",
-                  `Password reset request failed: ${JSON.stringify(
-                    error.cause,
-                    null,
-                    2,
-                  )}`,
-                  undefined,
-                  "ForgotPassword",
+                  "Password reset request failed:",
+                  error.cause, // Pass the full error object for interactive logging
                 ),
               ),
               // --- END OF FIX ---

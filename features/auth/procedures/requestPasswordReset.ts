@@ -15,7 +15,9 @@ import {
 } from "../Errors";
 import { handleTrpcProcedure } from "../../../lib/server/runtime";
 import type { User, UserId } from "../../../types/generated/public/User";
-import { Crypto } from "../../../lib/server/crypto"; // <-- FIX: Import Crypto
+import { Crypto } from "../../../lib/server/crypto";
+import { toError } from "../../../lib/shared/toError";
+// <-- FIX: Import Crypto
 
 /* -------------------------------------------------------------------------- */
 /* Effects                                                                    */
@@ -43,7 +45,6 @@ const findUserByEmailEffect = (
     });
     return Option.fromNullable(maybeUser);
   });
-
 /**
  * Creates and stores a password reset token for a user.
  */
@@ -80,10 +81,10 @@ const createPasswordResetTokenEffect = (
 
     return tokenId;
   });
-
 /**
  * Composes the logic for sending a password reset email and forks it
- * as a background task. Handles its own errors internally.
+ * as a background task.
+ * Handles its own errors internally.
  */
 const sendPasswordResetEmailDaemon = (
   user: User,
@@ -104,16 +105,18 @@ const sendPasswordResetEmailDaemon = (
       ),
     ),
     Effect.mapError((cause) => new EmailSendError({ cause })),
+    // START OF FIX: Use toError to preserve stack trace and message
     Effect.catchAll((error) =>
       serverLog(
         "error",
-        `[BACKGROUND] Failed to send password reset email: ${JSON.stringify(
-          error,
-        )}`,
+        `[BACKGROUND] Failed to send password reset email. Error: ${
+          toError(error).stack || toError(error).message
+        }`,
         user.id,
         "auth:requestPasswordReset:email",
       ),
     ),
+    // END OF FIX
   );
   return Effect.forkDaemon(emailEffect);
 };

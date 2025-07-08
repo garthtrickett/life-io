@@ -16,13 +16,15 @@ import type {
   NewUser,
   User,
   UserId,
-} from "../../../types/generated/public/User"; // <-- FIX: Import UserId
+} from "../../../types/generated/public/User";
+// <-- FIX: Import UserId
 import { perms } from "../../../lib/shared/permissions";
 import type { EmailVerificationTokenId } from "../../../types/generated/public/EmailVerificationToken";
 import { createDate, TimeSpan } from "oslo";
 import { sendEmail } from "../../../lib/server/email";
 import { handleTrpcProcedure } from "../../../lib/server/runtime";
 import { Crypto } from "../../../lib/server/crypto"; // <-- FIX: Import Crypto
+import { toError } from "../../../lib/shared/toError";
 
 /* -------------------------------------------------------------------------- */
 /* Effects                                                                    */
@@ -38,7 +40,6 @@ const hashPasswordEffect = (
     try: () => argon2id.hash(password),
     catch: (cause) => new PasswordHashingError({ cause }),
   });
-
 /**
  * Creates a new user in the database.
  */
@@ -54,11 +55,9 @@ const createUserEffect = (
           .values(user)
           .returningAll()
           .executeTakeFirstOrThrow(),
-      catch: (cause) =>
-        new EmailInUseError({ email: user.email, cause }),
+      catch: (cause) => new EmailInUseError({ email: user.email, cause }),
     });
   });
-
 /**
  * Creates and stores an email verification token for a user.
  */
@@ -84,17 +83,16 @@ const createVerificationTokenEffect = (
     });
     return verificationToken;
   });
-
 /**
  * Composes the logic for sending a verification email and forks it
- * as a background task. Handles its own errors internally.
+ * as a background task.
+ * Handles its own errors internally.
  */
 const sendVerificationEmailDaemon = (
   user: User,
   token: string,
 ): Effect.Effect<void> => {
   const verificationLink = `http://localhost:5173/verify-email/${token}`;
-
   const emailEffect = sendEmail(
     user.email,
     "Verify Your Email Address",
@@ -109,18 +107,19 @@ const sendVerificationEmailDaemon = (
       ),
     ),
     Effect.mapError((cause) => new EmailSendError({ cause })),
+    // START OF FIX: Use toError to preserve stack trace and message
     Effect.catchAll((error) =>
       serverLog(
         "error",
-        `[BACKGROUND] Failed to send verification email: ${JSON.stringify(
-          error,
-        )}`,
+        `[BACKGROUND] Failed to send verification email. Error: ${
+          toError(error).stack || toError(error).message
+        }`,
         user.id,
         "auth:signup:email",
       ),
     ),
+    // END OF FIX
   );
-
   return Effect.forkDaemon(emailEffect);
 };
 
@@ -157,16 +156,13 @@ export const signupProcedure = publicProcedure
         user.id,
         "auth:signup",
       );
-
       // 3. Create a verification token
       const verificationToken = yield* createVerificationTokenEffect(
         user.id,
         user.email,
       );
-
       // 4. Send the verification email in the background
       yield* sendVerificationEmailDaemon(user, verificationToken);
-
       return { success: true, email: user.email };
     });
 

@@ -7,31 +7,35 @@ import { ApiError } from "./errors";
 
 /**
  * Extracts the most specific error message from a caught value.
- * It intelligently prioritizes looking inside the `cause` property of our
- * custom tagged errors before falling back to a top-level message.
+ * It prioritizes the top-level error message and appends the cause's message
+ * for additional context, preventing information loss.
  */
 function getErrorMessage(err: unknown): string {
   if (typeof err !== "object" || err === null) {
     return String(err);
   }
 
-  // 1. Prioritize the `cause` if it's an object with its own message.
-  if (
+  const mainMessage = "message" in err ? String(err.message) : null;
+
+  const causeMessage =
     "cause" in err &&
     typeof err.cause === "object" &&
     err.cause !== null &&
     "message" in err.cause
-  ) {
-    return String(err.cause.message);
+      ? String(err.cause.message)
+      : null;
+
+  if (mainMessage && causeMessage && mainMessage !== causeMessage) {
+    // Combine both messages if they are distinct and both exist
+    return `${mainMessage} (Caused by: ${causeMessage})`;
   }
 
-  // 2. Fallback to the top-level message if the cause isn't informative.
-  if ("message" in err) {
-    return String(err.message);
-  }
-
-  // 3. Final fallback for unusual error shapes.
-  return "An unknown error occurred during processing.";
+  // Otherwise, return the first available message, prioritizing the main one
+  return (
+    mainMessage ??
+    causeMessage ??
+    "An unknown error occurred during processing."
+  );
 }
 
 /**

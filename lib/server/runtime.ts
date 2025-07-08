@@ -29,7 +29,6 @@ export const ServerLive = ServerServices.pipe(
     return Layer.die(error);
   }),
 );
-
 // Define the context type that our server effects will require.
 export type ServerContext = Db | S3 | Crypto | PokeService;
 
@@ -39,26 +38,22 @@ const appScope = Effect.runSync(Scope.make());
 const AppRuntime = Effect.runSync(
   Scope.extend(Layer.toRuntime(ServerLive), appScope),
 );
-
 /**
  * The singleton runtime containing all live services for the application.
  */
 export const serverRuntime = AppRuntime;
-
 /**
  * Executes a server-side Effect and returns a Promise, using the shared singleton runtime.
  */
 export const runServerPromise = <A, E>(
   effect: Effect.Effect<A, E, ServerContext>,
 ) => Runtime.runPromise(serverRuntime)(effect);
-
 /**
  * Executes a server-side Effect in a "fire-and-forget" manner, using the shared singleton runtime.
  */
 export const runServerUnscoped = <A, E>(
   effect: Effect.Effect<A, E, ServerContext>,
 ) => Runtime.runFork(serverRuntime)(effect);
-
 /**
  * A dedicated function to gracefully shut down the application's runtime.
  */
@@ -73,7 +68,6 @@ export const handleTrpcProcedure = async <A, E>(
   effect: Effect.Effect<A, E, ServerContext>,
 ): Promise<A> => {
   const exit = await Runtime.runPromiseExit(serverRuntime)(effect);
-
   if (Exit.isSuccess(exit)) {
     return exit.value;
   }
@@ -83,7 +77,6 @@ export const handleTrpcProcedure = async <A, E>(
   const error = Cause.squash(exit.cause);
 
   const tag = (error as { _tag?: string })?._tag;
-
   switch (tag) {
     case "InvalidCredentialsError":
       throw new TRPCError({
@@ -115,14 +108,26 @@ export const handleTrpcProcedure = async <A, E>(
         message: "Could not process password.",
         cause: error,
       });
+    // START OF FIX: Separated cases for specific internal errors
     case "AuthDatabaseError":
+      throw new TRPCError({
+        code: "INTERNAL_SERVER_ERROR",
+        message: "A database error occurred during authentication.",
+        cause: error,
+      });
     case "TokenCreationError":
+      throw new TRPCError({
+        code: "INTERNAL_SERVER_ERROR",
+        message: "Could not create a required token.",
+        cause: error,
+      });
     case "EmailSendError":
       throw new TRPCError({
         code: "INTERNAL_SERVER_ERROR",
-        message: "An internal server error occurred.",
+        message: "There was a problem sending an email.",
         cause: error,
       });
+    // END OF FIX
     default:
       // For any other unexpected errors.
       throw new TRPCError({

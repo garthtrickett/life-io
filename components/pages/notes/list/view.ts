@@ -23,12 +23,7 @@ export const renderView = (
       `;
     }
     if (currentModel.notes.length === 0) {
-      return html`
-        <div class=${styles.emptyState}>
-          <h3>No notes yet</h3>
-          <p>Click "Create New Note" to get started.</p>
-        </div>
-      `;
+      return html` <div class=${styles.emptyState}></div> `;
     }
     return html`
       <ul class=${styles.notesList}>

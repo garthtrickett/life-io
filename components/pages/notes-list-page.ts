@@ -71,15 +71,11 @@ export const NotesView = (): ViewResult => {
         }),
       ),
     );
-
     const replicacheStream = Stream.async<Note[], string>((emit) => {
       if (!rep) {
         void emit.fail("Replicache is not initialized.");
         return;
       }
-
-      // Use a simple local flag to track the very first onData call
-      let isInitialCall = true;
 
       const unsubscribe = rep.subscribe(
         async (tx) => {
@@ -110,16 +106,6 @@ export const NotesView = (): ViewResult => {
         },
         {
           onData: (data: Note[]) => {
-            // If it's the first call AND the data is empty, we ignore it.
-            // This is the state where the cache is empty and we're waiting for the network.
-            if (isInitialCall && data.length === 0) {
-              isInitialCall = false; // Mark that we've seen the initial empty call
-              return; // Do not emit, preventing the "flash"
-            }
-
-            // If it's a subsequent call, or the first call already has data (from a warm cache),
-            // we can proceed.
-            isInitialCall = false;
             void emit.single(data);
           },
         },
@@ -127,7 +113,6 @@ export const NotesView = (): ViewResult => {
 
       return Effect.sync(unsubscribe);
     });
-
     const mainLoop = Effect.gen(function* () {
       const actionProcessor = Queue.take(actionQueue).pipe(
         Effect.flatMap((action) => handleAction(action, model)),
@@ -135,6 +120,10 @@ export const NotesView = (): ViewResult => {
         Effect.forever,
       );
       const dataSubscriber = replicacheStream.pipe(
+        // FIX: Add a short debounce to prevent flashing the empty state.
+        // This gracefully handles the race between the initial cached data
+        // and the data from the first network pull.
+        Stream.debounce("50 millis"),
         Stream.flatMap((data) =>
           Stream.fromEffect(propose({ type: "NOTES_UPDATED", payload: data })),
         ),

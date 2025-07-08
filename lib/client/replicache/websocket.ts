@@ -28,7 +28,6 @@ export function setupWebSocket(rep: Replicache<Mutators> | null) {
   const wsUrl = `${window.location.protocol === "https:" ? "wss" : "ws"}://${
     window.location.host
   }/ws?sessionId=${sessionId}`;
-
   const ws = new WebSocket(wsUrl);
 
   ws.onopen = () => {
@@ -75,14 +74,15 @@ export function setupWebSocket(rep: Replicache<Mutators> | null) {
             ),
           );
         } catch (e) {
+          // --- START OF FIX: Log the full error object, not just the message ---
           runClientUnscoped(
             clientLog(
               "error",
-              `[POKE DEBUG] Error executing pull after poke: ${
-                toError(e).message
-              }`,
+              `[POKE DEBUG] Error executing pull after poke:`,
+              toError(e),
             ),
           );
+          // --- END OF FIX ---
         }
       })();
     } else if (event.data === '{"error":"authentication_failed"}') {

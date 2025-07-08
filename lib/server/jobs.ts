@@ -1,4 +1,4 @@
-// File: ./lib/server/jobs.ts
+// FILE: lib/server/jobs.ts
 import { Effect } from "effect";
 import { Db } from "../../db/DbTag";
 import { serverLog } from "./logger.server";
@@ -29,16 +29,23 @@ export const cleanupExpiredTokensEffect: Effect.Effect<void, Error, Db> =
           .deleteFrom("email_verification_token")
           .where("expires_at", "<", now)
           .execute(),
+      // START OF FIX: Preserve the original error in the 'cause' property
       catch: (cause) =>
         new Error(
-          `Failed to delete expired email verification tokens: ${String(cause)}`,
+          `Failed to delete expired email verification tokens: ${String(
+            cause,
+          )}`,
+          { cause },
         ),
+      // END OF FIX
     });
 
     // FIX: Access the first element for numDeletedRows
     yield* serverLog(
       "info",
-      `Cleaned up ${deletedEmailTokens[0]?.numDeletedRows ?? 0} expired email verification tokens.`,
+      `Cleaned up ${
+        deletedEmailTokens[0]?.numDeletedRows ?? 0
+      } expired email verification tokens.`,
       undefined,
       "Job:TokenCleanup",
     );
@@ -50,16 +57,21 @@ export const cleanupExpiredTokensEffect: Effect.Effect<void, Error, Db> =
           .deleteFrom("password_reset_token")
           .where("expires_at", "<", now)
           .execute(),
+      // START OF FIX: Preserve the original error in the 'cause' property
       catch: (cause) =>
         new Error(
           `Failed to delete expired password reset tokens: ${String(cause)}`,
+          { cause },
         ),
+      // END OF FIX
     });
 
     // FIX: Access the first element for numDeletedRows
     yield* serverLog(
       "info",
-      `Cleaned up ${deletedPasswordTokens[0]?.numDeletedRows ?? 0} expired password reset tokens.`,
+      `Cleaned up ${
+        deletedPasswordTokens[0]?.numDeletedRows ?? 0
+      } expired password reset tokens.`,
       undefined,
       "Job:TokenCleanup",
     );
@@ -109,7 +121,9 @@ export const retryFailedEmailsEffect = Effect.gen(function* () {
       Effect.tapError((e) =>
         serverLog(
           "warn",
-          `Failed to send email to ${dummyFailedEmail.to} (attempt ${dummyFailedEmail.retries + 1}): ${e.message}`,
+          `Failed to send email to ${dummyFailedEmail.to} (attempt ${
+            dummyFailedEmail.retries + 1
+          }): ${e.message}`,
           undefined,
           "Job:EmailRetry",
         ),
@@ -120,6 +134,7 @@ export const retryFailedEmailsEffect = Effect.gen(function* () {
         Effect.fail(new EmailSendError({ cause: "Simulated send failure" })),
       ),
     );
+
     // If we reach here, it means sendEmail either succeeded (with void) or was caught by retry/catchAll.
     // For this simulation, we can log success or increment retries directly after the pipe.
     // In a real durable queue, this would involve database updates.

@@ -101,15 +101,14 @@ export async function getClientLoggerWithUser(
 
 export function clientLog(
   level: LoggableLevel,
-  message: string,
-  userId?: string,
-  context?: string,
+  ...args: unknown[]
 ): Effect.Effect<void, never, never> {
   return pipe(
-    Effect.tryPromise(() => getClientLoggerWithUser(userId, context)),
+    Effect.tryPromise(() => loggerPromise),
     Effect.flatMap((logger: Logger) =>
-      Effect.sync(() => logger[level](message)),
+      Effect.sync(() => logger[level](...args)),
     ),
+    // Silently fail if logging itself fails.
     Effect.catchAll(() => Effect.succeed(undefined)),
   );
 }

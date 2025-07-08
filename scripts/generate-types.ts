@@ -3,10 +3,10 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { config } from "dotenv";
-import { Effect, Cause, Exit, Data } from "effect"; // Import Data
+import { Effect, Cause, Exit, Data } from "effect";
+// Import Data
 import { serverLog } from "../lib/server/logger.server";
 // --- START OF FIX: Import the toError utility ---
-import { toError } from "../lib/shared/toError";
 // --- END OF FIX ---
 
 config({ path: ".env" });
@@ -42,22 +42,16 @@ const generateTypes = Effect.gen(function* () {
   yield* serverLog("info", "✅ Type generation completed successfully!");
 });
 
-// --- Execution Logic ---
-Effect.runPromiseExit(generateTypes)
-  .then((exit) => {
-    if (Exit.isSuccess(exit)) {
-      process.exit(0);
-    } else {
-      console.error(Cause.pretty(exit.cause));
-      process.exit(1);
-    }
-  })
-  .catch((error) => {
-    // --- START OF FIX: Use toError for safe logging in the final catch block ---
-    console.error(
-      "An unexpected error occurred in the script runner:",
-      toError(error),
-    );
-    // --- END OF FIX ---
+// --- START OF FIX: Execution logic simplified to only use runPromiseExit ---
+// The .catch() block was removed as runPromiseExit never rejects.
+// All failures, including defects, are handled within the Exit.isFailure block.
+void Effect.runPromiseExit(generateTypes).then((exit) => {
+  if (Exit.isSuccess(exit)) {
+    process.exit(0);
+  } else {
+    console.error("❌ Type generation via Kanel failed:");
+    console.error(Cause.pretty(exit.cause));
     process.exit(1);
-  });
+  }
+});
+// --- END OF FIX ---

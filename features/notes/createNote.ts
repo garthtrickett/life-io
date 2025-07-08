@@ -49,13 +49,22 @@ const createNoteEffect = (
             .returningAll()
             .executeTakeFirst();
 
+          // START OF FIX: Replace OrThrow with a manual check and specific error
           const record =
             maybeInserted ??
             (await trx
               .selectFrom("note")
               .selectAll()
               .where("id", "=", note.id as NoteId)
-              .executeTakeFirstOrThrow());
+              .executeTakeFirst());
+
+          if (!record) {
+            // This indicates a serious issue if the row is missing after a conflict.
+            throw new Error(
+              `Failed to find note with ID ${note.id} after conflict.`,
+            );
+          }
+          // END OF FIX
 
           const childBlocks = await Effect.runPromise(
             Effect.provideService(
@@ -70,6 +79,7 @@ const createNoteEffect = (
               ),
             ),
           );
+
           if (childBlocks.length > 0) {
             await trx.insertInto("block").values(childBlocks).execute();
           }
