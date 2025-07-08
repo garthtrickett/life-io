@@ -64,6 +64,14 @@ export const deleteSessionEffect = (
 ): Effect.Effect<void, AuthDatabaseError, Db> => // Updated error type
   Effect.gen(function* () {
     const db = yield* Db;
+    yield* Effect.forkDaemon(
+      serverLog(
+        "info",
+        `Attempting to delete session from DB: ${sessionId}`,
+        undefined,
+        "Auth:deleteSession",
+      ),
+    );
     yield* Effect.tryPromise({
       try: () =>
         db
@@ -74,7 +82,12 @@ export const deleteSessionEffect = (
       catch: (cause) => new AuthDatabaseError({ cause }),
     });
     yield* Effect.forkDaemon(
-      serverLog("info", `Session ${sessionId} deleted.`, undefined, "Auth"),
+      serverLog(
+        "info",
+        `DB operation to delete session ${sessionId} completed.`,
+        undefined,
+        "Auth:deleteSession",
+      ),
     );
   });
 

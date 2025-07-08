@@ -14,6 +14,14 @@ export const logoutProcedure = loggedInProcedure.mutation(({ ctx }) => {
       "auth:logout",
     );
     yield* deleteSessionEffect(ctx.session.id);
+    // --- LOGGING ---
+    yield* serverLog(
+      "info",
+      "Logout procedure completed successfully on server.",
+      ctx.user.id,
+      "auth:logout",
+    );
+    // --- LOGGING ---
     return { success: true };
   });
   return handleTrpcProcedure(program);
