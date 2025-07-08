@@ -119,31 +119,29 @@ export const ProfileView = (): ViewResult => {
             );
             const formData = new FormData();
             formData.append("avatar", action.payload);
-            const uploadEffect = pipe(
-              Effect.tryPromise({
+            const uploadEffect = Effect.gen(function* () {
+              const response = yield* Effect.tryPromise({
                 try: () =>
                   fetch("/api/user/avatar", { method: "POST", body: formData }),
                 catch: (cause) =>
                   new AvatarUploadError({ message: String(cause) }),
-              }),
-              Effect.flatMap((response) =>
-                response.ok
-                  ? Effect.tryPromise({
-                      try: () =>
-                        response.json() as Promise<{ avatarUrl: string }>,
-                      catch: (cause) =>
-                        new AvatarUploadError({ message: String(cause) }),
-                    })
-                  : Effect.promise(async () => response.text()).pipe(
-                      Effect.flatMap((text) =>
-                        Effect.fail(
-                          new AvatarUploadError({
-                            message: text || "Upload failed",
-                          }),
-                        ),
-                      ),
-                    ),
-              ),
+              });
+
+              if (!response.ok) {
+                const errorText = yield* Effect.promise(() => response.text());
+                return yield* Effect.fail(
+                  new AvatarUploadError({
+                    message: errorText || "Upload failed",
+                  }),
+                );
+              }
+
+              return yield* Effect.tryPromise({
+                try: () => response.json() as Promise<{ avatarUrl: string }>,
+                catch: (cause) =>
+                  new AvatarUploadError({ message: String(cause) }),
+              });
+            }).pipe(
               Effect.match({
                 onSuccess: (json) =>
                   propose({ type: "UPLOAD_SUCCESS", payload: json.avatarUrl }),
@@ -151,6 +149,7 @@ export const ProfileView = (): ViewResult => {
                   propose({ type: "UPLOAD_ERROR", payload: error }),
               }),
             );
+
             yield* Effect.fork(uploadEffect);
             break;
           }

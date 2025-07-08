@@ -58,6 +58,7 @@ export const signupProcedure = publicProcedure
         user.id,
         "auth:signup",
       );
+
       const verificationToken = yield* generateId(40);
       yield* Effect.tryPromise({
         try: () =>
@@ -72,18 +73,39 @@ export const signupProcedure = publicProcedure
             .execute(),
         catch: (cause) => new TokenCreationError({ cause }),
       });
+
       const verificationLink = `http://localhost:5173/verify-email/${verificationToken}`;
-      yield* sendEmail(
+
+      const emailEffect = sendEmail(
         user.email,
         "Verify Your Email Address",
         `<h1>Welcome!</h1><p>Click the link to verify your email: <a href="${verificationLink}">${verificationLink}</a></p>`,
-      ).pipe(Effect.mapError((cause) => new EmailSendError({ cause })));
-      yield* serverLog(
-        "info",
-        `Verification email sent for ${user.email}`,
-        user.id,
-        "auth:signup",
+      ).pipe(
+        Effect.andThen(
+          serverLog(
+            "info",
+            `Verification email sent for ${user.email}`,
+            user.id,
+            "auth:signup",
+          ),
+        ),
+        Effect.mapError((cause) => new EmailSendError({ cause })),
+        Effect.catchAll((error) =>
+          serverLog(
+            "error",
+            `[BACKGROUND] Failed to send verification email: ${JSON.stringify(error)}`,
+            user.id,
+            "auth:signup:email",
+          ),
+        ),
       );
+
+      // --- START OF FIX ---
+      // Use forkDaemon to ensure the background task is not interrupted when the
+      // parent fiber (the tRPC request) completes.
+      yield* Effect.forkDaemon(emailEffect);
+      // --- END OF FIX ---
+
       return { success: true, email: user.email };
     });
 

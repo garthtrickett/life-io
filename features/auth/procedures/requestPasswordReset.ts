@@ -61,18 +61,38 @@ export const requestPasswordResetProcedure = publicProcedure
               .execute(),
           catch: (cause) => new TokenCreationError({ cause }),
         });
+
         const resetLink = `http://localhost:5173/reset-password/${tokenId}`;
-        yield* sendEmail(
+
+        const emailEffect = sendEmail(
           user.email,
           "Reset Your Password",
           `<h1>Password Reset</h1><p>Click the link to reset your password: <a href="${resetLink}">${resetLink}</a></p>`,
-        ).pipe(Effect.mapError((cause) => new EmailSendError({ cause })));
-        yield* serverLog(
-          "info",
-          `Password reset token created and email sent for ${user.email}`,
-          user.id,
-          "auth:requestPasswordReset",
+        ).pipe(
+          Effect.andThen(
+            serverLog(
+              "info",
+              `Password reset token created and email sent for ${user.email}`,
+              user.id,
+              "auth:requestPasswordReset",
+            ),
+          ),
+          Effect.mapError((cause) => new EmailSendError({ cause })),
+          Effect.catchAll((error) =>
+            serverLog(
+              "error",
+              `[BACKGROUND] Failed to send password reset email: ${JSON.stringify(error)}`,
+              user.id,
+              "auth:requestPasswordReset:email",
+            ),
+          ),
         );
+
+        // --- START OF FIX ---
+        // Use forkDaemon to ensure the background task is not interrupted when the
+        // parent fiber (the tRPC request) completes.
+        yield* Effect.forkDaemon(emailEffect);
+        // --- END OF FIX ---
       } else {
         yield* serverLog(
           "info",
