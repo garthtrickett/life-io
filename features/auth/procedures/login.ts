@@ -1,10 +1,10 @@
 // FILE: features/auth/procedures/login.ts
-import { Effect } from "effect";
+import { Effect, Option } from "effect";
 import { publicProcedure } from "../../../trpc/trpc";
 import { sLoginInput } from "../schemas";
 import { Db } from "../../../db/DbTag";
 import { serverLog } from "../../../lib/server/logger.server";
-import { argon2id, createSessionEffect } from "../../../lib/server/auth";
+import { createSessionEffect, argon2id } from "../../../lib/server/auth";
 import {
   AuthDatabaseError,
   InvalidCredentialsError,
@@ -12,6 +12,98 @@ import {
   PasswordHashingError,
 } from "../Errors";
 import { handleTrpcProcedure } from "../../../lib/server/runtime";
+import type { User } from "../../../types/generated/public/User";
+
+/* -------------------------------------------------------------------------- */
+/* Effects                                                                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Finds a user by their email address.
+ * Returns an Option to explicitly handle the case where a user is not found.
+ */
+const findUserByEmailEffect = (
+  email: string,
+): Effect.Effect<Option.Option<User>, AuthDatabaseError, Db> =>
+  Effect.gen(function* () {
+    const db = yield* Db;
+    const maybeUser = yield* Effect.tryPromise({
+      try: () =>
+        db
+          .selectFrom("user")
+          .selectAll()
+          .where("email", "=", email.toLowerCase())
+          .executeTakeFirst(),
+      catch: (cause) => new AuthDatabaseError({ cause }),
+    });
+    return Option.fromNullable(maybeUser);
+  });
+
+/**
+ * Verifies a plaintext password against a stored hash.
+ */
+const verifyPasswordEffect = (
+  plaintext: string,
+  hash: string,
+): Effect.Effect<boolean, PasswordHashingError> =>
+  Effect.tryPromise({
+    try: () => argon2id.verify(hash, plaintext),
+    catch: (cause) => new PasswordHashingError({ cause }),
+  });
+
+/**
+ * Handles the logic for a user login, including checks and session creation.
+ */
+const loginUserEffect = (
+  user: User,
+  password: string, // <-- FIX: Added 'string' type
+): Effect.Effect<
+  { user: User; sessionId: string },
+  | InvalidCredentialsError
+  | EmailNotVerifiedError
+  | PasswordHashingError
+  | AuthDatabaseError,
+  Db
+> =>
+  Effect.gen(function* () {
+    if (!user.password_hash) {
+      yield* Effect.fail(new InvalidCredentialsError());
+    }
+
+    if (!user.email_verified) {
+      yield* serverLog(
+        "warn",
+        `Login failed: Email not verified for ${user.id}`,
+        user.id,
+        "auth:login",
+      );
+      yield* Effect.fail(new EmailNotVerifiedError());
+    }
+
+    const isValidPassword = yield* verifyPasswordEffect(
+      password,
+      user.password_hash,
+    );
+    if (!isValidPassword) {
+      yield* Effect.fail(new InvalidCredentialsError());
+    }
+
+    const sessionId = yield* createSessionEffect(user.id).pipe(
+      Effect.mapError((cause) => new AuthDatabaseError({ cause })),
+    );
+    yield* serverLog(
+      "info",
+      `Login successful for user: ${user.id}`,
+      user.id,
+      "auth:login",
+    );
+
+    return { sessionId, user };
+  });
+
+/* -------------------------------------------------------------------------- */
+/* Procedure                                                                  */
+/* -------------------------------------------------------------------------- */
 
 export const loginProcedure = publicProcedure
   .input(sLoginInput)
@@ -19,7 +111,6 @@ export const loginProcedure = publicProcedure
     const { email, password } = input;
 
     const program = Effect.gen(function* () {
-      const db = yield* Db;
       yield* serverLog(
         "info",
         `Login attempt for user: ${email}`,
@@ -27,62 +118,14 @@ export const loginProcedure = publicProcedure
         "auth:login",
       );
 
-      // --- START OF FIX ---
-      // This pattern is more idiomatic and solves the type-narrowing issue.
-      // We first try to get the user, which might be null/undefined.
-      const maybeUser = yield* Effect.tryPromise({
-        try: () =>
-          db
-            .selectFrom("user")
-            .selectAll()
-            .where("email", "=", email.toLowerCase())
-            .executeTakeFirst(),
-        catch: (cause) => new AuthDatabaseError({ cause }),
+      // 1. Find the user by email.
+      const maybeUser = yield* findUserByEmailEffect(email);
+
+      // 2. If user exists, attempt to log them in.
+      return yield* Option.match(maybeUser, {
+        onNone: () => Effect.fail(new InvalidCredentialsError()),
+        onSome: (user) => loginUserEffect(user, password),
       });
-
-      // Then, we convert the potential null/undefined into a failure,
-      // ensuring `user` is correctly typed for the rest of the generator.
-      const user = yield* Effect.fromNullable(maybeUser).pipe(
-        Effect.catchTag("NoSuchElementException", () =>
-          Effect.fail(new InvalidCredentialsError()),
-        ),
-      );
-      // --- END OF FIX ---
-
-      if (!user.password_hash) {
-        yield* Effect.fail(new InvalidCredentialsError());
-      }
-
-      if (!user.email_verified) {
-        yield* serverLog(
-          "warn",
-          `Login failed: Email not verified for ${user.id}`,
-          user.id,
-          "auth:login",
-        );
-        yield* Effect.fail(new EmailNotVerifiedError());
-      }
-
-      const isValidPassword = yield* Effect.tryPromise({
-        try: () => argon2id.verify(user.password_hash, password),
-        catch: (cause) => new PasswordHashingError({ cause }),
-      });
-
-      if (!isValidPassword) {
-        yield* Effect.fail(new InvalidCredentialsError());
-      }
-
-      const sessionId = yield* createSessionEffect(user.id).pipe(
-        Effect.mapError((cause) => new AuthDatabaseError({ cause })),
-      );
-
-      yield* serverLog(
-        "info",
-        `Login successful for user: ${user.id}`,
-        user.id,
-        "auth:login",
-      );
-      return { sessionId, user };
     });
 
     // The new helper function handles execution and error translation.

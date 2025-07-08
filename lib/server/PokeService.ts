@@ -101,12 +101,11 @@ export const PokeServiceLive = Layer.scoped(
       );
 
     // ⬇️ THE FIX ⬇️
-    // Create an object that inherits from PokeService.prototype,
-    // making it a valid 'instance' of PokeService for TypeScript.
-    // Then, assign our implemented methods to it.
-    return Object.assign(Object.create(PokeService.prototype), {
+    // Return a plain object that matches the service interface. This allows
+    // TypeScript to correctly infer the return type of the Effect.
+    return {
       poke,
       subscribe,
-    });
+    };
   }),
 );

@@ -51,7 +51,6 @@ type Action =
         | LoginEmailNotVerifiedError
         | UnknownLoginError;
     };
-
 // --- View ---
 export const LoginView = (): ViewResult => {
   const container = document.createElement("div");
@@ -63,7 +62,6 @@ export const LoginView = (): ViewResult => {
       "LoginView",
     ),
   );
-
   const componentProgram = Effect.gen(function* () {
     yield* clientLog(
       "debug",
@@ -219,9 +217,11 @@ export const LoginView = (): ViewResult => {
               isLoading: true,
               error: null,
             });
-
             const loginEffect = pipe(
-              tryTrpc(
+              tryTrpc<
+                Awaited<ReturnType<typeof trpc.auth.login.mutate>>,
+                LoginInvalidCredentialsError | LoginEmailNotVerifiedError
+              >(
                 () =>
                   trpc.auth.login.mutate({
                     email: currentModel.email,
@@ -295,7 +295,6 @@ export const LoginView = (): ViewResult => {
           }
         }
       });
-
     const renderEffect = Ref.get(model).pipe(
       Effect.tap((m) =>
         clientLog(
@@ -307,7 +306,6 @@ export const LoginView = (): ViewResult => {
       ),
       Effect.map(renderView),
     );
-
     // Initial render
     yield* renderEffect;
     // The main loop that drives the component
@@ -325,7 +323,6 @@ export const LoginView = (): ViewResult => {
 
     yield* mainLoop;
   });
-
   const fiber = runClientUnscoped(componentProgram);
   return {
     template: html`${container}`,
