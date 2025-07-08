@@ -1,5 +1,5 @@
 // FILE: features/auth/procedures/login.ts
-import { Effect, Option } from "effect";
+import { Effect } from "effect";
 import { publicProcedure } from "../../../trpc/trpc";
 import { sLoginInput } from "../schemas";
 import { Db } from "../../../db/DbTag";
@@ -27,7 +27,10 @@ export const loginProcedure = publicProcedure
         "auth:login",
       );
 
-      const user = yield* Effect.tryPromise({
+      // --- START OF FIX ---
+      // This pattern is more idiomatic and solves the type-narrowing issue.
+      // We first try to get the user, which might be null/undefined.
+      const maybeUser = yield* Effect.tryPromise({
         try: () =>
           db
             .selectFrom("user")
@@ -35,12 +38,16 @@ export const loginProcedure = publicProcedure
             .where("email", "=", email.toLowerCase())
             .executeTakeFirst(),
         catch: (cause) => new AuthDatabaseError({ cause }),
-      }).pipe(
-        Effect.flatMap(Option.fromNullable),
+      });
+
+      // Then, we convert the potential null/undefined into a failure,
+      // ensuring `user` is correctly typed for the rest of the generator.
+      const user = yield* Effect.fromNullable(maybeUser).pipe(
         Effect.catchTag("NoSuchElementException", () =>
           Effect.fail(new InvalidCredentialsError()),
         ),
       );
+      // --- END OF FIX ---
 
       if (!user.password_hash) {
         yield* Effect.fail(new InvalidCredentialsError());

@@ -107,7 +107,6 @@ export const validateSessionEffect = (
           .selectAll()
           .where("id", "=", sessionId as SessionId)
           .executeTakeFirst(),
-      // Use the new tagged error
       catch: (cause) => new AuthDatabaseError({ cause }),
     }).pipe(Effect.map(Option.fromNullable));
 
@@ -138,34 +137,36 @@ export const validateSessionEffect = (
       return { user: null, session: null };
     }
 
-    const userOption = yield* Effect.tryPromise({
+    const maybeRawUser = yield* Effect.tryPromise({
       try: () =>
         db
           .selectFrom("user")
           .selectAll()
           .where("id", "=", session.user_id)
           .executeTakeFirst(),
-      // Use the new tagged error
       catch: (cause) => new AuthDatabaseError({ cause }),
-    }).pipe(
-      Effect.flatMap((maybeUser) =>
-        maybeUser === undefined
-          ? Effect.succeed(Option.none<User>())
-          : Schema.decodeUnknown(UserSchema)(maybeUser).pipe(
-              Effect.map(Option.some),
-              Effect.catchAll((parseError) =>
-                serverLog(
-                  "warn",
-                  `User object validation failed for user ID ${
-                    session.user_id
-                  }: ${formatErrorSync(parseError)}`,
-                  session.user_id,
-                  "Auth:validate",
-                ).pipe(Effect.andThen(Effect.succeed(Option.none<User>()))),
-              ),
+    });
+
+    // Flattened user decoding logic. This is much clearer than the previous nested pipe.
+    const userOption = yield* Effect.matchEffect(
+      Option.fromNullable(maybeRawUser),
+      {
+        onSuccess: (rawUser) =>
+          Schema.decodeUnknown(UserSchema)(rawUser).pipe(
+            Effect.map(Option.some), // On success, wrap the user in Some
+            Effect.catchTag("ParseError", (e) =>
+              serverLog(
+                "warn",
+                `User validation failed: ${formatErrorSync(e)}`,
+                session.user_id,
+                "Auth:validate",
+              ).pipe(Effect.as(Option.none())),
             ),
-      ),
+          ),
+        onFailure: () => Effect.succeed(Option.none<User>()),
+      },
     );
+
     if (Option.isNone(userOption)) {
       yield* Effect.forkDaemon(
         serverLog(

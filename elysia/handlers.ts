@@ -72,6 +72,7 @@ export const handleAvatarUpload = (ctx: { request: Request; body: unknown }) =>
         }),
     });
 
+    // --- REFACTORED: The .pipe(Effect.tap(...)) was removed for a linear flow ---
     yield* Effect.tryPromise({
       try: () =>
         s3.send(
@@ -83,15 +84,13 @@ export const handleAvatarUpload = (ctx: { request: Request; body: unknown }) =>
           }),
         ),
       catch: (cause) => new S3UploadError({ cause }),
-    }).pipe(
-      Effect.tap(() =>
-        serverLog(
-          "info",
-          `Uploaded avatar to S3: ${key}`,
-          user.id,
-          "AvatarUpload:S3",
-        ),
-      ),
+    });
+
+    yield* serverLog(
+      "info",
+      `Uploaded avatar to S3: ${key}`,
+      user.id,
+      "AvatarUpload:S3",
     );
 
     const avatarUrl = `${process.env.PUBLIC_AVATAR_URL!}/${key}`;
@@ -104,16 +103,15 @@ export const handleAvatarUpload = (ctx: { request: Request; body: unknown }) =>
           .where("id", "=", user.id)
           .execute(),
       catch: (cause) => new DbUpdateError({ cause }),
-    }).pipe(
-      Effect.tap(() =>
-        serverLog(
-          "info",
-          `Updated DB avatar URL: ${avatarUrl}`,
-          user.id,
-          "AvatarUpload:DB",
-        ),
-      ),
+    });
+
+    yield* serverLog(
+      "info",
+      `Updated DB avatar URL: ${avatarUrl}`,
+      user.id,
+      "AvatarUpload:DB",
     );
+    // --- END REFACTOR ---
 
     return { avatarUrl };
   });
