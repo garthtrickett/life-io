@@ -12,18 +12,14 @@ const createLoggerEffect = Effect.gen(function* () {
   const env = process.env.NODE_ENV ?? "development";
   const stream: DestinationStream = yield* env === "production"
     ? pipe(
-        Effect.tryPromise(
-          () =>
-            // --- FIX START ---
-            // The configuration is now correctly nested inside the 'options' object.
-            logtail({
-              sourceToken: process.env.LOGTAIL_SOURCE_TOKEN!,
-              options: {
-                sendLogsToBetterStack: true,
-                endpoint: "https://s1238029.eu-nbg-2.betterstackdata.com",
-              },
-            }),
-          // --- FIX END ---
+        Effect.tryPromise(() =>
+          logtail({
+            sourceToken: process.env.LOGTAIL_SOURCE_TOKEN!,
+            options: {
+              sendLogsToBetterStack: true,
+              endpoint: "https://s1238029.eu-nbg-2.betterstackdata.com",
+            },
+          }),
         ),
         Effect.map(
           (ltStream) =>
@@ -36,31 +32,53 @@ const createLoggerEffect = Effect.gen(function* () {
     : Effect.succeed(pretty({ colorize: true }) as DestinationStream);
 
   const level = yield* getEffectiveLogLevel();
-  return pino({ level }, stream);
+
+  // Define redaction rules. This will automatically censor sensitive data
+  // in log objects before they are written.
+  const pinoOptions = {
+    level,
+    redact: {
+      paths: [
+        "user.id",
+        "user.email",
+        "user.password_hash",
+        "userId",
+        "email",
+        "clientGroupID",
+        "ip",
+        "session.id",
+        "sessionId",
+        "*.password_hash", // Redact password hash wherever it appears
+      ],
+      censor: "[REDACTED]",
+    },
+  };
+
+  return pino(pinoOptions, stream);
 }).pipe(Effect.tap(() => Console.log("Server Logger created successfully")));
 
-// The effect now has a requirement of LogConfig, so we provide the live layer
-// before running it to create the singleton logger promise.
 export const loggerPromise = Effect.runPromise(
   Effect.provide(createLoggerEffect, LogConfigLive),
 );
 
-export async function getLoggerWithUser(
-  userId?: string,
+// Now it accepts a data object to be included in the log.
+export async function getLoggerWithContext(
+  data: object,
   context?: string,
 ): Promise<Logger> {
   const logger = await loggerPromise;
-  return logger.child({ userId, ...(context ? { context } : {}) });
+  return logger.child({ ...data, ...(context ? { context } : {}) });
 }
 
+// The new signature puts the structured data first.
 export function serverLog(
   level: "info" | "error" | "warn" | "debug",
+  data: object, // Structured data for logging and redaction
   message: string,
-  userId?: string,
   context?: string,
 ): Effect.Effect<void, never, never> {
   return pipe(
-    Effect.tryPromise(() => getLoggerWithUser(userId, context)),
+    Effect.tryPromise(() => getLoggerWithContext(data, context)),
     Effect.flatMap((logger: Logger) =>
       Effect.sync(() => logger[level](message)),
     ),

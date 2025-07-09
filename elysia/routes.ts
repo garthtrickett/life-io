@@ -82,10 +82,9 @@ export const makeApp = Effect.gen(function* () {
             const sessionId = ws.data.query.sessionId;
             if (!sessionId) {
               yield* serverLog(
-                "warn",
-                `WS Connection ${String(
-                  ws.id,
-                )} closed: No session ID provided.`,
+                "warn", // level
+                { wsId: String(ws.id) }, // data
+                "WS Connection closed: No session ID provided.", // message
               );
               ws.send(JSON.stringify({ error: "authentication_failed" }));
               return ws.close();
@@ -94,26 +93,26 @@ export const makeApp = Effect.gen(function* () {
             const { user } = yield* validateSessionEffect(sessionId).pipe(
               Effect.catchAll((e) => {
                 return serverLog(
-                  "warn",
-                  `WS Auth failed for session ${sessionId}: ${e._tag}`,
+                  "warn", // level
+                  { sessionId, error: e }, // data
+                  `WS Auth failed: ${e._tag}`, // message
                 ).pipe(Effect.andThen(Effect.fail(e)));
               }),
             );
             if (!user) {
               yield* serverLog(
-                "warn",
-                `WS Connection ${String(ws.id)} closed: Invalid session.`,
+                "warn", // level
+                { wsId: String(ws.id) }, // data
+                "WS Connection closed: Invalid session.", // message
               );
               ws.send(JSON.stringify({ error: "authentication_failed" }));
               return ws.close();
             }
 
             yield* serverLog(
-              "info",
-              `WebSocket opened and authenticated for user ${
-                user.id
-              } (conn: ${String(ws.id)}). Subscribing to poke service.`,
-              user.id,
+              "info", // level
+              { userId: user.id, wsId: String(ws.id) }, // data
+              "WebSocket opened and authenticated. Subscribing to poke service.", // message
               "WS:Lifecycle",
             );
             const streamProcessingEffect = pokeService
@@ -122,9 +121,9 @@ export const makeApp = Effect.gen(function* () {
                 Stream.runForEach((msg) =>
                   serverLog(
                     "info",
-                    `Sending poke message "${msg}" to client: ${String(ws.id)}`,
+                    { msg, wsId: String(ws.id) },
+                    "Sending poke message to client.",
                     user.id,
-                    "WS:PokeSend",
                   ).pipe(Effect.andThen(Effect.sync(() => ws.send(msg)))),
                 ),
               );
@@ -137,11 +136,9 @@ export const makeApp = Effect.gen(function* () {
       close(ws) {
         runServerUnscoped(
           serverLog(
-            "info",
-            `WebSocket closed: ${String(
-              ws.id,
-            )}. Interrupting subscription fiber.`,
-            undefined,
+            "info", // level
+            { wsId: String(ws.id) }, // data
+            "WebSocket closed. Interrupting subscription fiber.", // message
             "WS:Lifecycle",
           ),
         );
@@ -154,7 +151,7 @@ export const makeApp = Effect.gen(function* () {
     });
   if (isProduction) {
     yield* Effect.forkDaemon(
-      serverLog("info", "Production mode: Setting up static file serving."),
+      serverLog("info", {}, "Production mode: Setting up static file serving."),
     );
     const publicDir = "dist/public";
     const indexHtmlPath = `${publicDir}/index.html`;
@@ -176,7 +173,7 @@ export const makeApp = Effect.gen(function* () {
     }
   } else {
     yield* Effect.forkDaemon(
-      serverLog("info", "Development mode. Vite will serve static files."),
+      serverLog("info", {}, "Development mode. Vite will serve static files."),
     );
   }
 

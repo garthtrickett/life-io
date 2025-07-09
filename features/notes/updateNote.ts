@@ -44,9 +44,9 @@ const updateNoteEffect = (
 
     yield* Effect.forkDaemon(
       serverLog(
-        "info",
-        `[UpdateNote] Starting update for note ID: "${validatedNoteId}"`,
-        validatedUserId,
+        "info", // level
+        { noteId: validatedNoteId, userId: validatedUserId }, // data
+        "[UpdateNote] Starting update", // message
         "UpdateNote:Attempt",
       ),
     );

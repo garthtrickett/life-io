@@ -99,21 +99,14 @@ const sendVerificationEmailDaemon = (
     `<h1>Welcome!</h1><p>Click the link to verify your email: <a href="${verificationLink}">${verificationLink}</a></p>`,
   ).pipe(
     Effect.andThen(
-      serverLog(
-        "info",
-        `Verification email sent for ${user.email}`,
-        user.id,
-        "auth:signup",
-      ),
+      serverLog("info", { user }, "Verification email sent", "auth:signup"),
     ),
     Effect.mapError((cause) => new EmailSendError({ cause })),
     Effect.catchAll((error) =>
       serverLog(
-        "error",
-        `[BACKGROUND] Failed to send verification email. Error: ${
-          toError(error).stack || toError(error).message
-        }`,
-        user.id,
+        "error", // level
+        { user, error: toError(error) }, // data
+        "[BACKGROUND] Failed to send verification email.", // message
         "auth:signup:email",
       ),
     ),
@@ -132,9 +125,9 @@ export const signupProcedure = rateLimitedProcedure
 
     const program = Effect.gen(function* () {
       yield* serverLog(
-        "info",
-        `Attempting to sign up user: ${email}`,
-        undefined,
+        "info", // level
+        { email }, // data
+        "Attempting to sign up user", // message
         "auth:signup",
       );
 
@@ -150,8 +143,8 @@ export const signupProcedure = rateLimitedProcedure
       } as NewUser);
       yield* serverLog(
         "info",
-        `User created successfully: ${user.id}`,
-        user.id,
+        { user },
+        "User created successfully",
         "auth:signup",
       );
       // 3. Create a verification token

@@ -19,10 +19,10 @@ class KanelError extends Data.TaggedError("KanelError")<{
  * An Effect-based program to run the Kanel type generation process.
  */
 const generateTypes = Effect.gen(function* () {
-  yield* serverLog("info", "🚀 Starting Kanel type generation...");
+  yield* serverLog("info", {}, "🚀 Starting Kanel type generation...");
 
   const command = `bunx kanel --config ./.kanelrc.cjs`;
-  yield* serverLog("info", `Executing command: ${command}`);
+  yield* serverLog("info", { command }, "Executing command");
 
   const { stdout, stderr } = yield* Effect.tryPromise({
     try: () => execAsync(command),
@@ -31,13 +31,13 @@ const generateTypes = Effect.gen(function* () {
   });
 
   if (stderr) {
-    yield* serverLog("warn", `Kanel process stderr: \n${stderr}`);
+    yield* serverLog("warn", { stderr }, "Kanel process stderr");
   }
   if (stdout) {
-    yield* serverLog("info", `Kanel process stdout: \n${stdout}`);
+    yield* serverLog("info", { stdout }, "Kanel process stdout");
   }
 
-  yield* serverLog("info", "✅ Type generation completed successfully!");
+  yield* serverLog("info", {}, "✅ Type generation completed successfully!");
 });
 
 // The .catch() block was removed as runPromiseExit never rejects.

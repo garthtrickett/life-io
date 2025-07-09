@@ -16,25 +16,23 @@ export const withAvatarUploadLogging =
       Effect.tapBoth(self, {
         onFailure: (error) =>
           serverLog(
-            "error",
-            `[AvatarUpload] Failed for user ${userId}: ${
-              (error as { _tag: string })._tag
-            }`,
-            userId,
+            "error", // level
+            { userId, error }, // data
+            `[AvatarUpload] Failure: ${(error as { _tag: string })._tag}`, // message
             "AvatarUpload:Failure",
           ),
         onSuccess: () =>
           serverLog(
-            "info",
-            `[AvatarUpload] OK: Successfully uploaded avatar for user ${userId}`,
-            userId,
+            "info", // level
+            { userId }, // data
+            "[AvatarUpload] OK: Successfully uploaded avatar", // message
             "AvatarUpload:Success",
           ),
       }),
       serverLog(
-        "info",
+        "info", // level
+        { userId }, // data
         "Avatar upload request received.",
-        userId,
         "AvatarUpload:Start",
       ),
     );

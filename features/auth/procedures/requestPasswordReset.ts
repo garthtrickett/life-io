@@ -99,19 +99,17 @@ const sendPasswordResetEmailDaemon = (
     Effect.andThen(
       serverLog(
         "info",
-        `Password reset token created and email sent for ${user.email}`,
-        user.id,
+        { user },
+        "Password reset token created and email sent",
         "auth:requestPasswordReset",
       ),
     ),
     Effect.mapError((cause) => new EmailSendError({ cause })),
     Effect.catchAll((error) =>
       serverLog(
-        "error",
-        `[BACKGROUND] Failed to send password reset email. Error: ${
-          toError(error).stack || toError(error).message
-        }`,
-        user.id,
+        "error", // level
+        { user, error: toError(error) }, // data
+        "[BACKGROUND] Failed to send password reset email.", // message
         "auth:requestPasswordReset:email",
       ),
     ),
@@ -130,9 +128,9 @@ export const requestPasswordResetProcedure = rateLimitedProcedure
 
     const program = Effect.gen(function* () {
       yield* serverLog(
-        "info",
-        `Password reset requested for ${email}`,
-        undefined,
+        "info", // level
+        { email }, // data
+        "Password reset requested", // message
         "auth:requestPasswordReset",
       );
 
@@ -144,8 +142,8 @@ export const requestPasswordResetProcedure = rateLimitedProcedure
         onNone: () =>
           serverLog(
             "info",
-            `Password reset requested for non-existent user: ${email}`,
-            undefined,
+            { email },
+            "Password reset requested for non-existent user",
             "auth:requestPasswordReset",
           ),
         onSome: (user) =>

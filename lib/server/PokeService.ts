@@ -37,8 +37,8 @@ export const PokeServiceLive = Layer.scoped(
       Effect.gen(function* () {
         yield* serverLog(
           "info",
-          `PokeService.poke() called for user ${userId}.`,
-          userId,
+          { userId },
+          "PokeService.poke() called.",
           "PokeService:poke",
         );
         const pubSubsMap = yield* Ref.get(userPubSubs);
@@ -49,8 +49,8 @@ export const PokeServiceLive = Layer.scoped(
         } else {
           yield* serverLog(
             "debug",
-            `No active poke subscriptions for user ${userId}. Poke ignored.`,
-            userId,
+            { userId },
+            "No active poke subscriptions. Poke ignored.",
             "PokeService:poke",
           );
         }
@@ -65,8 +65,8 @@ export const PokeServiceLive = Layer.scoped(
           if (!userPubSub) {
             yield* serverLog(
               "debug",
-              `Creating new PubSub for user: ${userId}`,
-              userId,
+              { userId },
+              "Creating new PubSub for user",
               "PokeService:subscribe",
             );
             userPubSub = yield* PubSub.unbounded<string>();
@@ -85,8 +85,8 @@ export const PokeServiceLive = Layer.scoped(
                 ) {
                   yield* serverLog(
                     "debug",
-                    `All subscriptions closed for user ${userId}. Removing PubSub.`,
-                    userId,
+                    { userId },
+                    "All subscriptions closed. Removing PubSub.",
                     "PokeService:unsubscribe",
                   );
                   yield* Ref.update(userPubSubs, (map) => {

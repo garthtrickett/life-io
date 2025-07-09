@@ -15,8 +15,8 @@ export const cleanupExpiredTokensEffect: Effect.Effect<void, Error, Db> =
 
     yield* serverLog(
       "info",
+      {},
       "Starting cleanup of expired tokens...",
-      undefined,
       "Job:TokenCleanup",
     );
 
@@ -39,12 +39,11 @@ export const cleanupExpiredTokensEffect: Effect.Effect<void, Error, Db> =
     });
 
     // FIX: Access the first element for numDeletedRows
+    const numDeletedEmail = deletedEmailTokens[0]?.numDeletedRows ?? 0;
     yield* serverLog(
       "info",
-      `Cleaned up ${
-        deletedEmailTokens[0]?.numDeletedRows ?? 0
-      } expired email verification tokens.`,
-      undefined,
+      { count: numDeletedEmail },
+      "Cleaned up expired email verification tokens.",
       "Job:TokenCleanup",
     );
 
@@ -63,19 +62,18 @@ export const cleanupExpiredTokensEffect: Effect.Effect<void, Error, Db> =
     });
 
     // FIX: Access the first element for numDeletedRows
+    const numDeletedPassword = deletedPasswordTokens[0]?.numDeletedRows ?? 0;
     yield* serverLog(
       "info",
-      `Cleaned up ${
-        deletedPasswordTokens[0]?.numDeletedRows ?? 0
-      } expired password reset tokens.`,
-      undefined,
+      { count: numDeletedPassword },
+      "Cleaned up expired password reset tokens.",
       "Job:TokenCleanup",
     );
 
     yield* serverLog(
       "info",
+      {},
       "Finished cleanup of expired tokens.",
-      undefined,
       "Job:TokenCleanup",
     );
   });
@@ -101,8 +99,8 @@ export const retryFailedEmailsEffect = Effect.gen(function* () {
     // Max 5 retries
     yield* serverLog(
       "info",
-      `Attempting to retry sending email to ${dummyFailedEmail.to}...`,
-      undefined,
+      { to: dummyFailedEmail.to },
+      "Attempting to retry sending email...",
       "Job:EmailRetry",
     );
 
@@ -117,10 +115,12 @@ export const retryFailedEmailsEffect = Effect.gen(function* () {
       Effect.tapError((e) =>
         serverLog(
           "warn",
-          `Failed to send email to ${dummyFailedEmail.to} (attempt ${
-            dummyFailedEmail.retries + 1
-          }): ${e.message}`,
-          undefined,
+          {
+            to: dummyFailedEmail.to,
+            attempt: dummyFailedEmail.retries + 1,
+            error: e,
+          },
+          "Failed to send email",
           "Job:EmailRetry",
         ),
       ),
@@ -136,16 +136,16 @@ export const retryFailedEmailsEffect = Effect.gen(function* () {
     // In a real durable queue, this would involve database updates.
     yield* serverLog(
       "info",
-      `Email retry attempt completed for ${dummyFailedEmail.to}.`,
-      undefined,
+      { to: dummyFailedEmail.to },
+      "Email retry attempt completed.",
       "Job:EmailRetry",
     );
     dummyFailedEmail.retries++;
   } else {
     yield* serverLog(
       "warn",
-      `Max retries reached for email to ${dummyFailedEmail.to}. Giving up.`,
-      undefined,
+      { to: dummyFailedEmail.to },
+      "Max retries reached for email. Giving up.",
       "Job:EmailRetry",
     );
     // In a real system, move the email to a 'dead_letter' queue or alert.

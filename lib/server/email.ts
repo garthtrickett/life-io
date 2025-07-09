@@ -19,14 +19,8 @@ export const sendEmail = (
   Effect.gen(function* () {
     yield* serverLog(
       "info",
-      `======== 📧 MOCK EMAIL 📧 ========
-      TO: ${to}
-      SUBJECT: ${subject}
-      
-      BODY:
-      ${html}
-      =================================`,
-      undefined,
+      { to, subject, htmlBody: html }, // Structured data
+      "Mock email sent", // Message
       "EmailService",
     );
   });

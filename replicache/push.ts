@@ -94,8 +94,8 @@ export const handlePush = (
     if (!("clientGroupID" in req)) {
       yield* serverLog(
         "error",
+        { userId },
         "Push V0 not supported",
-        userId,
         "Replicache:Push",
       );
       return;
@@ -109,8 +109,8 @@ export const handlePush = (
 
     yield* serverLog(
       "info",
-      `Processing ${mutations.length} mutations for clientGroupID: ${clientGroupID}`,
-      userId,
+      { userId, clientGroupID, mutationCount: mutations.length },
+      "Processing push",
       "Replicache:Push",
     );
 
@@ -194,17 +194,12 @@ export const handlePush = (
 
     yield* serverLog(
       "info",
-      `Successfully processed push for clientGroupID: ${clientGroupID}`,
-      userId,
+      { userId, clientGroupID },
+      "Successfully processed push",
       "Replicache:Push:Success",
     );
   }).pipe(
     Effect.catchAll((error) =>
-      serverLog(
-        "error",
-        `Push failed: ${JSON.stringify(error)}`,
-        undefined,
-        "Replicache:Push:Failure",
-      ),
+      serverLog("error", { error }, "Push failed", "Replicache:Push:Failure"),
     ),
   );

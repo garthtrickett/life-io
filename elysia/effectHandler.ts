@@ -63,7 +63,12 @@ export const effectHandler =
       const tag = extractTag(err);
       // Log the detailed error message to the server console.
       await runServerPromise(
-        serverLog("error", `[${tag}] ${message}`, undefined, "API_FAILURE"),
+        serverLog(
+          "error",
+          { tag, error: err },
+          `API Failure: ${message}`,
+          "API_FAILURE",
+        ),
       );
       // Throw a new, clean error that our global onError handler can catch.
       // This error now contains the useful, specific message.

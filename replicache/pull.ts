@@ -269,10 +269,8 @@ export const handlePull = (
 
     yield* serverLog(
       "info",
-      `Processing pull for user: ${userId}, clientGroupID: ${clientGroupID}, cvrId: ${
-        cvrId ?? "new client"
-      }`,
-      userId,
+      { userId, clientGroupID, cvrId: cvrId ?? "new client" },
+      "Processing pull request",
       "Replicache:Pull",
     );
 
@@ -309,8 +307,8 @@ export const handlePull = (
     if (cvrId !== null && compareCVRs(oldCVR, nextCVR)) {
       yield* serverLog(
         "info",
-        `CVR for user ${userId} is unchanged. Returning same cookie and LMID changes.`,
-        userId,
+        { userId },
+        "CVR is unchanged. Returning same cookie and LMID changes.",
         "Replicache:Pull:NoChange",
       );
       return {

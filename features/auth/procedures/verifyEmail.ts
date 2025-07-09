@@ -40,9 +40,9 @@ export const verifyEmailProcedure = publicProcedure
           catch: (cause) => new AuthDatabaseError({ cause }),
         });
         yield* serverLog(
-          "info",
-          `Email verified for user ${user.id}`,
-          user.id,
+          "info", // level
+          { user }, // data
+          "Email verified for user", // message
           "auth:verifyEmail",
         );
         const sessionId = yield* createSessionEffect(user.id);

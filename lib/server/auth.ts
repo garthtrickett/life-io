@@ -54,7 +54,7 @@ export const createSessionEffect = (
       catch: (cause) => new AuthDatabaseError({ cause }),
     });
     yield* Effect.forkDaemon(
-      serverLog("info", `Session created for user ${userId}`, userId, "Auth"),
+      serverLog("info", { userId }, "Session created", "Auth"),
     );
     return sessionId;
   });
@@ -67,8 +67,8 @@ export const deleteSessionEffect = (
     yield* Effect.forkDaemon(
       serverLog(
         "info",
-        `Attempting to delete session from DB: ${sessionId}`,
-        undefined,
+        { sessionId },
+        "Attempting to delete session from DB",
         "Auth:deleteSession",
       ),
     );
@@ -84,8 +84,8 @@ export const deleteSessionEffect = (
     yield* Effect.forkDaemon(
       serverLog(
         "info",
-        `DB operation to delete session ${sessionId} completed.`,
-        undefined,
+        { sessionId },
+        "DB operation to delete session completed",
         "Auth:deleteSession",
       ),
     );
@@ -112,12 +112,7 @@ export const validateSessionEffect = (
 
     if (Option.isNone(sessionOption)) {
       yield* Effect.forkDaemon(
-        serverLog(
-          "debug",
-          `Session not found: ${sessionId}`,
-          undefined,
-          "Auth",
-        ),
+        serverLog("debug", { sessionId }, "Session not found", "Auth"),
       );
       return { user: null, session: null };
     }
@@ -128,8 +123,8 @@ export const validateSessionEffect = (
       yield* Effect.forkDaemon(
         serverLog(
           "info",
-          `Expired session detected: ${sessionId}`,
-          session.user_id,
+          { sessionId, userId: session.user_id },
+          "Expired session detected",
           "Auth",
         ),
       );
@@ -157,8 +152,8 @@ export const validateSessionEffect = (
             Effect.catchTag("ParseError", (e) =>
               serverLog(
                 "warn",
-                `User validation failed: ${formatErrorSync(e)}`,
-                session.user_id,
+                { userId: session.user_id, error: formatErrorSync(e) },
+                "User validation failed",
                 "Auth:validate",
               ).pipe(Effect.as(Option.none())),
             ),
@@ -171,8 +166,8 @@ export const validateSessionEffect = (
       yield* Effect.forkDaemon(
         serverLog(
           "error",
-          `Session validation failed: User not found for session ${sessionId}`,
-          session.user_id,
+          { sessionId, userId: session.user_id },
+          "Session validation failed: User not found for session",
           "Auth",
         ),
       );
@@ -183,8 +178,8 @@ export const validateSessionEffect = (
     yield* Effect.forkDaemon(
       serverLog(
         "info",
-        `Session validated successfully for user ${user.id}`,
-        user.id,
+        { user: user },
+        "Session validated successfully",
         "Auth",
       ),
     );

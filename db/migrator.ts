@@ -19,8 +19,8 @@ const runMigrations = (direction: "up" | "down", db: Kysely<Database>) =>
 
     yield* serverLog(
       "info",
-      `Running migrations via migrator.ts: ${direction}`,
-      undefined,
+      { direction },
+      "Running migrations via migrator.ts",
       "EffectMigrator",
     );
 
@@ -43,8 +43,8 @@ const runMigrations = (direction: "up" | "down", db: Kysely<Database>) =>
     for (const it of results ?? []) {
       yield* serverLog(
         it.status === "Success" ? "info" : "error",
-        `Migration "${it.migrationName}" status: ${it.status}`,
-        undefined,
+        { migrationName: it.migrationName, status: it.status },
+        "Migration status",
         "EffectMigrator",
       );
     }
@@ -58,8 +58,8 @@ const runMigrations = (direction: "up" | "down", db: Kysely<Database>) =>
             : JSON.stringify(error, null, 2);
       yield* serverLog(
         "error",
-        `Migration failed: ${errorMessage}`,
-        undefined,
+        { error: errorMessage },
+        "Migration failed",
         "EffectMigrator",
       );
       return yield* Effect.fail(error);

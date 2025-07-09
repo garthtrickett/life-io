@@ -14,8 +14,8 @@ const seedProgram = Effect.gen(function* () {
   yield* Effect.forkDaemon(
     serverLog(
       "info",
-      `Seeding database with test user... (Email: garthtrickett@gmail.com, Password: ${TEST_USER_PASSWORD})`,
-      undefined,
+      { email: "garthtrickett@gmail.com", password: TEST_USER_PASSWORD },
+      "Seeding database with test user...",
       "SeedScript:Effect",
     ),
   );
@@ -58,8 +58,8 @@ const seedProgram = Effect.gen(function* () {
       Effect.forkDaemon(
         serverLog(
           "info",
-          `✅ User '${TEST_USER.email}' seeded/updated successfully.`,
-          undefined,
+          { email: TEST_USER.email },
+          "✅ User seeded/updated successfully.",
           "SeedScript:Effect",
         ),
       ),
@@ -74,8 +74,8 @@ const program = pipe(
       Effect.forkDaemon(
         serverLog(
           "error",
+          { error },
           `Seeding failed: ${error.message}`,
-          undefined,
           "SeedScript:Effect",
         ),
       ),

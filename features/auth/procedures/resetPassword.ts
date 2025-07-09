@@ -55,9 +55,9 @@ export const resetPasswordProcedure = publicProcedure
           catch: (cause) => new AuthDatabaseError({ cause }),
         });
         yield* serverLog(
-          "info",
-          `Password reset successfully for user ${storedToken.user_id}`,
-          storedToken.user_id,
+          "info", // level
+          { userId: storedToken.user_id }, // data
+          "Password reset successful", // message
           "auth:resetPassword",
         );
         return { success: true };

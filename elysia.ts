@@ -32,9 +32,9 @@ const setupApp = Effect.gen(function* () {
 
     void runServerUnscoped(
       serverLog(
-        "error",
-        `[Elysia onError] Caught a ${code} error: ${descriptiveMessage}`,
-        undefined,
+        "error", // level
+        { code, error }, // data
+        `[Elysia onError] Caught error: ${descriptiveMessage}`, // message
         "Elysia:GlobalError",
       ),
     );
@@ -130,9 +130,9 @@ const setupApp = Effect.gen(function* () {
   app.onBeforeHandle(({ request }) => {
     void runServerUnscoped(
       serverLog(
-        "debug",
-        `[SERVER IN] ${request.method} ${new URL(request.url).pathname}`,
-        undefined,
+        "debug", // level
+        { method: request.method, path: new URL(request.url).pathname }, // data
+        "Server Request IN", // message
         "Elysia:Request",
       ),
     );
@@ -145,9 +145,9 @@ const setupApp = Effect.gen(function* () {
       Effect.repeat(Schedule.spaced(Duration.hours(24))),
       Effect.tapError((e) =>
         serverLog(
-          "error",
-          `Token cleanup job failed: ${e.message}`,
-          undefined,
+          "error", // level
+          { error: e }, // data
+          `Token cleanup job failed: ${e.message}`, // message
           "Job:TokenCleanup",
         ),
       ),
@@ -165,9 +165,9 @@ const setupApp = Effect.gen(function* () {
       ),
       Effect.tapError((e) =>
         serverLog(
-          "error",
-          `Email retry job failed: ${e.message}`,
-          undefined,
+          "error", // level
+          { error: e }, // data
+          `Email retry job failed: ${e.message}`, // message
           "Job:EmailRetry",
         ),
       ),
@@ -183,9 +183,9 @@ runServerPromise(setupApp)
     const server = app.listen(42069, () => {
       void runServerUnscoped(
         serverLog(
-          "info",
-          `🦊 Elysia server with tRPC listening on http://localhost:42069`,
-          undefined,
+          "info", // level
+          { port: 42069 }, // data
+          "🦊 Elysia server with tRPC listening", // message
           "Startup",
         ),
       );
@@ -194,9 +194,9 @@ runServerPromise(setupApp)
     const gracefulShutdown = async (signal: string) => {
       await runServerPromise(
         serverLog(
-          "info",
-          `Received ${signal}. Shutting down gracefully...`,
-          undefined,
+          "info", // level
+          { signal }, // data
+          "Received signal. Shutting down gracefully...", // message
           "Shutdown",
         ),
       );

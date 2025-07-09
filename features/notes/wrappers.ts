@@ -11,18 +11,16 @@ export const withGetNoteLogging =
     Effect.tapBoth(self, {
       onFailure: (error) =>
         serverLog(
-          "error",
-          `[GetNote] Failed for note ${noteId}: ${
-            (error as { _tag: string })._tag
-          }`,
-          userId,
+          "error", // level
+          { noteId, userId, error }, // data
+          `[GetNote] Failure: ${(error as { _tag: string })._tag}`, // message
           "GetNote:Failure",
         ),
       onSuccess: (note) =>
         serverLog(
-          "info",
-          `[GetNote] OK: Successfully fetched note "${note.title}"`,
-          userId,
+          "info", // level
+          { note }, // data
+          "[GetNote] OK: Successfully fetched note", // message
           "GetNote:Success",
         ),
     });
@@ -39,18 +37,16 @@ export const withGetNotesLogging =
     Effect.tapBoth(self, {
       onFailure: (error) =>
         serverLog(
-          "error",
-          `[GetNotes] Failed for user ${userId}: ${
-            (error as { _tag: string })._tag
-          }`,
-          userId,
+          "error", // level
+          { userId, error }, // data
+          `[GetNotes] Failure: ${(error as { _tag: string })._tag}`, // message
           "GetNotes:Failure",
         ),
       onSuccess: (notes) =>
         serverLog(
-          "info",
-          `[GetNotes] OK: Successfully fetched ${notes.length} notes.`,
-          userId,
+          "info", // level
+          { userId, noteCount: notes.length }, // data
+          "[GetNotes] OK: Successfully fetched notes", // message
           "GetNotes:Success",
         ),
     });
@@ -64,18 +60,16 @@ export const withCreateNoteLogging =
     Effect.tapBoth(self, {
       onFailure: (error) =>
         serverLog(
-          "error",
-          `[CreateNote] Failed to create note "${noteTitle}": ${
-            (error as { _tag: string })._tag
-          }`,
-          userId,
+          "error", // level
+          { userId, noteTitle, error }, // data
+          `[CreateNote] Failure: ${(error as { _tag: string })._tag}`, // message
           "CreateNote:Failure",
         ),
       onSuccess: (createdNote) =>
         serverLog(
-          "info",
-          `[CreateNote] OK: Successfully created note "${createdNote.title}" (ID: ${createdNote.id})`,
-          userId,
+          "info", // level
+          { note: createdNote }, // data
+          "[CreateNote] OK: Successfully created note", // message
           "CreateNote:Success",
         ),
     });
@@ -89,18 +83,16 @@ export const withUpdateNoteLogging =
     Effect.tapBoth(self, {
       onFailure: (error) =>
         serverLog(
-          "error",
-          `[UpdateNote] Failed to update note ${noteId}: ${
-            (error as { _tag: string })._tag
-          }`,
-          userId,
+          "error", // level
+          { noteId, userId, error }, // data
+          `[UpdateNote] Failure: ${(error as { _tag: string })._tag}`, // message
           "UpdateNote:Failure",
         ),
       onSuccess: (updatedNote) =>
         serverLog(
-          "info",
-          `[UpdateNote] OK: Successfully updated note "${updatedNote.title}" (ID: ${updatedNote.id})`,
-          userId,
+          "info", // level
+          { note: updatedNote }, // data
+          "[UpdateNote] OK: Successfully updated note", // message
           "UpdateNote:Success",
         ),
     });

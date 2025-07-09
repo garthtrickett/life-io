@@ -31,9 +31,9 @@ const createNoteEffect = (
 
     yield* Effect.forkDaemon(
       serverLog(
-        "info",
-        `Attempting to create note titled: "${note.title}"`,
-        validatedUserId,
+        "info", // level
+        { userId: validatedUserId, title: note.title }, // data
+        "Attempting to create note", // message
         "CreateNote:Attempt",
       ),
     );

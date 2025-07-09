@@ -21,9 +21,9 @@ export const changePasswordProcedure = loggedInProcedure
     const program = Effect.gen(function* () {
       const db = yield* Db;
       yield* serverLog(
-        "info",
-        `Password change attempt for user: ${userId}`,
-        userId,
+        "info", // level
+        { userId }, // data
+        "Password change attempt", // message
         "auth:changePassword",
       );
 
@@ -44,9 +44,9 @@ export const changePasswordProcedure = loggedInProcedure
 
       if (!isOldPasswordValid) {
         yield* serverLog(
-          "warn",
-          `Incorrect old password provided for user: ${userId}`,
-          userId,
+          "warn", // level
+          { userId }, // data
+          "Incorrect old password provided", // message
           "auth:changePassword",
         );
         yield* Effect.fail(new InvalidCredentialsError());
@@ -66,9 +66,9 @@ export const changePasswordProcedure = loggedInProcedure
         catch: (cause) => new AuthDatabaseError({ cause }),
       });
       yield* serverLog(
-        "info",
-        `Password changed successfully for user: ${userId}`,
-        userId,
+        "info", // level
+        { userId }, // data
+        "Password changed successfully", // message
         "auth:changePassword",
       );
       return { success: true };

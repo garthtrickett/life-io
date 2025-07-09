@@ -9,16 +9,16 @@ export const logoutProcedure = loggedInProcedure.mutation(({ ctx }) => {
   const program = Effect.gen(function* () {
     yield* serverLog(
       "info",
-      `User initiated logout.`,
-      ctx.user.id,
+      { user: ctx.user },
+      "User initiated logout.",
       "auth:logout",
     );
     yield* deleteSessionEffect(ctx.session.id);
     // --- LOGGING ---
     yield* serverLog(
-      "info",
+      "info", // level
+      { user: ctx.user }, // data
       "Logout procedure completed successfully on server.",
-      ctx.user.id,
       "auth:logout",
     );
     // --- LOGGING ---

@@ -16,8 +16,8 @@ const rateLimiterMiddleware = t.middleware(({ ctx, next }) => {
     runServerUnscoped(
       serverLog(
         "warn",
-        `Rate limit exceeded for IP: ${ctx.ip}`,
-        undefined,
+        { ip: ctx.ip },
+        "Rate limit exceeded",
         "tRPC:RateLimit",
       ),
     );
@@ -36,7 +36,7 @@ const loggerMiddleware = t.middleware(async ({ ctx, path, type, next }) => {
   if (path !== "log.log") {
     // Fire-and-forget the request log
     runServerUnscoped(
-      serverLog("info", `tRPC → [${type}] ${path}`, userId, "tRPC:req"),
+      serverLog("info", { type, path, userId }, "tRPC → Request", "tRPC:req"),
     );
   }
 
@@ -52,8 +52,8 @@ const loggerMiddleware = t.middleware(async ({ ctx, path, type, next }) => {
     runServerUnscoped(
       serverLog(
         "info",
-        `tRPC ← [${type}] ${path} (${status})`,
-        userId,
+        { type, path, userId, status },
+        "tRPC ← Response",
         "tRPC:res",
       ),
     );
@@ -65,8 +65,8 @@ const loggerMiddleware = t.middleware(async ({ ctx, path, type, next }) => {
     runServerUnscoped(
       serverLog(
         "error",
-        `tRPC Error on ${path}: Code=${trpcError.code}, Message=${trpcError.message}`,
-        userId,
+        { path, code: trpcError.code, message: trpcError.message, userId },
+        "tRPC Error",
         "tRPC:Error",
       ),
     );

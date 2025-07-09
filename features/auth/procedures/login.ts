@@ -72,9 +72,9 @@ const loginUserEffect = (
 
     if (!user.email_verified) {
       yield* serverLog(
-        "warn",
-        `Login failed: Email not verified for ${user.id}`,
-        user.id,
+        "warn", // level
+        { user }, // data
+        "Login failed: Email not verified", // message
         "auth:login",
       );
       yield* Effect.fail(new EmailNotVerifiedError());
@@ -92,9 +92,9 @@ const loginUserEffect = (
       Effect.mapError((cause) => new AuthDatabaseError({ cause })),
     );
     yield* serverLog(
-      "info",
-      `Login successful for user: ${user.id}`,
-      user.id,
+      "info", // level
+      { user }, // data
+      "Login successful", // message
       "auth:login",
     );
 
@@ -112,9 +112,9 @@ export const loginProcedure = rateLimitedProcedure
 
     const program = Effect.gen(function* () {
       yield* serverLog(
-        "info",
-        `Login attempt for user: ${email}`,
-        undefined,
+        "info", // level
+        { email }, // data
+        "Login attempt", // message
         "auth:login",
       );
 

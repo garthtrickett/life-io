@@ -60,8 +60,8 @@ export const createContext = async (ctx: ElysiaContext): Promise<Context> => {
     runServerUnscoped(
       serverLog(
         "error",
-        `[FATAL] tRPC context creation failed: ${Cause.pretty(cause)}`,
-        undefined,
+        { cause: Cause.pretty(cause) },
+        "[FATAL] tRPC context creation failed",
         "tRPC:Context:Fatal",
       ),
     );

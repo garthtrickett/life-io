@@ -29,7 +29,12 @@ export const logRouter = router({
     // The level is now guaranteed to be a valid level for serverLog,
     // so no extra 'if' check is needed.
     Effect.runFork(
-      serverLog(level, `[CLIENT] ${message}`, userId, "ClientLog"),
+      serverLog(
+        level,
+        { userId, clientMessage: message },
+        "[CLIENT] log",
+        "ClientLog",
+      ),
     );
   }),
 });

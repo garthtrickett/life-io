@@ -9,6 +9,7 @@ import { CryptoLive, type Crypto } from "./crypto";
 import { ConfigLive } from "./Config";
 import { PokeService, PokeServiceLive } from "./PokeService";
 import { TRPCError } from "@trpc/server";
+import { serverLog } from "./logger.server";
 
 // 1. Combine the core service layers.
 const ServerServices = Layer.mergeAll(
