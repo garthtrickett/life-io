@@ -1,6 +1,6 @@
 // FILE: features/auth/procedures/requestPasswordReset.ts
 import { Effect, Option } from "effect";
-import { publicProcedure } from "../../../trpc/trpc";
+import { rateLimitedProcedure } from "../../../trpc/trpc";
 import { sRequestPasswordResetInput } from "../schemas";
 import { Db } from "../../../db/DbTag";
 import { serverLog } from "../../../lib/server/logger.server";
@@ -123,7 +123,7 @@ const sendPasswordResetEmailDaemon = (
 /* Procedure                                                                  */
 /* -------------------------------------------------------------------------- */
 
-export const requestPasswordResetProcedure = publicProcedure
+export const requestPasswordResetProcedure = rateLimitedProcedure
   .input(sRequestPasswordResetInput)
   .mutation(({ input }) => {
     const { email } = input;

@@ -1,6 +1,6 @@
 // FILE: features/auth/procedures/login.ts
 import { Effect, Option } from "effect";
-import { publicProcedure } from "../../../trpc/trpc";
+import { rateLimitedProcedure } from "../../../trpc/trpc";
 import { sLoginInput } from "../schemas";
 import { Db } from "../../../db/DbTag";
 import { serverLog } from "../../../lib/server/logger.server";
@@ -105,7 +105,7 @@ const loginUserEffect = (
 /* Procedure                                                                  */
 /* -------------------------------------------------------------------------- */
 
-export const loginProcedure = publicProcedure
+export const loginProcedure = rateLimitedProcedure
   .input(sLoginInput)
   .mutation(({ input }) => {
     const { email, password } = input;

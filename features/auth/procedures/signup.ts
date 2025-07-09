@@ -1,6 +1,6 @@
 // FILE: features/auth/procedures/signup.ts
 import { Effect } from "effect";
-import { publicProcedure } from "../../../trpc/trpc";
+import { rateLimitedProcedure } from "../../../trpc/trpc";
 import { sSignupInput } from "../schemas";
 import { argon2id } from "../../../lib/server/auth";
 import {
@@ -125,7 +125,7 @@ const sendVerificationEmailDaemon = (
 /* Procedure                                                                  */
 /* -------------------------------------------------------------------------- */
 
-export const signupProcedure = publicProcedure
+export const signupProcedure = rateLimitedProcedure
   .input(sSignupInput)
   .mutation(({ input }) => {
     const { email, password } = input;

@@ -49,10 +49,3 @@ const cleanup = () => {
 
 // Run cleanup every 5 minutes
 setInterval(cleanup, 5 * 60 * 1000);
-
-// Use a simple console.log to avoid circular dependencies with the server logger
-console.log(
-  `[INFO] [RateLimiter] IP Rate Limiter initialized: ${MAX_REQUESTS} reqs / ${
-    TIME_WINDOW_MS / 1000
-  }s per IP.`,
-);

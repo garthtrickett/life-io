@@ -16,6 +16,7 @@ import { Db } from "../db/DbTag";
 // It's the input to our createContext function.
 export interface ElysiaContext {
   request: Request;
+  ip: string; // Add the IP address property
 }
 
 // This is the final shape of the context our tRPC procedures will receive.
@@ -23,6 +24,7 @@ export interface Context {
   readonly db: Kysely<Database>;
   readonly user: User | null;
   readonly session: { id: string } | null;
+  readonly ip: string; // Add the IP address property
 }
 
 // This effect takes the Elysia context and produces the tRPC context.
@@ -35,7 +37,7 @@ const createContextEffect = (
     const sessionIdOption = yield* getSessionIdFromRequest(ctx.request);
 
     // Pass the ip through to the final context
-    const baseContext = { db };
+    const baseContext = { db, ip: ctx.ip }; // Pass the IP to our base context
 
     return yield* Option.match(sessionIdOption, {
       onNone: () =>

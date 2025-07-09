@@ -17,15 +17,23 @@ interface ElysiaTrpcAdapterOptions {
  * Elysia context (including `ip`, `request`, etc.) to the tRPC `createContext` function.
  */
 export const createElysiaTrpcAdapter = (opts: ElysiaTrpcAdapterOptions) => {
-  // The handler receives the full Elysia context, which includes the parsed `body`.
-  return async (ctx: ElysiaHandlerContext): Promise<Response> => {
+  // By adding `& { ip: string }`, we tell TypeScript that the context object
+  // passed to this handler will have the `ip` property, in addition to
+  // all the properties of the base Elysia context.
+  return async (
+    ctx: ElysiaHandlerContext & { ip: string },
+  ): Promise<Response> => {
     const path = new URL(ctx.request.url).pathname.substring(
       "/api/trpc/".length,
     );
 
-    const trpcContext = await opts.createContext(ctx);
+    // Instead of passing the whole `ctx` object, create a new object that
+    // perfectly matches our `ElysiaContext` interface. This is now type-safe.
+    const trpcContext = await opts.createContext({
+      request: ctx.request,
+      ip: ctx.ip,
+    });
 
-    // --- FIX START ---
     // For GET requests, we can pass the original request directly to tRPC.
     // This is safer as it avoids potential issues from unnecessarily
     // reconstructing the request object.
@@ -34,7 +42,8 @@ export const createElysiaTrpcAdapter = (opts: ElysiaTrpcAdapterOptions) => {
         router: opts.router,
         req: ctx.request, // Use the original, untouched request
         path,
-        createContext: async () => trpcContext,
+        // --- FIX: Remove `async` and use `Promise.resolve` to satisfy the linter ---
+        createContext: () => Promise.resolve(trpcContext),
         error: null,
       });
     }
@@ -53,9 +62,9 @@ export const createElysiaTrpcAdapter = (opts: ElysiaTrpcAdapterOptions) => {
       router: opts.router,
       req: request,
       path,
-      createContext: async () => trpcContext,
+      // --- FIX: Remove `async` and use `Promise.resolve` to satisfy the linter ---
+      createContext: () => Promise.resolve(trpcContext),
       error: null,
     });
-    // --- FIX END ---
   };
 };

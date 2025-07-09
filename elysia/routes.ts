@@ -1,6 +1,6 @@
 // File: elysia/routes.ts
 
-import { Elysia, t, type Context as ElysiaHandlerContext } from "elysia";
+import { Elysia, t } from "elysia";
 import { Effect, Fiber, Stream } from "effect";
 import { staticPlugin } from "@elysiajs/static";
 import type { PushRequest } from "replicache";
@@ -21,6 +21,7 @@ import { runServerUnscoped } from "../lib/server/runtime";
 import { serverLog } from "../lib/server/logger.server";
 import { effectHandler } from "./effectHandler";
 import { validateSessionEffect } from "../lib/server/auth";
+import { ip } from "elysia-ip";
 
 export const makeApp = Effect.gen(function* () {
   const isProduction = process.env.NODE_ENV === "production";
@@ -35,13 +36,16 @@ export const makeApp = Effect.gen(function* () {
   const app = new Elysia()
     .group("/api", (group) =>
       group
-        .all("/trpc/*", (ctx: ElysiaHandlerContext) => trpcHandler(ctx), {
+        // By removing the explicit `: ElysiaHandlerContext` type from `ctx`,
+        // we allow TypeScript to correctly infer the fully decorated context
+        // provided by Elysia, which includes the `ip` property.
+        .use(ip())
+        .all("/trpc/*", (ctx) => trpcHandler(ctx), {
           query: t.Object({
             batch: t.Optional(t.String()),
-            input: t.Optional(t.Unknown()),
+            input: t.Optional(t.String()),
           }),
         })
-        // --- FIX END ---
         .post("/replicache/pull", (ctx) =>
           effectHandler(
             Effect.gen(function* () {

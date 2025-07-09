@@ -4,9 +4,29 @@ import superjson from "superjson";
 import type { Context } from "./context";
 import { serverLog } from "../lib/server/logger.server";
 import { runServerUnscoped } from "../lib/server/runtime";
+import { checkRateLimit } from "./rateLimiter";
 
 const t = initTRPC.context<Context>().create({
   transformer: superjson,
+});
+
+const rateLimiterMiddleware = t.middleware(({ ctx, next }) => {
+  // `checkRateLimit` is a simple synchronous function
+  if (!checkRateLimit(ctx.ip)) {
+    runServerUnscoped(
+      serverLog(
+        "warn",
+        `Rate limit exceeded for IP: ${ctx.ip}`,
+        undefined,
+        "tRPC:RateLimit",
+      ),
+    );
+    throw new TRPCError({
+      code: "TOO_MANY_REQUESTS",
+      message: "You are making too many requests. Please try again later.",
+    });
+  }
+  return next({ ctx });
 });
 
 const loggerMiddleware = t.middleware(async ({ ctx, path, type, next }) => {
@@ -58,7 +78,17 @@ const loggerMiddleware = t.middleware(async ({ ctx, path, type, next }) => {
 });
 
 export const router = t.router;
+
+/**
+ * The base public procedure that includes logging but no rate limiting.
+ * This should be used for "safe" public procedures like `me`.
+ */
 export const publicProcedure = t.procedure.use(loggerMiddleware);
+
+/**
+ * A separate, specific procedure for unauthenticated routes that are sensitive to abuse.
+ */
+export const rateLimitedProcedure = publicProcedure.use(rateLimiterMiddleware);
 
 export const loggedInProcedure = publicProcedure.use(async ({ ctx, next }) => {
   if (!ctx.user || !ctx.session) {
