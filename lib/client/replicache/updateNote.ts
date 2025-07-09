@@ -1,4 +1,4 @@
-// lib/client/replicache/updateNote.ts
+// FILE: lib/client/replicache/updateNote.ts
 import { Effect } from "effect";
 import { Schema } from "@effect/schema";
 import { formatErrorSync } from "@effect/schema/TreeFormatter";
@@ -33,7 +33,13 @@ export async function updateNote(
       Effect.mapError((e) => new Error(formatErrorSync(e))),
     );
 
-    const updated = { ...note, title, content, updated_at: new Date() };
+    const updated = {
+      ...note,
+      title,
+      content,
+      version: note.version + 1, // Optimistically increment version
+      updated_at: new Date(),
+    };
 
     const validated = yield* Schema.decodeUnknown(NoteSchema)(updated).pipe(
       Effect.mapError(

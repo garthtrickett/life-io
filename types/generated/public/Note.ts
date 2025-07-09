@@ -20,6 +20,8 @@ export default interface NoteTable {
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
 
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+
+  version: ColumnType<number, number | undefined, number>;
 }
 
 export type Note = Selectable<NoteTable>;

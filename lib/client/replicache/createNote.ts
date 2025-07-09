@@ -1,4 +1,4 @@
-// lib/client/replicache/createNote.ts
+// FILE: lib/client/replicache/createNote.ts
 import { Effect } from "effect";
 import { Schema } from "@effect/schema";
 import { formatErrorSync } from "@effect/schema/TreeFormatter";
@@ -27,6 +27,7 @@ export async function createNote(
       ...args,
       created_at: now,
       updated_at: now,
+      version: 1, // Add version: 1 for the new note
     }).pipe(
       Effect.mapError(
         (e) => new Error(`Note validation failed: ${formatErrorSync(e)}`),
@@ -39,7 +40,6 @@ export async function createNote(
     };
     yield* Effect.promise(() => tx.set(key, noteForJSON));
   });
-
   return runClientPromise(
     createNoteEffect.pipe(withMutatorLogging("createNote")),
   );

@@ -10,7 +10,7 @@ import {
   Schedule,
   Option,
   Duration,
-} from "effect"; // Import Duration
+} from "effect";
 import { trpc } from "../../../lib/client/trpc";
 import type { User, UserId } from "../../../types/generated/public/User";
 import { runClientUnscoped } from "../runtime";
@@ -18,10 +18,8 @@ import { clientLog } from "../logger.client";
 import { rep, initReplicache, nullifyReplicache } from "../replicache/index";
 import { makeIDBName, dropDatabase } from "replicache";
 import { toError } from "../../../lib/shared/toError";
-
 /* ─────────────────────────── Helpers ──────────────────────────── */
 const CLEANUP_FLAG_KEY = "life-io-db-cleanup-pending";
-
 const expireCookieEffect = (name: string): Effect.Effect<void> =>
   Effect.gen(function* () {
     yield* clientLog(
@@ -61,7 +59,8 @@ const expireCookieEffect = (name: string): Effect.Effect<void> =>
     );
   });
 
-/** Sets a flag in localStorage to indicate a user's DB needs cleanup. */
+/** Sets a flag in localStorage to indicate a user's DB needs cleanup.
+ */
 const setCleanupFlag = (userId: UserId): Effect.Effect<void> =>
   Effect.sync(() => {
     localStorage.setItem(CLEANUP_FLAG_KEY, userId);
@@ -75,7 +74,6 @@ const setCleanupFlag = (userId: UserId): Effect.Effect<void> =>
       ),
     ),
   );
-
 /** Clears the cleanup flag from localStorage. */
 const clearCleanupFlag = (): Effect.Effect<void> =>
   Effect.sync(() => {
@@ -90,13 +88,12 @@ const clearCleanupFlag = (): Effect.Effect<void> =>
       ),
     ),
   );
-
-/** Reads the user ID from the cleanup flag, if it exists. */
+/** Reads the user ID from the cleanup flag, if it exists.
+ */
 const getPendingCleanupUserId = (): Effect.Effect<Option.Option<UserId>> =>
   Effect.sync(() =>
     Option.fromNullable(localStorage.getItem(CLEANUP_FLAG_KEY) as UserId),
   );
-
 /**
  * The core logic for closing Replicache and dropping the IndexedDB databases.
  * This is the operation we want to guarantee.
@@ -147,6 +144,7 @@ const performLocalDbCleanup = (userId: UserId): Effect.Effect<void, Error> =>
 
 /**
  * Checks for a pending cleanup flag on app start and executes the cleanup if needed.
+ * Returns an effect that completes when cleanup is done, or immediately if not needed.
  */
 const checkAndRunPendingCleanup = (): Effect.Effect<void> =>
   Effect.gen(function* () {
@@ -158,24 +156,21 @@ const checkAndRunPendingCleanup = (): Effect.Effect<void> =>
         maybeUserId.value,
         "authStore:durableCleanup",
       );
-      // Fork the cleanup so it doesn't block the main auth flow.
-      yield* Effect.fork(
-        performLocalDbCleanup(maybeUserId.value).pipe(
-          // IMPORTANT: Only clear the flag if the cleanup succeeds.
-          Effect.andThen(clearCleanupFlag()),
-          Effect.catchAll((error) =>
-            clientLog(
-              "error",
-              `Pending DB cleanup failed: ${error.message}`,
-              maybeUserId.value,
-              "authStore:durableCleanup",
-            ),
+      // **THE FIX**: Directly yield the cleanup Effect instead of running it as a promise.
+      // This ensures it completes as part of the main Effect flow before auth continues.
+      yield* performLocalDbCleanup(maybeUserId.value).pipe(
+        Effect.andThen(clearCleanupFlag()),
+        Effect.catchAll((error) =>
+          clientLog(
+            "error",
+            `Pending DB cleanup failed: ${error.message}`,
+            maybeUserId.value,
+            "authStore:durableCleanup",
           ),
         ),
       );
     }
   });
-
 /* ─────────────────────────── Model & Actions ─────────────────────────── */
 
 export interface AuthModel {
@@ -198,18 +193,15 @@ type AuthAction =
   | { type: "LOGOUT_START" }
   | { type: "LOGOUT_SUCCESS" }
   | { type: "SET_AUTHENTICATED"; payload: User };
-
 const _authStateRef = Ref.unsafeMake<AuthModel>({
   status: "initializing",
   user: null,
 });
 const _actionQueue = Effect.runSync(Queue.unbounded<AuthAction>());
-
 export const authState = signal<AuthModel>({
   status: "initializing",
   user: null,
 });
-
 const update = (model: AuthModel, action: AuthAction): AuthModel => {
   switch (action.type) {
     case "AUTH_CHECK_START":
@@ -251,7 +243,6 @@ const handleAuthAction = (action: AuthAction): Effect.Effect<void, never> =>
       case "AUTH_CHECK_START": {
         const authCheckEffect = pipe(
           clientLog("info", "Starting auth check...", undefined, "authStore"),
-          // Run pending cleanup check at the start of the app.
           Effect.andThen(checkAndRunPendingCleanup()),
           Effect.andThen(() =>
             Effect.tryPromise({
@@ -309,7 +300,6 @@ const handleAuthAction = (action: AuthAction): Effect.Effect<void, never> =>
           userId,
           "authStore:logout",
         );
-
         const serverLogout = Effect.tryPromise({
           try: () => trpc.auth.logout.mutate(),
           catch: (err) => toError(err),
@@ -328,11 +318,9 @@ const handleAuthAction = (action: AuthAction): Effect.Effect<void, never> =>
             ),
           ),
         );
-
         const guaranteedClientUpdate = expireCookieEffect("session_id").pipe(
           Effect.andThen(() => proposeAuthAction({ type: "LOGOUT_SUCCESS" })),
         );
-
         const fullLogoutProcess = serverLogout.pipe(
           Effect.ensuring(guaranteedClientUpdate),
           Effect.catchAll((error) =>
@@ -346,7 +334,6 @@ const handleAuthAction = (action: AuthAction): Effect.Effect<void, never> =>
             ),
           ),
         );
-
         // Fork the entire robust logout process.
         yield* Effect.fork(fullLogoutProcess);
 
@@ -365,7 +352,6 @@ const handleAuthAction = (action: AuthAction): Effect.Effect<void, never> =>
             ),
           ),
         );
-
         break;
       }
       case "LOGOUT_SUCCESS": {
@@ -393,7 +379,6 @@ const authProcess = Stream.fromQueue(_actionQueue).pipe(
   Stream.runForEach(handleAuthAction),
 );
 runClientUnscoped(authProcess);
-
 export const proposeAuthAction = (action: AuthAction): void => {
   runClientUnscoped(Queue.offer(_actionQueue, action));
 };

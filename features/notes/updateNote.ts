@@ -16,7 +16,6 @@ import { parseMarkdownToBlocks } from "../../lib/server/parser";
 import { Crypto } from "../../lib/server/crypto";
 import { PokeService } from "../../lib/server/PokeService";
 import { withUpdateNoteLogging } from "./wrappers";
-
 interface NoteUpdatePayload {
   title: string;
   content: string;
@@ -57,16 +56,16 @@ const updateNoteEffect = (
         db.transaction().execute(async (trx) => {
           const parentNote = await trx
             .updateTable("note")
-            .set({
+            .set((eb) => ({
               title: noteUpdate.title,
               content: noteUpdate.content,
               updated_at: new Date(),
-            })
+              version: eb("version", "+", 1),
+            }))
             .where("id", "=", validatedNoteId)
             .where("user_id", "=", validatedUserId)
             .returningAll()
             .executeTakeFirst();
-
           if (!parentNote) {
             // Throw a specific error if the note wasn't found to update
             throw new NoteNotFoundError({
@@ -79,7 +78,6 @@ const updateNoteEffect = (
             .deleteFrom("block")
             .where("note_id", "=", validatedNoteId)
             .execute();
-
           const childBlocks = await Effect.runPromise(
             Effect.provideService(
               Crypto,
@@ -93,7 +91,6 @@ const updateNoteEffect = (
               ),
             ),
           );
-
           if (childBlocks.length > 0) {
             await trx.insertInto("block").values(childBlocks).execute();
           }
@@ -107,15 +104,12 @@ const updateNoteEffect = (
         return new NoteDatabaseError({ cause });
       },
     });
-
     const updatedNote = yield* Schema.decodeUnknown(NoteSchema)(result).pipe(
       Effect.mapError((cause) => new NoteValidationError({ cause })),
     );
-
     yield* pokeService
       .poke(updatedNote.user_id)
       .pipe(Effect.mapError((cause) => new NoteDatabaseError({ cause })));
-
     return updatedNote;
   });
 

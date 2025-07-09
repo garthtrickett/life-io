@@ -1,15 +1,15 @@
 // FILE: replicache/pull.ts
-
 import { Data, Effect } from "effect";
 import { type PatchOperation, type ReadonlyJSONValue } from "replicache";
 import { Db } from "../db/DbTag";
 import { serverLog } from "../lib/server/logger.server";
-import type { ChangeLogId } from "../types/generated/public/ChangeLog";
-import type { Block } from "../types/generated/public/Block";
-import type { Note } from "../types/generated/public/Note";
-import type { UserId } from "../types/generated/public/User";
+import { type Note, type NoteId } from "../types/generated/public/Note";
+import { type Block, type BlockId } from "../types/generated/public/Block";
+import { type UserId } from "../types/generated/public/User";
+import { generateUUID } from "../lib/server/utils";
+import { type ClientViewRecordId } from "../types/generated/public/ClientViewRecord";
 
-// --- Error and Request/Response Types (Unchanged) ---
+// --- Types ---
 
 class PullError extends Data.TaggedError("PullError")<{
   readonly cause: unknown;
@@ -17,66 +17,57 @@ class PullError extends Data.TaggedError("PullError")<{
 
 export interface PullRequest {
   clientGroupID: string;
-  cookie: ReadonlyJSONValue | null;
+  cookie: string | null;
 }
 
 type PullResponse = {
-  cookie: number;
+  cookie: string;
   lastMutationIDChanges: Record<string, number>;
   patch: PatchOperation[];
 };
 
-// --- Helper Functions (Unchanged) ---
+type CVR = Map<string, number>;
 
-function isBlock(record: Note | Block): record is Block {
-  return "file_path" in record;
-}
+// --- Helper Functions ---
 
 const toJSONSafe = (record: Note | Block): ReadonlyJSONValue => {
-  if (isBlock(record)) {
-    const { fields, ...rest } = record;
-    return {
-      ...rest,
-      created_at: record.created_at.toISOString(),
-      updated_at: record.updated_at.toISOString(),
-      fields: fields as ReadonlyJSONValue,
-    };
-  } else {
+  // Use a type guard to differentiate between Note and Block
+  if ("file_path" in record) {
+    // This is a Block
     return {
       ...record,
       created_at: record.created_at.toISOString(),
       updated_at: record.updated_at.toISOString(),
+      // Cast the `unknown` 'fields' property to what Replicache expects
+      fields: record.fields as ReadonlyJSONValue,
     };
   }
+  // This is a Note
+  return {
+    ...record,
+    created_at: record.created_at.toISOString(),
+    updated_at: record.updated_at.toISOString(),
+  };
 };
 
-// --- Refactored Smaller Effects (Unchanged) ---
+// --- Core CVR Logic Effects ---
 
-/**
- * Creates a complete snapshot of all user data for a new client.
- */
-const createInitialSnapshot = (
-  userId: UserId,
-): Effect.Effect<PatchOperation[], PullError, Db> =>
+const buildNextCVR = (userId: UserId): Effect.Effect<CVR, PullError, Db> =>
   Effect.gen(function* () {
     const db = yield* Db;
-    const patch: PatchOperation[] = [{ op: "clear" }];
+    const nextCVR = new Map<string, number>();
 
     const notes = yield* Effect.tryPromise({
       try: () =>
         db
           .selectFrom("note")
           .where("user_id", "=", userId)
-          .selectAll()
+          .select(["id", "version"])
           .execute(),
       catch: (cause) => new PullError({ cause }),
     });
     for (const note of notes) {
-      patch.push({
-        op: "put",
-        key: `note/${note.id}`,
-        value: toJSONSafe(note),
-      });
+      nextCVR.set(`note/${note.id}`, note.version);
     }
 
     const blocks = yield* Effect.tryPromise({
@@ -84,69 +75,179 @@ const createInitialSnapshot = (
         db
           .selectFrom("block")
           .where("user_id", "=", userId)
-          .selectAll()
+          .select(["id", "version"])
           .execute(),
       catch: (cause) => new PullError({ cause }),
     });
     for (const block of blocks) {
-      patch.push({
-        op: "put",
-        key: `block/${block.id}`,
-        value: toJSONSafe(block),
-      });
+      nextCVR.set(`block/${block.id}`, block.version);
     }
 
-    return patch;
+    return nextCVR;
   });
 
-/**
- * Creates a patch of changes that have occurred since the client's last pull.
- */
-const createDeltaPatch = (
+const fetchCVR = (
+  cvrId: string | null,
+): Effect.Effect<CVR | null, PullError, Db> =>
+  Effect.gen(function* () {
+    if (!cvrId) return null;
+    const db = yield* Db;
+
+    const cvrRecord = yield* Effect.tryPromise({
+      try: () =>
+        db
+          .selectFrom("client_view_record")
+          .where("id", "=", cvrId as ClientViewRecordId)
+          .selectAll()
+          .executeTakeFirst(),
+      catch: (cause) => new PullError({ cause }),
+    });
+
+    if (!cvrRecord) return null;
+    return new Map(Object.entries(cvrRecord.data as object)) as CVR;
+  });
+
+const storeCVR = (
   userId: UserId,
-  lastSeenVersion: number,
-  serverVersion: number,
+  cvr: CVR,
+): Effect.Effect<string, PullError, Db> =>
+  Effect.gen(function* () {
+    const db = yield* Db;
+    const cvrId = (yield* generateUUID()) as ClientViewRecordId;
+
+    yield* Effect.tryPromise({
+      try: () =>
+        db
+          .insertInto("client_view_record")
+          .values({
+            id: cvrId,
+            user_id: userId,
+            data: JSON.stringify(Object.fromEntries(cvr)),
+          })
+          .execute(),
+      catch: (cause) => new PullError({ cause }),
+    });
+    return cvrId;
+  });
+
+const calculateDiff = (
+  userId: UserId,
+  oldCVR: CVR | null,
+  nextCVR: CVR,
 ): Effect.Effect<PatchOperation[], PullError, Db> =>
   Effect.gen(function* () {
     const db = yield* Db;
     const patch: PatchOperation[] = [];
 
-    const changes = yield* Effect.tryPromise({
-      try: () =>
-        db
-          .selectFrom("change_log")
-          .innerJoin(
-            "replicache_client_group",
-            "replicache_client_group.id",
-            "change_log.client_group_id",
-          )
-          // This "where" clause is the critical fix.
-          .where("replicache_client_group.user_id", "=", userId)
-          .where("change_log.id", ">", String(lastSeenVersion) as ChangeLogId)
-          .where("change_log.id", "<=", String(serverVersion) as ChangeLogId)
-          .orderBy("change_log.id", "asc")
-          // Explicitly select columns from change_log to avoid ambiguity.
-          .selectAll("change_log")
-          .execute(),
-      catch: (cause) => new PullError({ cause }),
-    });
+    if (oldCVR === null) {
+      // New client, send full snapshot
+      patch.push({ op: "clear" });
+      const noteIds: NoteId[] = [];
+      const blockIds: BlockId[] = [];
+      for (const key of nextCVR.keys()) {
+        if (key.startsWith("note/")) noteIds.push(key.substring(5) as NoteId);
+        if (key.startsWith("block/"))
+          blockIds.push(key.substring(6) as BlockId);
+      }
 
-    for (const change of changes) {
-      const args = change.args as { id: string };
-      if (change.name === "createNote" || change.name === "updateNote") {
-        const note = yield* Effect.tryPromise({
+      if (noteIds.length > 0) {
+        const notes = yield* Effect.tryPromise({
           try: () =>
             db
               .selectFrom("note")
-              .where("id", "=", args.id as Note["id"])
+              .where("user_id", "=", userId) // <-- ADDED for security
+              .where("id", "in", noteIds)
               .selectAll()
-              .executeTakeFirstOrThrow(),
+              .execute(),
           catch: (cause) => new PullError({ cause }),
         });
+        for (const note of notes) {
+          patch.push({
+            op: "put",
+            key: `note/${note.id}`,
+            value: toJSONSafe(note),
+          });
+        }
+      }
+
+      if (blockIds.length > 0) {
+        const blocks = yield* Effect.tryPromise({
+          try: () =>
+            db
+              .selectFrom("block")
+              .where("user_id", "=", userId) // <-- ADDED for security
+              .where("id", "in", blockIds)
+              .selectAll()
+              .execute(),
+          catch: (cause) => new PullError({ cause }),
+        });
+        for (const block of blocks) {
+          patch.push({
+            op: "put",
+            key: `block/${block.id}`,
+            value: toJSONSafe(block),
+          });
+        }
+      }
+      return patch;
+    }
+
+    // Existing client, calculate delta
+    const noteIdsToPut: NoteId[] = [];
+    const blockIdsToPut: BlockId[] = [];
+
+    for (const [key, nextVersion] of nextCVR.entries()) {
+      const oldVersion = oldCVR.get(key);
+      if (oldVersion === undefined || nextVersion > oldVersion) {
+        if (key.startsWith("note/"))
+          noteIdsToPut.push(key.substring(5) as NoteId);
+        if (key.startsWith("block/"))
+          blockIdsToPut.push(key.substring(6) as BlockId);
+      }
+    }
+
+    for (const key of oldCVR.keys()) {
+      if (!nextCVR.has(key)) {
+        patch.push({ op: "del", key });
+      }
+    }
+
+    if (noteIdsToPut.length > 0) {
+      const notes = yield* Effect.tryPromise({
+        try: () =>
+          db
+            .selectFrom("note")
+            .where("user_id", "=", userId) // <-- ADDED for security
+            .where("id", "in", noteIdsToPut)
+            .selectAll()
+            .execute(),
+        catch: (cause) => new PullError({ cause }),
+      });
+      for (const note of notes) {
         patch.push({
           op: "put",
-          key: `note/${args.id}`,
+          key: `note/${note.id}`,
           value: toJSONSafe(note),
+        });
+      }
+    }
+
+    if (blockIdsToPut.length > 0) {
+      const blocks = yield* Effect.tryPromise({
+        try: () =>
+          db
+            .selectFrom("block")
+            .where("user_id", "=", userId) // <-- ADDED for security
+            .where("id", "in", blockIdsToPut)
+            .selectAll()
+            .execute(),
+        catch: (cause) => new PullError({ cause }),
+      });
+      for (const block of blocks) {
+        patch.push({
+          op: "put",
+          key: `block/${block.id}`,
+          value: toJSONSafe(block),
         });
       }
     }
@@ -154,7 +255,7 @@ const createDeltaPatch = (
     return patch;
   });
 
-// --- Main Handler (Corrected) ---
+// --- Main Handler ---
 
 export const handlePull = (
   userId: UserId,
@@ -162,28 +263,18 @@ export const handlePull = (
 ): Effect.Effect<PullResponse, PullError, Db> =>
   Effect.gen(function* () {
     const db = yield* Db;
-    const { clientGroupID } = req;
-    const lastSeenVersion = typeof req.cookie === "number" ? req.cookie : 0;
+    const { clientGroupID, cookie: cvrId } = req;
 
     yield* serverLog(
       "info",
-      `Processing pull for user: ${userId}, clientGroupID: ${clientGroupID}, version: ${lastSeenVersion}`,
+      `Processing pull for user: ${userId}, clientGroupID: ${clientGroupID}, cvrId: ${
+        cvrId ?? "new client"
+      }`,
       userId,
       "Replicache:Pull",
     );
 
-    const serverVersionResult = yield* Effect.tryPromise({
-      try: () =>
-        db
-          .selectFrom("change_log")
-          .select(db.fn.max("id").as("max_id"))
-          .executeTakeFirst(),
-      catch: (cause) => new PullError({ cause }),
-    });
-    const serverVersion = serverVersionResult?.max_id
-      ? parseInt(String(serverVersionResult.max_id), 10)
-      : 0;
-
+    // Get lastMutationID changes (this logic is independent of CVRs)
     const clients = yield* Effect.tryPromise({
       try: () =>
         db
@@ -201,6 +292,7 @@ export const handlePull = (
           .execute(),
       catch: (cause) => new PullError({ cause }),
     });
+
     const lastMutationIDChanges = clients.reduce<Record<string, number>>(
       (acc, client) => {
         acc[client.id] = client.lastMutationID;
@@ -209,41 +301,14 @@ export const handlePull = (
       {},
     );
 
-    const patch = yield* Effect.if(lastSeenVersion === 0, {
-      onTrue: () =>
-        Effect.gen(function* () {
-          yield* serverLog(
-            "info",
-            "New client detected. Sending full snapshot.",
-            userId,
-            "Replicache:Pull",
-          );
-          return yield* createInitialSnapshot(userId);
-        }),
-      onFalse: () =>
-        Effect.gen(function* () {
-          if (lastSeenVersion === serverVersion) {
-            yield* serverLog(
-              "info",
-              `Client is up-to-date at version ${serverVersion}`,
-              userId,
-              "Replicache:Pull",
-            );
-            return [];
-          }
-          yield* serverLog(
-            "info",
-            `Client is at version ${lastSeenVersion}. Sending changes up to ${serverVersion}.`,
-            userId,
-            "Replicache:Pull",
-          );
-          return yield* createDeltaPatch(
-            userId,
-            lastSeenVersion,
-            serverVersion,
-          );
-        }),
-    });
+    // CVR-based diffing
+    const [oldCVR, nextCVR] = yield* Effect.all([
+      fetchCVR(cvrId),
+      buildNextCVR(userId),
+    ]);
 
-    return { lastMutationIDChanges, cookie: serverVersion, patch };
+    const patch = yield* calculateDiff(userId, oldCVR, nextCVR);
+    const nextCookie = yield* storeCVR(userId, nextCVR);
+
+    return { lastMutationIDChanges, cookie: nextCookie, patch };
   });

@@ -1,4 +1,4 @@
-// lib/server/migrations/central-migrations-manifest.ts
+// FILE: lib/server/migrations/central-migrations-manifest.ts
 import type { Migration } from "kysely";
 
 // Existing migrations
@@ -15,8 +15,10 @@ import * as m2025063003 from "../../../migrations/2025063003_add_email_verified_
 import * as m2025070201 from "../../../migrations/2025070201_create_block";
 import * as m2025070203 from "../../../migrations/2025070203_add_replicache_tables";
 import * as m2025070301 from "../../../migrations/2025070301_add_note_id_to_block";
-// New migration for the append-only log
 import * as m2025070401 from "../../../migrations/2025070401_create_change_log";
+import * as m2025070901 from "../../../migrations/2025070901_add_version_to_note";
+// Import the new migration file
+import * as m2025070902 from "../../../migrations/2025070902_create_cvr_table";
 
 export const centralMigrationObjects: Record<string, Migration> = {
   "2025062601_create_user": { up: m2025062601.up, down: m2025062601.down },
@@ -59,9 +61,17 @@ export const centralMigrationObjects: Record<string, Migration> = {
     up: m2025070301.up,
     down: m2025070301.down,
   },
-  // Add the new migration to the list
   "2025070401_create_change_log": {
     up: m2025070401.up,
     down: m2025070401.down,
+  },
+  "2025070901_add_version_to_note": {
+    up: m2025070901.up,
+    down: m2025070901.down,
+  },
+  // Add the new migration to the end of the list
+  "2025070902_create_cvr_table": {
+    up: m2025070902.up,
+    down: m2025070902.down,
   },
 };

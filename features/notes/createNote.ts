@@ -13,7 +13,6 @@ import { withCreateNoteLogging } from "./wrappers";
 import { Crypto } from "../../lib/server/crypto";
 import { parseMarkdownToBlocks } from "../../lib/server/parser";
 import { NoteId } from "../../types/generated/public/Note";
-
 const createNoteEffect = (
   note: NewNote,
 ): Effect.Effect<
@@ -44,7 +43,7 @@ const createNoteEffect = (
         db.transaction().execute(async (trx) => {
           const maybeInserted = await trx
             .insertInto("note")
-            .values(note)
+            .values({ ...note, version: 1 })
             .onConflict((oc) => oc.column("id").doNothing())
             .returningAll()
             .executeTakeFirst();
@@ -56,7 +55,6 @@ const createNoteEffect = (
               .selectAll()
               .where("id", "=", note.id as NoteId)
               .executeTakeFirst());
-
           if (!record) {
             // This indicates a serious issue if the row is missing after a conflict.
             throw new Error(
@@ -77,7 +75,6 @@ const createNoteEffect = (
               ),
             ),
           );
-
           if (childBlocks.length > 0) {
             await trx.insertInto("block").values(childBlocks).execute();
           }
@@ -86,15 +83,12 @@ const createNoteEffect = (
         }),
       catch: (cause) => new NoteDatabaseError({ cause }),
     });
-
     const createdNote = yield* Schema.decodeUnknown(NoteSchema)(dbRecord).pipe(
       Effect.mapError((cause) => new NoteValidationError({ cause })),
     );
-
     yield* pokeService
       .poke(createdNote.user_id)
       .pipe(Effect.mapError((cause) => new NoteDatabaseError({ cause })));
-
     return createdNote;
   });
 
