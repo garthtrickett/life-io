@@ -10,7 +10,7 @@ import type { UserId } from "../types/generated/public/User";
 import { Schema } from "@effect/schema";
 import { NoteIdSchema, UserIdSchema } from "../lib/shared/schemas";
 import { Crypto } from "../lib/server/crypto";
-import { toError } from "../lib/shared/toError";
+// REMOVED toError import as it's no longer used here.
 import { createNote } from "../features/notes/createNote";
 import { updateNote } from "../features/notes/updateNote";
 
@@ -106,7 +106,6 @@ export const handlePush = (
 
     const mutations = [...originalMutations].sort((a, b) => a.id - b.id);
     const db = yield* Db;
-    const pokeService = yield* PokeService;
 
     yield* serverLog(
       "info",
@@ -175,17 +174,24 @@ export const handlePush = (
       yield* Effect.fail(new ReplicachePushError({ cause: e }));
     }
 
-    yield* pokeService.poke(userId).pipe(
-      Effect.catchAllDefect((defect) => {
-        const error = toError(defect);
-        return serverLog(
-          "error",
-          `Failed to send poke after push: ${error.message}`,
-          userId,
-          "Replicache:Push:Poke",
-        );
-      }),
-    );
+    // --------------------------------------------------
+    // --- THIS BLOCK IS THE FIX ---
+    // We remove the redundant poke call from here, as the individual
+    // features (createNote, updateNote) are already handling it.
+    // --------------------------------------------------
+    //
+    // yield* pokeService.poke(userId).pipe(
+    //   Effect.catchAllDefect((defect) => {
+    //     const error = toError(defect);
+    //     return serverLog(
+    //       "error",
+    //       `Failed to send poke after push: ${error.message}`,
+    //       userId,
+    //       "Replicache:Push:Poke",
+    //     );
+    //   }),
+    // );
+
     yield* serverLog(
       "info",
       `Successfully processed push for clientGroupID: ${clientGroupID}`,
