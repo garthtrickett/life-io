@@ -1,6 +1,7 @@
-// features/auth/procedures/me.ts
+// File: ./features/auth/procedures/me.ts
 import { publicProcedure } from "../../../trpc/trpc";
 
-export const meProcedure = publicProcedure.query(({ ctx }) => {
+// Change from .query to .mutation to force POST requests
+export const meProcedure = publicProcedure.mutation(({ ctx }) => {
   return ctx.user;
 });

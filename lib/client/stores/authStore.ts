@@ -246,7 +246,7 @@ const handleAuthAction = (action: AuthAction): Effect.Effect<void, never> =>
           Effect.andThen(checkAndRunPendingCleanup()),
           Effect.andThen(() =>
             Effect.tryPromise({
-              try: () => trpc.auth.me.query(),
+              try: () => trpc.auth.me.mutate(),
               catch: (cause) => new AuthCheckError({ cause }),
             }),
           ),

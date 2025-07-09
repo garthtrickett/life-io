@@ -1,15 +1,15 @@
-// FILE: elysia/routes.ts
+// File: elysia/routes.ts
 
-import { Elysia, t } from "elysia";
+import { Elysia, t, type Context as ElysiaHandlerContext } from "elysia";
 import { Effect, Fiber, Stream } from "effect";
 import { staticPlugin } from "@elysiajs/static";
-import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import type { PushRequest } from "replicache";
 import { existsSync, readFileSync } from "node:fs";
 
 import { PokeService } from "../lib/server/PokeService";
 import { appRouter } from "../trpc/router";
 import { createContext } from "../trpc/context";
+import { createElysiaTrpcAdapter } from "./trpcAdapter";
 import {
   handlePull,
   handlePush,
@@ -21,22 +21,27 @@ import { runServerUnscoped } from "../lib/server/runtime";
 import { serverLog } from "../lib/server/logger.server";
 import { effectHandler } from "./effectHandler";
 import { validateSessionEffect } from "../lib/server/auth";
+
 export const makeApp = Effect.gen(function* () {
   const isProduction = process.env.NODE_ENV === "production";
   const pokeService = yield* PokeService;
   const wsConnections = new Map<string, Fiber.RuntimeFiber<void, unknown>>();
 
+  const trpcHandler = createElysiaTrpcAdapter({
+    router: appRouter,
+    createContext,
+  });
+
   const app = new Elysia()
     .group("/api", (group) =>
       group
-        .all("/trpc/*", ({ request }) =>
-          fetchRequestHandler({
-            endpoint: "/api/trpc",
-            router: appRouter,
-            req: request,
-            createContext,
+        .all("/trpc/*", (ctx: ElysiaHandlerContext) => trpcHandler(ctx), {
+          query: t.Object({
+            batch: t.Optional(t.String()),
+            input: t.Optional(t.Unknown()),
           }),
-        )
+        })
+        // --- FIX END ---
         .post("/replicache/pull", (ctx) =>
           effectHandler(
             Effect.gen(function* () {
